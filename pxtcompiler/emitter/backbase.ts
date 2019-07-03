@@ -301,13 +301,13 @@ ${baseLabel}_nochk:
             this.write("@stackmark locals")
             this.write(`${locLabel}:`)
 
-            //console.log(proc.toString())
+            console.log(this.proc.toString())
             this.proc.resolve()
-            //console.log("OPT", proc.toString())
+            console.log("OPT", this.proc.toString())
 
             for (let i = 0; i < this.proc.body.length; ++i) {
                 let s = this.proc.body[i]
-                // console.log("STMT", s.toString())
+                console.log("STMT", s.toString())
                 switch (s.stmtKind) {
                     case ir.SK.Expr:
                         this.emitExpr(s.expr)
@@ -379,7 +379,7 @@ ${baseLabel}_nochk:
         private terminate(expr: ir.Expr) {
             assert(expr.exprKind == ir.EK.SharedRef)
             let arg = expr.args[0]
-            // console.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
+            console.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
             U.assert(arg.currUses != arg.totalUses)
             // we should have the terminated expression on top
             U.assert(this.exprStack[0] === arg, "term at top")

@@ -302,6 +302,12 @@ namespace pxt.runner {
             })
     }
 
+    export function getAst() {
+        return compileAsync(true, (ops: pxtc.CompileOptions) => {
+            ops.ast = true
+        })
+    }
+
     export function generateHexFileAsync(options: SimulateOptions): Promise<string> {
         return loadPackageAsync(options.id)
             .then(() => compileAsync(true, opts => {

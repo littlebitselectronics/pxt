@@ -225,6 +225,8 @@ export function init(): void {
     pxt.commands.browserDownloadAsync = browserDownloadAsync;
     pxt.commands.saveOnlyAsync = browserDownloadDeployCoreAsync;
     pxt.commands.showUploadInstructionsAsync = showUploadInstructionsAsync;
+    pxt.commands.getAst = compiler.getAST;
+
     const forceHexDownload = /forceHexDownload/i.test(window.location.href);
 
     if (pxt.usb.isAvailable() && pxt.appTarget.compile.webUSB) {

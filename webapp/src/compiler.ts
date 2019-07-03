@@ -101,6 +101,43 @@ export function emptyCompileResult(): pxtc.CompileResult {
     }
 }
 
+export function getAST(): Promise<pxtc.CompileResult> {
+    let trg = pkg.mainPkg.getTargetOptions()
+    return pkg.mainPkg.getCompileOptionsAsync(trg)
+        .then(opts => {
+            opts.ast = true;
+            opts.testMode = true;
+            opts.computeUsedSymbols = true;
+            if (/test=1/i.test(window.location.href))
+                opts.testMode = true;
+            return opts;
+        })
+        .then(compileCoreAsync)
+        .then(resp => {
+            let outpkg = pkg.mainEditorPkg().outputPkg
+
+            // keep the assembly file - it is only generated when user hits "Download"
+            // and is usually overwritten by the autorun very quickly, so it's impossible to see it
+            let prevasm = outpkg.files[pxtc.BINARY_ASM]
+            if (prevasm && !resp.outfiles[pxtc.BINARY_ASM]) {
+                resp.outfiles[pxtc.BINARY_ASM] = prevasm.content
+            }
+
+            pkg.mainEditorPkg().outputPkg.setFiles(resp.outfiles)
+            setDiagnostics(resp.diagnostics)
+
+            return ensureApisInfoAsync()
+                .then(() => {
+                    if (!resp.usedSymbols || !cachedApis) return resp
+                    for (let k of Object.keys(resp.usedSymbols)) {
+                        resp.usedSymbols[k] = U.lookup(cachedApis.byQName, k)
+                    }
+                    return resp
+                })
+        })
+        .catch(catchUserErrorAndSetDiags(noOpAsync))
+}
+
 export function compileAsync(options: CompileOptions = {}): Promise<pxtc.CompileResult> {
     let trg = pkg.mainPkg.getTargetOptions()
     trg.isNative = options.native
@@ -136,6 +173,9 @@ export function compileAsync(options: CompileOptions = {}): Promise<pxtc.Compile
 
             pkg.mainEditorPkg().outputPkg.setFiles(resp.outfiles)
             setDiagnostics(resp.diagnostics)
+
+            console.log("resp:");
+            console.log(resp);
 
             return ensureApisInfoAsync()
                 .then(() => {

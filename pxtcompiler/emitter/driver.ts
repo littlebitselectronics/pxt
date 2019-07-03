@@ -94,7 +94,10 @@ namespace ts.pxtc {
     }
 
     export function compile(opts: CompileOptions) {
+        // Record compile start time
         let startTime = Date.now()
+
+        // Make response obj
         let res: CompileResult = {
             outfiles: {},
             diagnostics: [],
@@ -102,17 +105,21 @@ namespace ts.pxtc {
             times: {},
         }
 
-        const convDiag = runConversions(opts)
+        // Convert py code to ts if needed
+        console.log("Running conversions");
+        const convDiag = runConversions(opts);
 
         // save files first, in case we generated some .ts files that fail to compile
         for (let f of opts.generatedFiles || [])
             res.outfiles[f] = opts.fileSystem[f]
 
+        // If there were issues in the conversion, report and abort
         if (convDiag.length > 0) {
             res.diagnostics = convDiag
             return res;
         }
 
+        // Make filenames all pretty
         let fileText: { [index: string]: string } = {};
         for (let fileName in opts.fileSystem) {
             fileText[normalizePath(fileName)] = opts.fileSystem[fileName];
@@ -200,9 +207,21 @@ namespace ts.pxtc {
 
         let emitStart = U.now()
         res.times["typescript"] = emitStart - startTime
-
+        console.log("Compilin'!");
+        console.log("opts:");
+        console.log(opts);
         if (opts.ast) {
             res.ast = program
+            // console.log(program)
+            // console.log(program.getSemanticDiagnostics());
+            // console.log(program.emit())
+            // console.log(program.getClassifiableNames())
+            // console.log(program.getIdentifierCount())
+            // console.log(program.getNodeCount())
+            // console.log(program.getSymbolCount())
+            // console.log(program.getResolvedTypeReferenceDirectives())
+            // console.log(program.getTypeChecker())
+            // console.log(program.getTypeCount())
         }
 
         if (opts.ast || opts.forceEmit || res.diagnostics.length == 0) {
@@ -221,6 +240,8 @@ namespace ts.pxtc {
 
         res.times["all"] = U.now() - startTime;
         pxt.tickEvent(`compile`, res.times);
+        console.log("res:")
+        //console.log(res)
         return res
     }
 
