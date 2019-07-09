@@ -209,7 +209,8 @@ namespace ts.pxtc {
         res.times["typescript"] = emitStart - startTime
         console.log("Compilin'!");
         console.log("opts:");
-        console.log(opts);
+        console.log(opts)
+        res.opts = opts
         if (opts.ast) {
             res.ast = program
             // console.log(program)
