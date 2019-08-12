@@ -631,7 +631,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 }
             ],
             attributes: {
-                advanced: true,
+                advanced: false,
                 weight: 50.06,
                 icon: "text",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
