@@ -204,7 +204,7 @@ declare interface String {
      * Returns a string that contains the concatenation of two or more strings.
      * @param other The string to append to the end of the string.
      */
-    //% shim=String_::concat weight=49
+    //% shim=String_::concat
     //% blockId="string_concat" blockNamespace="text"
     // block="join %list=text|%other"
     concat(other: string): string;
@@ -220,7 +220,7 @@ declare interface String {
     charAt(index: number): string;
 
     /** Returns the length of a String object. */
-    //% property shim=String_::length weight=47
+    //% property shim=String_::length
     //% blockId="text_length" block="length of %VALUE" blockBuiltin=true blockNamespace="text"
     length: number;
 
