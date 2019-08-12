@@ -204,7 +204,7 @@ declare interface String {
      * Returns a string that contains the concatenation of two or more strings.
      * @param other The string to append to the end of the string.
      */
-    //% shim=String_::concat weight=49
+    //% shim=String_::concat
     //% blockId="string_concat" blockNamespace="text"
     // block="join %list=text|%other"
     concat(other: string): string;
@@ -216,10 +216,11 @@ declare interface String {
     //% shim=String_::charAt weight=48
     //% help=text/char-at
     //% blockId="string_get" block="char from %this=text|at %pos" blockNamespace="text"
+    //% advanced=true
     charAt(index: number): string;
 
     /** Returns the length of a String object. */
-    //% property shim=String_::length weight=47
+    //% property shim=String_::length
     //% blockId="text_length" block="length of %VALUE" blockBuiltin=true blockNamespace="text"
     length: number;
 
@@ -228,6 +229,7 @@ declare interface String {
      * @param index The zero-based index of the desired character. If there is no character at the specified index, NaN is returned.
      */
     //% shim=String_::charCodeAt
+    //% advanced=true
     charCodeAt(index: number): number;
 
     /**
@@ -237,6 +239,7 @@ declare interface String {
     //% shim=String_::compare
     //% help=text/compare
     //% blockId="string_compare" block="compare %this=text| to %that" blockNamespace="text"
+    //% advanced=true
     compare(that: string): number;
 
     /**
@@ -247,6 +250,7 @@ declare interface String {
     //% shim=String_::substr length.defl=10
     //% help=text/substr
     //% blockId="string_substr" block="substring of %this=text|from %start|of length %length" blockNamespace="text"
+    //% advanced=true
     substr(start: number, length?: number): string;
 
     /**
@@ -255,12 +259,14 @@ declare interface String {
      * @param end one-past-last character index
      */
     //% helper=stringSlice
+    //% advanced=true
     slice(start: number, end?: number): string;
 
     /** Returns a value indicating if the string is empty */
     //% helper=stringEmpty
     //% blockId="string_isempty" blockNamespace="text"
     //% block="%this=text| is empty"
+    //% advanced=true
     isEmpty(): boolean;
 
     /**
@@ -272,6 +278,7 @@ declare interface String {
     //% help=text/index-of
     //% blockId="string_indexof" blockNamespace="text"
     //% block="%this=text|find index of %searchValue"
+    //% advanced=true
     indexOf(searchValue: string, start?: number): number;
 
     /**
@@ -283,6 +290,7 @@ declare interface String {
     //% help=text/includes
     //% blockId="string_includes" blockNamespace="text"
     //% block="%this=text|includes %searchValue"
+    //% advanced=true
     includes(searchValue: string, start?: number): boolean;
 
     /**
@@ -294,6 +302,7 @@ declare interface String {
     //% help=text/split
     //% blockId="string_split" blockNamespace="text"
     //% block="split %this=text|at %separator"
+    //% advanced=true
     split(separator?: string, limit?: number): string[];
 
     /**
@@ -301,6 +310,7 @@ declare interface String {
      */
     //% helper=stringToLowerCase
     //% help=text/to-lower-case
+    //% advanced=true
     toLowerCase(): string;
 
     [index: number]: string;
@@ -314,6 +324,7 @@ declare interface String {
 //% help=text/parse-float
 //% blockId="string_parsefloat" block="parse to number %text" blockNamespace="text"
 //% text.defl="123"
+//% advanced=true
 declare function parseFloat(text: string): number;
 
 interface Object { }
@@ -350,6 +361,7 @@ declare namespace String {
     //% help=math/from-char-code
     //% shim=String_::fromCharCode weight=1
     //% blockNamespace="text" blockId="stringFromCharCode" block="text from char code %code"
+    //% advanced=true
     function fromCharCode(code: number): string;
 }
 

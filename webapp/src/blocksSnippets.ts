@@ -620,7 +620,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_length",
                     attributes: {
                         blockId: "text_length",
-                        weight: 89
+                        weight: 87
                     },
                     blockXml: `<block type="text_length">
                         <value name="VALUE">
@@ -651,8 +651,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 }
             ],
             attributes: {
-                advanced: true,
-                weight: 50.06,
+                advanced: false,
+                weight: 99,
                 icon: "text",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
