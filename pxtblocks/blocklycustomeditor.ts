@@ -47,6 +47,8 @@ namespace pxt.blocks {
         registerFieldEditor('protractor', pxtblockly.FieldProtractor);
         registerFieldEditor('position', pxtblockly.FieldPosition);
         registerFieldEditor('melody', pxtblockly.FieldCustomMelody);
+        registerFieldEditor('roundMatrix', pxtblockly.FieldRoundMatrix);
+        registerFieldEditor('roundMatrixSmall', pxtblockly.FieldRoundMatrixSmall);
     }
 
     export function registerFieldEditor(selector: string, field: Blockly.FieldCustomConstructor, validator?: any) {
