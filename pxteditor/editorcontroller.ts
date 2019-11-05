@@ -50,6 +50,7 @@ namespace pxt.editor {
         | "renderblocks"
         | "renderpython"
         | "setscale"
+        | "updatefilters"
 
         | "toggletrace" // EditorMessageToggleTraceRequest
         | "togglehighcontrast"
@@ -331,6 +332,11 @@ namespace pxt.editor {
                                     return Promise.resolve()
                                         .then(() => projectView.editor.setScale(zoommsg.scale));
                                 }
+                                case "updatefilters": return Promise.resolve()
+                                  .then(() => {
+                                    const editorState = msg.data.editor as EditorSyncState
+                                    projectView.updateFilters(editorState)
+                                  })
                                 case "stopsimulator": {
                                     const stop = data as EditorMessageStopRequest;
                                     return Promise.resolve()
