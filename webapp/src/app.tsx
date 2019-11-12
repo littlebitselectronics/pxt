@@ -326,14 +326,12 @@ export class ProjectView
     }
 
     updateFilters(editorState?: pxt.editor.EditorState) {
-        const { editorState: currentEditorState } =  this.state
+        const { editorState: currentEditorState } = this.state
         this.setState({
             editorState: {
                 filters: {
                     ...currentEditorState.filters,
-                    namespaces: {
-                        accelerometer: editorState.filters.namespaces.accelerometer,
-                    },
+                    ...editorState.filters,
                 }
             }
         });
