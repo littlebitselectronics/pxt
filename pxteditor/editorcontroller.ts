@@ -334,8 +334,8 @@ namespace pxt.editor {
                                 }
                                 case "updatefilters": return Promise.resolve()
                                   .then(() => {
-                                    const editorState = msg.data.editor as EditorSyncState
-                                    projectView.updateFilters(editorState)
+                                    const filters = msg.data.filters as pxt.editor.ProjectFilters;
+                                    projectView.updateFilters(filters);
                                   })
                                 case "stopsimulator": {
                                     const stop = data as EditorMessageStopRequest;

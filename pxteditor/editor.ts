@@ -249,7 +249,7 @@ namespace pxt.editor {
         handleExtensionRequest(request: ExtensionRequest): void;
 
         fireResize(): void;
-        updateFilters(editorState?: pxt.editor.EditorState): void
+        updateFilters(filters?: pxt.editor.ProjectFilters): void
         updateEditorLogo(left: number, rgba?: string): number;
 
         loadBlocklyAsync(): Promise<void>;
