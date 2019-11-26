@@ -77,7 +77,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             attributes: {
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 icon: "loops",
-                weight: 50.09,
+                weight: 9,
                 paramDefl: {}
             }
         };
@@ -244,7 +244,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 }],
             attributes: {
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
-                weight: 50.08,
+                weight: 8,
                 icon: "logic",
                 paramDefl: {}
             }
@@ -259,7 +259,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 return false;
             },
             attributes: {
-                weight: 50.07,
+                weight: 7,
                 icon: "variables",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
@@ -455,7 +455,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
-                weight: 50.06,
+                weight: 6,
                 icon: "math",
                 paramDefl: {}
             }
@@ -471,7 +471,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             },
             attributes: {
                 advanced: true,
-                weight: 50.08,
+                weight: 8,
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 icon: "functions",
                 paramDefl: {}
@@ -599,7 +599,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 advanced: true,
-                weight: 50.07,
+                weight: 7,
                 icon: "arrays",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
@@ -652,7 +652,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 advanced: false,
-                weight: 99,
+                weight: 89,
                 icon: "text",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
