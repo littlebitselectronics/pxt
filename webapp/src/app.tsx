@@ -325,6 +325,19 @@ export class ProjectView
         }
     }
 
+    updateFilters(filters?: pxt.editor.ProjectFilters) {
+        const { editorState } = this.state
+        this.setState({
+            editorState: {
+                filters: {
+                    ...editorState.filters,
+                    ...filters,
+                }
+            }
+        });
+        this.editor.filterToolbox(editorState.hasCategories);
+    }
+
     updateEditorLogo(left: number, rgba?: string): number {
         if (pxt.appTarget.appTheme.hideMenuBar) {
             const editorLogo = document.getElementById('editorlogo');
