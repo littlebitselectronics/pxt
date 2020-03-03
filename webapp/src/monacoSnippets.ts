@@ -263,7 +263,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
-                weight: 50.06,
+                weight: 50.08,
                 icon: "math",
                 paramDefl: {}
             }
@@ -296,8 +296,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
             ],
             attributes: {
-                advanced: true,
-                weight: 50.08,
+                advanced: false,
+                weight: 50.06,
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 icon: "functions",
                 paramDefl: {}
@@ -544,6 +544,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 weight: 88,
+                advanced: false,
                 icon: "text",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
