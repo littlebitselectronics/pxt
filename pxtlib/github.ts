@@ -9,6 +9,9 @@ namespace pxt.github {
         }
     }
 
+    /**
+     * Commit user info
+     */
     export interface UserInfo {
         date: string; // "2014-11-07T22:01:45Z",
         name: string; // "Scott Chacon",
@@ -33,13 +36,20 @@ namespace pxt.github {
         truncated: boolean;
     }
 
+    export interface CommitInfo extends SHAObject {
+        author: UserInfo;
+        committer: UserInfo;
+        message: string; // "added readme, because im a good github citizen",
+        tree: SHAObject;
+    }
+
     export interface Commit extends SHAObject {
         author: UserInfo;
         committer: UserInfo;
         message: string; // "added readme, because im a good github citizen",
-        tree: Tree; // tree
-        parents: SHAObject[]; // commit[]
         tag?: string;
+        parents: SHAObject[]; // commit[]
+        tree: Tree; // tree
     }
 
     export let token: string = null;
@@ -57,18 +67,32 @@ namespace pxt.github {
         download_url: string;
     }
 
+    interface CommitComment {
+        id: number;
+        body: string;
+        path?: string;
+        position?: number;
+        user: User;
+    }
+
     export let forceProxy = false;
 
-    export function useProxy() {
+    function hasProxy() {
         if (forceProxy)
             return true;
         if (U.isNodeJS)
             return false // bypass proxy for CLI
-        if (token)
-            return false
-        if (pxt.appTarget && pxt.appTarget.cloud && pxt.appTarget.cloud.noGithubProxy)
+        if (pxt?.appTarget?.cloud?.noGithubProxy)
             return false // target requests no proxy
         return true
+    }
+
+    function useProxy() {
+        if (forceProxy)
+            return true;
+        if (token)
+            return false
+        return hasProxy();
     }
 
     let isPrivateRepoCache: pxt.Map<boolean> = {};
@@ -85,15 +109,17 @@ namespace pxt.github {
 
     function ghRequestAsync(opts: U.HttpRequestOptions) {
         if (token) {
-            if (opts.url.indexOf('?') > 0)
-                opts.url += "&"
-            else
-                opts.url += "?"
-            opts.url += "access_token=" + token
-            opts.url += "&anti_cache=" + Math.random()
-            // Token in headers doesn't work with CORS, especially for githubusercontent.com
-            //if (!opts.headers) opts.headers = {}
-            //opts.headers['Authorization'] = `token ${token}`
+            if (!opts.headers) opts.headers = {}
+            if (opts.url == GRAPHQL_URL)
+                opts.headers['Authorization'] = `bearer ${token}`
+            else {
+                if (opts.url.indexOf('?') > 0)
+                    opts.url += "&"
+                else
+                    opts.url += "?"
+                opts.url += "anti_cache=" + Math.random()
+                opts.headers['Authorization'] = `token ${token}`
+            }
         }
         return U.requestAsync(opts)
     }
@@ -102,8 +128,13 @@ namespace pxt.github {
         return ghRequestAsync({ url }).then(resp => resp.json)
     }
 
-    function ghGetTextAsync(url: string) {
-        return ghRequestAsync({ url }).then(resp => resp.text)
+    function ghProxyJsonAsync(path: string) {
+        return Cloud.apiRequestWithCdnAsync({ url: "gh/" + path }).then(r => r.json)
+    }
+
+    function ghProxyHandleException(e: any) {
+        pxt.log(`github proxy error: ${e.message}`)
+        pxt.debug(e);
     }
 
     export class MemoryGithubDb implements IGithubDb {
@@ -120,11 +151,17 @@ namespace pxt.github {
             }
 
             // load and cache
-            return U.httpGetJsonAsync(`${pxt.Cloud.apiRoot}gh/${repopath}/${tag}/text`)
+            return ghProxyJsonAsync(`${repopath}/${tag}/text`)
                 .then(v => this.packages[key] = { files: v });
         }
 
-        loadConfigAsync(repopath: string, tag: string): Promise<pxt.PackageConfig> {
+        private cacheConfig(key: string, v: string) {
+            const cfg = pxt.Package.parseAndValidConfig(v);
+            this.configs[key] = cfg;
+            return U.clone(cfg);
+        }
+
+        async loadConfigAsync(repopath: string, tag: string): Promise<pxt.PackageConfig> {
             if (!tag) tag = "master";
 
             // cache lookup
@@ -132,31 +169,41 @@ namespace pxt.github {
             let res = this.configs[key];
             if (res) {
                 pxt.debug(`github cache ${repopath}/${tag}/config`);
-                return Promise.resolve(U.clone(res));
-            }
-
-            const cacheConfig = (v: string) => {
-                const cfg = JSON.parse(v) as pxt.PackageConfig;
-                this.configs[key] = cfg;
-                return U.clone(cfg);
+                return U.clone(res);
             }
 
             // download and cache
-            if (useProxy()) {
-                // this is a bit wasteful, we just need pxt.json and download everything
-                return this.proxyLoadPackageAsync(repopath, tag)
-                    .then(v => cacheConfig(v.files[pxt.CONFIG_NAME]))
+            // try proxy if available
+            if (hasProxy()) {
+                try {
+                    const gpkg = await this.proxyLoadPackageAsync(repopath, tag)
+                    return this.cacheConfig(key, gpkg.files[pxt.CONFIG_NAME]);
+                } catch (e) {
+                    ghProxyHandleException(e);
+                }
             }
-            return downloadTextAsync(repopath, tag, pxt.CONFIG_NAME)
-                .then(cfg => cacheConfig(cfg));
+            // if failed, try github apis
+            const cfg = await downloadTextAsync(repopath, tag, pxt.CONFIG_NAME);
+            return this.cacheConfig(key, cfg);
         }
 
-        loadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
+        async loadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
             if (!tag) tag = "master";
 
-            if (useProxy())
-                return this.proxyLoadPackageAsync(repopath, tag).then(v => U.clone(v));
+            // try using github proxy first
+            if (hasProxy()) {
+                try {
+                    return await this.proxyLoadPackageAsync(repopath, tag).then(v => U.clone(v));
+                } catch (e) {
+                    ghProxyHandleException(e);
+                }
+            }
 
+            // try using github apis
+            return await this.githubLoadPackageAsync(repopath, tag);
+        }
+
+        private githubLoadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
             return tagToShaAsync(repopath, tag)
                 .then(sha => {
                     // cache lookup
@@ -206,7 +253,7 @@ namespace pxt.github {
     }
 
     export function downloadTextAsync(repopath: string, commitid: string, filepath: string) {
-        // raw.githubusercontent.com doesn't accept ?access_toke=... and has wrong CORS settings
+        // raw.githubusercontent.com doesn't accept ?access_token=... and has wrong CORS settings
         // for Authorization: header; so try anonymous access first, and otherwise fetch using API
 
         if (isPrivateRepoCache[repopath])
@@ -224,6 +271,21 @@ namespace pxt.github {
 
     // overriden by client
     export let db: IGithubDb = new MemoryGithubDb();
+
+    export function authenticatedUserAsync(): Promise<User> {
+        if (!token) return Promise.resolve(undefined); // no token, bail out
+        return ghGetJsonAsync("https://api.github.com/user");
+    }
+
+    export function getCommitsAsync(repopath: string, sha: string): Promise<CommitInfo[]> {
+        return ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/commits?sha=" + sha)
+            .then(objs => objs.map((obj: any) => {
+                const c = obj.commit;
+                c.url = obj.url;
+                c.sha = obj.sha;
+                return c;
+            }));
+    }
 
     export function getCommitAsync(repopath: string, sha: string) {
         return ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/git/commits/" + sha)
@@ -250,13 +312,14 @@ namespace pxt.github {
     export interface CreateCommitReq {
         message: string;
         parents: string[]; // shas
-        tree: string; // sha		
+        tree: string; // sha
     }
 
-    function ghPostAsync(path: string, data: any) {
+    function ghPostAsync(path: string, data: any, headers?: any, method?: string) {
         return ghRequestAsync({
             url: /^https:/.test(path) ? path : "https://api.github.com/repos/" + path,
-            method: "POST",
+            headers,
+            method: method || "POST",
             allowHttpErrors: true,
             data: data
         }).then(resp => {
@@ -278,6 +341,12 @@ namespace pxt.github {
             .then((resp: SHAObject) => resp.sha)
     }
 
+    export function postCommitComment(repopath: string, commitSha: string, body: string, path?: string, position?: number) {
+        return ghPostAsync(`${repopath}/commits/${commitSha}/comments`, {
+            body, path, position
+        })
+            .then((resp: CommitComment) => resp.id);
+    }
 
     export async function fastForwardAsync(repopath: string, branch: string, commitid: string) {
         let resp = await ghRequestAsync({
@@ -314,11 +383,21 @@ namespace pxt.github {
         })
     }
 
+    export async function createReleaseAsync(repopath: string, tag: string, commitid: string) {
+        await ghPostAsync(repopath + "/releases", {
+            tag_name: tag,
+            target_commitish: commitid,
+            name: tag,
+            draft: false,
+            prerelease: false
+        })
+    }
+
     export async function createPRFromBranchAsync(repopath: string, baseBranch: string,
-        headBranch: string, msg: string) {
+        headBranch: string, title: string, msg?: string) {
         const res = await ghPostAsync(repopath + "/pulls", {
-            title: msg,
-            body: lf("Automatically created from MakeCode."),
+            title: title,
+            body: msg || lf("Automatically created from MakeCode."),
             head: headBranch,
             base: baseBranch,
             maintainer_can_modify: true
@@ -347,8 +426,13 @@ namespace pxt.github {
     }
 
     export function getRefAsync(repopath: string, branch: string) {
+        branch = branch || "master";
         return ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/git/refs/heads/" + branch)
             .then(resolveRefAsync)
+            .catch(err => {
+                if (err.statusCode == 404) return undefined;
+                else Promise.reject(err);
+            })
     }
 
     function generateNextRefName(res: RefsResult, pref: string): string {
@@ -401,6 +485,7 @@ namespace pxt.github {
         let head: string = null
         const fetch = !useProxy() ?
             ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/git/refs/" + namespace + "/?per_page=100") :
+            // no CDN caching here
             U.httpGetJsonAsync(`${pxt.Cloud.apiRoot}gh/${repopath}/refs`)
                 .then(r => {
                     let res = Object.keys(r.refs)
@@ -453,7 +538,7 @@ namespace pxt.github {
     export function downloadPackageAsync(repoWithTag: string, config: pxt.PackagesConfig): Promise<CachedPackage> {
         let p = parseRepoId(repoWithTag)
         if (!p) {
-            pxt.log('Unknown github syntax');
+            pxt.log('Unknown GitHub syntax');
             return Promise.resolve<CachedPackage>(undefined);
         }
 
@@ -466,18 +551,22 @@ namespace pxt.github {
         return db.loadPackageAsync(p.fullName, p.tag);
     }
 
+    export interface User {
+        login: string; // "Microsoft",
+        id: number; // 6154722,
+        avatar_url: string; // "https://avatars.githubusercontent.com/u/6154722?v=3",
+        gravatar_id: string; // "",
+        html_url: string; // "https://github.com/microsoft",
+        type: string; // "Organization"
+        name: string;
+        company: string;
+    }
+
     interface Repo {
         id: number;
         name: string; // "pxt-microbit-cppsample",
         full_name: string; // "Microsoft/pxt-microbit-cppsample",
-        owner: {
-            login: string; // "Microsoft",
-            id: number; // 6154722,
-            avatar_url: string; // "https://avatars.githubusercontent.com/u/6154722?v=3",
-            gravatar_id: string; // "",
-            html_url: string; // "https://github.com/microsoft",
-            type: string; // "Organization"
-        },
+        owner: User;
         private: boolean;
         html_url: string; // "https://github.com/microsoft/pxt-microbit-cppsample",
         description: string; // "Sample C++ extension for PXT/microbit",
@@ -510,6 +599,7 @@ namespace pxt.github {
     export interface ParsedRepo {
         owner?: string;
         project?: string;
+        // owner/name
         fullName: string;
         tag?: string;
         fileName?: string;
@@ -531,9 +621,54 @@ namespace pxt.github {
         fork?: boolean;
     }
 
-    export function listUserReposAsync() {
-        return ghGetJsonAsync("https://api.github.com/user/repos?per_page=200&sort=updated&affiliation=owner,collaborator")
-            .then((res: Repo[]) => res.map(r => mkRepo(r, null)))
+    export function listUserReposAsync(): Promise<GitRepo[]> {
+        const q = `{
+  viewer {
+    repositories(first: 100, affiliations: [OWNER, COLLABORATOR], orderBy: {field: PUSHED_AT, direction: DESC}) {
+      nodes {
+        name
+        description
+        full_name: nameWithOwner
+        private: isPrivate
+        fork: isFork
+        updated_at: updatedAt
+        owner {
+          login
+        }
+        defaultBranchRef {
+          name
+        }
+        pxtjson: object(expression: "master:pxt.json") {
+          ... on Blob {
+            text
+          }
+        }
+        readme: object(expression: "master:README.md") {
+          ... on Blob {
+            text
+          }
+        }
+      }
+    }
+  }
+}`
+        return ghGraphQLQueryAsync(q)
+            .then(res => (<any[]>res.data.viewer.repositories.nodes)
+                .filter((node: any) => node.pxtjson) // needs a pxt.json file
+                .filter((node: any) => {
+                    node.default_branch = node.defaultBranchRef.name;
+                    const pxtJson = pxt.Package.parseAndValidConfig(node.pxtjson && node.pxtjson.text);
+                    const readme = node.readme && node.readme.text;
+                    // needs to have a valid pxt.json file
+                    if (!pxtJson) return false;
+                    // new style of supported annontation
+                    if (pxtJson.supportedTargets)
+                        return pxtJson.supportedTargets.indexOf(pxt.appTarget.id) > -1;
+                    // legacy readme.md annotations
+                    return readme && readme.indexOf("PXT/" + pxt.appTarget.id) > -1;
+                })
+                .map((node: any) => mkRepo(node, null))
+            );
     }
 
     export function createRepoAsync(name: string, description: string, priv?: boolean) {
@@ -544,7 +679,47 @@ namespace pxt.github {
             has_issues: true, // default
             has_projects: false,
             has_wiki: false,
+            allow_rebase_merge: false
         }).then(v => mkRepo(v, null))
+    }
+
+    export async function enablePagesAsync(repo: string) {
+        // https://developer.github.com/v3/repos/pages/#enable-a-pages-site
+        // try read status
+        let url: string = undefined;
+        try {
+            const status = await ghGetJsonAsync(`https://api.github.com/repos/${repo}/pages`) // try to get the pages
+            if (status)
+                url = status.html_url;
+        } catch (e) { }
+
+        // status failed, try enabling pages
+        if (!url) {
+            // enable pages
+            const r = await ghPostAsync(`https://api.github.com/repos/${repo}/pages`, {
+                source: {
+                    branch: "master",
+                    path: ""
+                }
+            }, {
+                "Accept": "application/vnd.github.switcheroo-preview+json"
+            });
+            url = r.html_url;
+        }
+
+        // we have a URL, update project
+        if (url) {
+            // check if the repo already has a web site
+            const rep = await ghGetJsonAsync(`https://api.github.com/repos/${repo}`);
+            if (rep && !rep.homepage) {
+                try {
+                    await ghPostAsync(`https://api.github.com/repos/${repo}`, { "homepage": url }, undefined, "PATCH");
+                } catch (e) {
+                    // just ignore if fail to update the homepage
+                    pxt.tickEvent("github.homepage.error");
+                }
+            }
+        }
     }
 
     export function repoIconUrl(repo: GitRepo): string {
@@ -554,7 +729,7 @@ namespace pxt.github {
     }
 
     export function mkRepoIconUrl(repo: ParsedRepo): string {
-        return Cloud.apiRoot + `gh/${repo.fullName}/icon`;
+        return Cloud.cdnApiUrl(`gh/${repo.fullName}/icon`)
     }
 
     function mkRepo(r: Repo, config: pxt.PackagesConfig, tag?: string): GitRepo {
@@ -621,18 +796,28 @@ namespace pxt.github {
         return false;
     }
 
-    export function repoAsync(id: string, config: pxt.PackagesConfig): Promise<GitRepo> {
+    export async function repoAsync(id: string, config: pxt.PackagesConfig): Promise<GitRepo> {
         const rid = parseRepoId(id);
         const status = repoStatus(rid, config);
         if (status == GitRepoStatus.Banned)
-            return Promise.resolve<GitRepo>(undefined);
+            return undefined;
 
-        if (!useProxy())
-            return ghGetJsonAsync("https://api.github.com/repos/" + rid.fullName)
-                .then((r: Repo) => mkRepo(r, config, rid.tag));
+        // always try proxy first
+        if (hasProxy()) {
+            try {
+                return await proxyRepoAsync(rid, status);
+            } catch (e) {
+                ghProxyHandleException(e);
+            }
+        }
+        // try github apis
+        const r = await ghGetJsonAsync("https://api.github.com/repos/" + rid.fullName)
+        return mkRepo(r, config, rid.tag);
+    }
 
+    function proxyRepoAsync(rid: ParsedRepo, status: GitRepoStatus): Promise<GitRepo> {
         // always use proxy
-        return Util.httpGetJsonAsync(`${pxt.Cloud.apiRoot}gh/${rid.fullName}`)
+        return ghProxyJsonAsync(`${rid.fullName}`)
             .then(meta => {
                 if (!meta) return undefined;
                 return {
@@ -739,7 +924,7 @@ namespace pxt.github {
         return p ? "github:" + p.fullName.toLowerCase() + "#" + (p.tag || "master") : undefined;
     }
 
-    export function noramlizeRepoId(id: string) {
+    export function normalizeRepoId(id: string) {
         const gid = parseRepoId(id);
         gid.tag = gid.tag || "master";
         return stringifyRepo(gid);
@@ -789,293 +974,108 @@ namespace pxt.github {
 
     export interface GitJson {
         repo: string;
-        prUrl?: string; // if any
         commit: pxt.github.Commit;
         isFork?: boolean;
     }
 
     export const GIT_JSON = ".git.json"
+    const GRAPHQL_URL = "https://api.github.com/graphql";
 
-    /*
-    Constant MAX ∈ [0,M+N]
-    Var V: Array [− MAX .. MAX] of Integer
-    V[1]←0
-    For D←0 to MAX Do
-        For k ← −D to D in steps of 2 Do 
-            If k=−D or k≠D and V[k−1]<V[k+1] Then
-                x ← V[k+1] 
-            Else
-                x ← V[k−1]+1 
-            y←x−k
-            While x<N and y<M and a[x+1] =b[y+1] Do 
-                (x,y)←(x+1,y+1) 
-            V[k]←x
-            If x≥N and y≥M Then
-                Length of an SES is D
-                Stop
-    */
-
-    type UArray = Uint32Array | Uint16Array
-
-    function toLines(file: string) {
-        return file ? file.split(/\r?\n/) : []
-    }
-
-    export interface DiffOptions {
-        context?: number; // lines of context; defaults to 3
-        ignoreWhitespace?: boolean;
-        maxDiffSize?: number; // defaults to 1024
-    }
-
-    // based on An O(ND) Difference Algorithm and Its Variations by EUGENE W. MYERS
-    export function diff(fileA: string, fileB: string, options: DiffOptions = {}) {
-        if (options.ignoreWhitespace) {
-            fileA = fileA.replace(/[\r\n]+$/, "")
-            fileB = fileB.replace(/[\r\n]+$/, "")
-        }
-
-        const a = toLines(fileA)
-        const b = toLines(fileB)
-
-        const MAX = Math.min(options.maxDiffSize || 1024, a.length + b.length)
-        const ctor = a.length > 0xfff0 ? Uint32Array : Uint16Array
-
-        const idxmap: pxt.Map<number> = {}
-        let curridx = 0
-        const aidx = mkidx(a), bidx = mkidx(b)
-
-        function mkidx(strings: string[]) {
-            const idxarr = new ctor(strings.length)
-            let i = 0
-            for (let e of strings) {
-                if (options.ignoreWhitespace)
-                    e = e.replace(/\s+$/g, "").replace(/^\s+/g, ''); // only ignore start/end of lines
-                if (idxmap.hasOwnProperty(e))
-                    idxarr[i] = idxmap[e]
-                else {
-                    ++curridx
-                    idxarr[i] = curridx
-                    idxmap[e] = curridx
-                }
-                i++
-            }
-            return idxarr
-        }
-
-        const V = new ctor(2 * MAX + 1)
-        let diffLen = -1
-        for (let D = 0; D <= MAX; D++) {
-            if (computeFor(D, V) != null) {
-                diffLen = D
-            }
-        }
-
-        if (diffLen == -1)
-            return null // diffLen > MAX
-
-        const trace: UArray[] = []
-        let endpoint: number = null
-        for (let D = 0; D <= diffLen; D++) {
-            const V = trace.length ? trace[trace.length - 1].slice(0) : new ctor(2 * diffLen + 1)
-            trace.push(V)
-            endpoint = computeFor(D, V)
-            if (endpoint != null)
-                break
-        }
-
-        const diff: string[] = []
-        let k = endpoint
-        for (let D = trace.length - 1; D >= 0; D--) {
-            const V = trace[D]
-            let x = 0
-            let nextK = 0
-            if (k == -D || (k != D && V[MAX + k - 1] < V[MAX + k + 1])) {
-                nextK = k + 1
-                x = V[MAX + nextK]
-            } else {
-                nextK = k - 1
-                x = V[MAX + nextK] + 1
-            }
-            let y = x - k
-            const snakeLen = V[MAX + k] - x
-            for (let i = snakeLen - 1; i >= 0; --i)
-                diff.push("  " + a[x + i])
-
-            if (nextK == k - 1) {
-                diff.push("- " + a[x - 1])
-            } else {
-                if (y > 0)
-                    diff.push("+ " + b[y - 1])
-            }
-            k = nextK
-        }
-        diff.reverse()
-
-        if (options.context == Infinity)
-            return diff
-
-        let aline = 1, bline = 1, idx = 0
-        const shortDiff: string[] = []
-        const context = options.context || 3
-        while (idx < diff.length) {
-            let nextIdx = idx
-            while (nextIdx < diff.length && diff[nextIdx][0] == " ")
-                nextIdx++
-            if (nextIdx == diff.length)
-                break
-            const startIdx = nextIdx - context
-            const skip = startIdx - idx
-            if (skip > 0) {
-                aline += skip
-                bline += skip
-                idx = startIdx
-            }
-            const hdPos = shortDiff.length
-            const aline0 = aline, bline0 = bline
-            shortDiff.push("@@") // patched below
-
-            let endIdx = idx
-            let numCtx = 0
-            while (endIdx < diff.length) {
-                if (diff[endIdx][0] == " ") {
-                    numCtx++
-                    if (numCtx > context * 2 + 2) {
-                        endIdx -= context + 2
-                        break
-                    }
-                } else {
-                    numCtx = 0
-                }
-                endIdx++
-            }
-
-            while (idx < endIdx) {
-                shortDiff.push(diff[idx])
-                const c = diff[idx][0]
-                switch (c) {
-                    case "-": aline++; break;
-                    case "+": bline++; break;
-                    case " ": aline++; bline++; break;
-                }
-                idx++
-            }
-            shortDiff[hdPos] = `@@ -${aline0},${aline - aline0} +${bline0},${bline - bline0} @@`
-        }
-
-        return shortDiff
-
-        function computeFor(D: number, V: UArray) {
-            for (let k = -D; k <= D; k += 2) {
-                let x = 0
-                if (k == -D || (k != D && V[MAX + k - 1] < V[MAX + k + 1]))
-                    x = V[MAX + k + 1]
-                else
-                    x = V[MAX + k - 1] + 1
-                let y = x - k
-                while (x < aidx.length && y < bidx.length && aidx[x] == bidx[y]) {
-                    x++
-                    y++
-                }
-                V[MAX + k] = x
-                if (x >= aidx.length && y >= bidx.length) {
-                    return k
-                }
-            }
+    export function lookupFile(commit: pxt.github.Commit, path: string) {
+        if (!commit)
             return null
+        return commit.tree.tree.find(e => e.path == path)
+    }
+
+    /**
+     * Executes a GraphQL query against GitHub v4 api
+     * @param query
+     */
+    export function ghGraphQLQueryAsync(query: string): Promise<any> {
+        const payload = JSON.stringify({
+            query
+        })
+        return ghPostAsync(GRAPHQL_URL, payload);
+    }
+
+    export interface PullRequest {
+        number: number;
+        state?: "OPEN" | "CLOSED" | "MERGED";
+        mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+    }
+
+    /**
+     * Finds the first PR associated with a branch
+     * @param reponame
+     * @param headName
+     */
+    export function findPRNumberforBranchAsync(reponame: string, headName: string): Promise<PullRequest> {
+        const repoId = parseRepoId(reponame);
+        const query =
+            `
+{
+    repository(owner: ${JSON.stringify(repoId.owner)}, name: ${JSON.stringify(repoId.project)}) {
+        pullRequests(last: 1, states: [OPEN, MERGED], headRefName: ${JSON.stringify(headName)}) {
+            edges {
+                node {
+                    number
+                    state
+                    mergeable
+                }
+            }
+        }
+    }
+}
+`
+
+        /*
+        {
+          "data": {
+            "repository": {
+              "pullRequests": {
+                "edges": [
+                  {
+                    "node": {
+                      "title": "use close icon instead of cancel",
+                      "number": 6324
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }*/
+
+        return ghGraphQLQueryAsync(query)
+            .then<pxt.github.PullRequest>(resp => {
+                const edge = resp.data.repository.pullRequests.edges[0]
+                if (edge && edge.node) {
+                    const node = edge.node;
+                    return {
+                        number: node.number,
+                        mergeable: node.mergeable,
+                        state: node.state
+                    }
+                }
+                return {
+                    number: -1
+                }
+            })
+    }
+
+    export interface GitHubPagesStatus {
+        status: null | "queued" | "building" | "built" | "errored"
+        html_url?: string;
+        source?: {
+            branch: string;
+            directory: string;
         }
     }
 
-    // based on "A Formal Investigation of Diff3" by Sanjeev Khanna, Keshav Kunal, and Benjamin C. Pierce
-    export function diff3(fileA: string, fileO: string, fileB: string,
-        lblA?: string, lblB?: string) {
-        // we're not showing these to users (yet anyways)
-        if (!lblA)
-            lblA = lf("Yours") // ours/HEAD
-        if (!lblB)
-            lblB = lf("Incoming") // theirs/upstream/origin
-
-        const ma = computeMatch(fileA)
-        const mb = computeMatch(fileB)
-        const fa = toLines(fileA)
-        const fb = toLines(fileB)
-        let numConflicts = 0
-
-        let r: string[] = []
-        let la = 0, lb = 0
-        for (let i = 0; i < ma.length - 1;) {
-            if (ma[i] == la && mb[i] == lb) {
-                r.push(fa[la])
-                la++
-                lb++
-                i++
-            } else {
-                let aSame = true
-                let bSame = true
-                let j = i
-                while (j < ma.length) {
-                    if (ma[j] != la + j - i)
-                        aSame = false
-                    if (mb[j] != lb + j - i)
-                        bSame = false
-                    if (ma[j] != null && mb[j] != null)
-                        break
-                    j++
-                }
-                U.assert(j < ma.length)
-                if (aSame) {
-                    while (lb < mb[j])
-                        r.push(fb[lb++])
-                } else if (bSame) {
-                    while (la < ma[j])
-                        r.push(fa[la++])
-                } else if (fa.slice(la, ma[j]).join("\n") == fb.slice(lb, mb[j]).join("\n")) {
-                    // false conflict - both are the same
-                    while (la < ma[j])
-                        r.push(fa[la++])
-                } else {
-                    numConflicts++
-                    r.push("<<<<<<< " + lblA)
-                    while (la < ma[j])
-                        r.push(fa[la++])
-                    r.push("=======")
-                    while (lb < mb[j])
-                        r.push(fb[lb++])
-                    r.push(">>>>>>> " + lblB)
-                }
-                i = j
-                la = ma[j]
-                lb = mb[j]
-            }
-        }
-
-        return { merged: r.join("\n"), numConflicts }
-
-        function computeMatch(fileA: string) {
-            const da = pxt.github.diff(fileO, fileA, { context: Infinity })
-            const ma: number[] = []
-
-            let aidx = 0
-            let oidx = 0
-
-            // console.log(da)
-            for (let l of da) {
-                if (l[0] == "+") {
-                    aidx++
-                } else if (l[0] == "-") {
-                    ma[oidx] = null
-                    oidx++
-                } else if (l[0] == " ") {
-                    ma[oidx] = aidx
-                    aidx++
-                    oidx++
-                } else {
-                    U.oops()
-                }
-            }
-
-            ma.push(aidx + 1) // terminator
-
-            return ma
-        }
+    export function getPagesStatusAsync(repoPath: string): Promise<GitHubPagesStatus> {
+        return ghGetJsonAsync(`https://api.github.com/repos/${repoPath}/pages`)
+            .catch(e => ({
+                status: null
+            }))
     }
 }
