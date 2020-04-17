@@ -121,7 +121,7 @@ namespace pxtblockly {
                 this.redrawPreview();
                 if (this.sourceBlock_ && Blockly.Events.isEnabled()) {
                     Blockly.Events.fire(new Blockly.Events.BlockChange(
-                        this.sourceBlock_, 'field', this.name, this.text, this.getText()));
+                        this.sourceBlock_, 'field', this.name, this.text_, this.getText()));
                 }
   
                 goog.style.setHeight(contentDiv, null);
