@@ -9,13 +9,20 @@ namespace pxt.template {
     "exclude": ["pxt_modules/**/*test.ts"]
 }
 `;
-    function defaultFiles(): Map<string> {
-        return {
+    export function defaultFiles(): Map<string> {
+        const files: Map<string> = {
             "tsconfig.json": TS_CONFIG,
 
             "test.ts": `// ${lf("tests go here; this will not be compiled when this package is used as an extension.")}
 `,
-
+            "_config.yml":
+                `makecode:
+  target: @TARGET@
+  platform: @PLATFORM@
+  home_url: @HOMEURL@
+theme: jekyll-theme-slate
+include: assets
+`,
             "Makefile": `all: deploy
 
 build:
@@ -27,40 +34,44 @@ deploy:
 test:
 \tpxt test
 `,
+            "Gemfile": `source 'https://rubygems.org'
+gem 'github-pages', group: :jekyll_plugins`,
+            "README.md": `---
 
-            "README.md": `# @NAME@ ![${lf("Build status badge")}](https://github.com/@REPO@/workflows/MakeCode/badge.svg)
+---
 
-@DESCRIPTION@
+> ${lf("Open this page at {0}",
+                "[https://@REPOOWNER@.github.io/@REPONAME@/](https://@REPOOWNER@.github.io/@REPONAME@/)"
+            )}
 
 ## ${lf("Use this extension")}
 
 ${lf("This repository can be added as an **extension** in MakeCode.")}
 
-* ${lf("open @HOMEURL@")}
+* ${lf("open [@HOMEURL@](@HOMEURL@)")}
 * ${lf("click on **New Project**")}
 * ${lf("click on **Extensions** under the gearwheel menu")}
-* ${lf("search for the URL of this repository and import")}
+* ${lf("search for **https://github.com/@REPO@** and import")}
 
-## ${lf("Edit this extension")}
+## ${lf("Edit this extension")} ![${lf("Build status badge")}](https://github.com/@REPO@/workflows/MakeCode/badge.svg)
 
 ${lf("To edit this repository in MakeCode.")}
 
-* ${lf("open @HOMEURL@")}
+* ${lf("open [@HOMEURL@](@HOMEURL@)")}
 * ${lf("click on **Import** then click on **Import URL**")}
-* ${lf("paste the repository URL and click import")}
+* ${lf("paste **https://github.com/@REPO@** and click import")}
 
 ## ${lf("Blocks preview")}
 
-${lf("This section shows the blocks code from the last commit in master.")}
+${lf("This image shows the blocks code from the last commit in master.")}
+${lf("This image may take a few minutes to refresh.")}
 
-![${lf("A rendered view of the blocks")}](https://github.com/@REPO@/raw/master/.makecode/blocks.png)
+![${lf("A rendered view of the blocks")}](https://github.com/@REPO@/raw/master/.github/makecode/blocks.png)
 
-## ${lf("Supported targets")}
+#### ${lf("Metadata (used for search, rendering)")}
 
 * for PXT/@TARGET@
-* for PXT/@PLATFORM@
-${lf("(The metadata above is needed for package search.)")}
-
+<script src="https://makecode.com/gh-pages-embed.js"></script><script>makeCodeRender("{{ site.makecode.home_url }}", "{{ site.github.owner_name }}/{{ site.github.repository_name }}");</script>
 `,
 
             ".gitignore":
@@ -69,6 +80,7 @@ node_modules
 yotta_modules
 yotta_targets
 pxt_modules
+_site
 *.db
 *.tgz
 .header.json
@@ -127,7 +139,7 @@ jobs:
         env:
           CI: true
 `,
-        ".vscode/tasks.json":
+            ".vscode/tasks.json":
                 `
 // A task runner that calls the MakeCode (PXT) compiler
 {
@@ -156,17 +168,32 @@ jobs:
         "command": "pxt clean",
         "group": "test",
         "problemMatcher": [ "$tsc" ]
-    }, {
-        "label": "pxt serial",
-        "type": "shell",
-        "command": "pxt serial",
-        "group": "test",
-        "problemMatcher": [ "$tsc" ]
     }]
 }
 `
+        };
+
+        // override files from target
+        const overrides = targetTemplateFiles();
+        if (overrides) {
+            Object.keys(overrides)
+                .forEach(k => files[k] = overrides[k]);
         }
+
+        return files;
     }
+
+    export function targetTemplateFiles(): pxt.Map<string> {
+        const overrides = pxt.appTarget.bundledpkgs[pxt.template.TEMPLATE_PRJ];
+        if (overrides) {
+            const r = Util.clone(overrides);
+            delete r[pxt.CONFIG_NAME];
+            return r;
+        }
+        return undefined;
+    }
+
+    export const TEMPLATE_PRJ = "template";
 
     export function packageFiles(name: string): pxt.Map<string> {
         const prj = pxt.appTarget.blocksprj || pxt.appTarget.tsprj;
@@ -193,38 +220,11 @@ jobs:
         const pkgFiles = Object.keys(files).filter(s =>
             /\.(blocks|md|ts|asm|cpp|h|py)$/.test(s))
 
-        const fieldsOrder = [
-            "name",
-            "version",
-            "description",
-            "license",
-            "dependencies",
-            "files",
-            "testFiles",
-            "testDependencies",
-            "public",
-            "targetVersions",
-            "preferredEditor",
-            "additionalFilePath",
-            "additionalFilePaths"
-        ]
-
         config.files = pkgFiles.filter(s => !/test/.test(s));
         config.testFiles = pkgFiles.filter(s => /test/.test(s));
+        config.supportedTargets = [pxt.appTarget.id];
 
-        const configMap: Map<string> = config as any
-        // make it look nice
-        const newCfg: any = {}
-        for (const f of fieldsOrder) {
-            if (configMap.hasOwnProperty(f))
-                newCfg[f] = configMap[f]
-        }
-        for (const f of Object.keys(configMap)) {
-            if (!newCfg.hasOwnProperty(f))
-                newCfg[f] = configMap[f]
-        }
-
-        files[pxt.CONFIG_NAME] = pxt.Package.stringifyConfig(newCfg);
+        files[pxt.CONFIG_NAME] = pxt.Package.stringifyConfig(config);
 
         return files
     }
@@ -233,11 +233,13 @@ jobs:
         const configMap = JSON.parse(files[pxt.CONFIG_NAME])
         if (options)
             Util.jsonMergeFrom(configMap, options);
-        configMap["platform"] = pxt.appTarget.platformid || pxt.appTarget.id
-        configMap["target"] = pxt.appTarget.id
-        configMap["docs"] = pxt.appTarget.appTheme.homeUrl || "./";
-        configMap["homeurl"] = pxt.appTarget.appTheme.homeUrl || "???";
-
+        if (pxt.webConfig) { // CLI
+            Object.keys(pxt.webConfig).forEach(k => configMap[k.toLowerCase()] = (<any>pxt.webConfig)[k]);
+            configMap["platform"] = pxt.appTarget.platformid || pxt.appTarget.id
+            configMap["target"] = pxt.appTarget.id
+            configMap["docs"] = pxt.appTarget.appTheme.homeUrl || "./";
+            configMap["homeurl"] = pxt.appTarget.appTheme.homeUrl || "???";
+        }
         U.iterMap(files, (k, v) => {
             v = v.replace(/@([A-Z]+)@/g, (f, n) => configMap[n.toLowerCase()] || "")
             files[k] = v

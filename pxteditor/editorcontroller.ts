@@ -50,6 +50,7 @@ namespace pxt.editor {
         | "renderblocks"
         | "renderpython"
         | "setscale"
+        | "updatefilters"
 
         | "toggletrace" // EditorMessageToggleTraceRequest
         | "togglehighcontrast"
@@ -182,6 +183,9 @@ namespace pxt.editor {
         action: "renderblocks";
         // typescript code to render
         ts: string;
+        // rendering options
+        snippetMode?: boolean;
+        layout?: pxt.blocks.BlockLayout;
     }
 
     export interface EditorMessageRenderBlocksResponse {
@@ -331,6 +335,11 @@ namespace pxt.editor {
                                     return Promise.resolve()
                                         .then(() => projectView.editor.setScale(zoommsg.scale));
                                 }
+                                case "updatefilters": return Promise.resolve()
+                                  .then(() => {
+                                    const filters = msg.data.filters as pxt.editor.ProjectFilters;
+                                    projectView.updateFilters(filters);
+                                  })
                                 case "stopsimulator": {
                                     const stop = data as EditorMessageStopRequest;
                                     return Promise.resolve()
@@ -400,8 +409,10 @@ namespace pxt.editor {
                                         .then(() => projectView.printCode());
                                 }
                                 case "pair": {
-                                    return Promise.resolve()
-                                        .then(() => projectView.pair());
+                                    return projectView.pairAsync();
+                                }
+                                case "connect": {
+                                    return projectView.connectAsync();
                                 }
                                 case "info": {
                                     return Promise.resolve()

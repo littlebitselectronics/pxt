@@ -63,6 +63,7 @@
 
     p {
         color: @HCtextColor !important;
+        background-color: @HCbackground !important;
     }
 
     #tutorialcard .prevbutton,
@@ -100,7 +101,7 @@
         }
     }
 
-    /* Blockly toolbox */
+    /* Toolbox */
     .pxtToolbox:not(.invertedToolbox) {
         span.blocklyTreeLabel {
             color: @HCblocklyTreeLabelColor;
@@ -114,6 +115,14 @@
         }
     }
 
+    #monacoEditor .monacoDraggableBlock {
+        background: none !important;
+
+        span.argName {
+            border: 1px solid rgba(255, 255, 255, .7);
+        }
+    }
+
     /* Blockly flyout */
     path.blocklyFlyoutBackground {
         fill: @HCblocklySvgColor !important;
@@ -124,6 +133,13 @@
     .monacoFlyout {
         background: @HCblocklySvgColor !important;
         border-right: 4px solid @HCtextColor !important;
+
+        .monacoBlock {
+            color: @HCtextColor !important;
+        }
+        .blockHandle {
+            background: @HCblocklySvgColor !important;
+        }
     }
 
     /* Main editor areas */
@@ -199,6 +215,21 @@
         .item.active {
             background: @HCtextColor !important;
             color: @HCmainMenuTextColor !important;
+        }
+
+        .dropdown, .dropdown:hover {
+            .selected i, .selected span {
+                color: @HCmainMenuTextColor !important;
+            }
+        }
+
+        .dropdown.active:hover:not(.visible) i {
+            color: @HCmainMenuTextColor !important;
+        }
+
+        .dropdown:focus:not(.visible) i,
+        .dropdown.active:focus:not(.visible) i {
+            color: @HCtextColor !important;
         }
     }
 
@@ -318,7 +349,25 @@
                 background-color: @HCbackground;
             }
             .header {
-                color: @HCbackground;
+                color: @HCtextColor;
+            }
+            .ui.grid {
+                background-color: @HChomeScreenBackground;
+                border-width: 2px 0;
+                border-color: @HCtextColor;
+                border-style: solid;
+            }
+            .actions {
+                .card-action {
+                    border: 2px solid @HCtextColor;
+                    .button.attached i {
+                        opacity: 1;
+                        color: @HCtextColor;
+                    }
+                }
+                .card-action-title {
+                    color: @HCtextColor;
+                }
             }
         }
     }
@@ -458,11 +507,15 @@
     }
 
     /* Dropdown */
-    .ui.menu .ui.dropdown .menu {
+    .ui.menu .ui.dropdown .menu,
+    #editortools .ui.dropdown .menu {
         border: 1px solid @HCtextColor !important;
     }
 
-    .ui.menu .ui.dropdown .menu, .ui.menu .ui.dropdown .menu > .item {
+    .ui.menu .ui.dropdown .menu,
+    .ui.menu .ui.dropdown .menu > .item,
+    #editortools .ui.dropdown .menu,
+    #editortools .ui.dropdown .menu > .item {
         background: @HCbackground !important;
         color: @HCtextColor !important;
 
@@ -477,9 +530,14 @@
         }
     }
 
-    .ui.menu .ui.dropdown .menu > .divider {
+    .ui.menu .ui.dropdown .menu > .divider,
+    #editortools .ui.dropdown .menu > .divider {
         background: @HCbackground !important;
         border-top: 1px solid @HCtextColor !important;
+    }
+
+    #editordropdown .menu > .item:not(.active) {
+        background: transparent !important;
     }
 
     /* Tab list in Modals*/
@@ -498,16 +556,36 @@
     }
 
     /* Tutorial */
-    .ui.message {
+    .ui.tutorialsegment {
         background-color: @HCbackground !important;
         color: @HCtextColor !important;
 
         .tutorialmessage {
-            outline: 1px solid @HCtextColor !important;
             border: none !important;
 
             &:focus {
                 color: @selected !important;
+            }
+
+        }
+
+        .tooltip, .tooltip:before {
+            background-color: @HCbackground;
+            border: 2px solid @HCtextColor;
+            color: @HCtextColor;
+        }
+
+        .tooltip:before {
+            border-color: @HCtextColor transparent transparent @HCtextColor !important;
+        }
+
+        .tutorialhint {
+            border-color: @HCtextColor;
+            background-color: @HCbackground;
+            color: @HCtextColor;
+
+            &:before {
+                border-right-color: @HCtextColor;
             }
         }
     }
@@ -544,6 +622,20 @@
             color: @HCaccessibleMenuColor !important;
             background: @HCaccessibleMenuBackground !important;
         }
+    }
+
+    [data-tooltip]:after,
+    [data-tooltip]:before {
+        color: @HCtextColor!important;
+        background-color: @HCbackground!important;
+    }
+
+    [data-tooltip]:after {
+        border: 1px solid @HCtextColor!important;
+    }
+
+    [data-tooltip]:before {
+        box-shadow: 1px 1px 0 0 @HCtextColor!important;
     }
 }
 

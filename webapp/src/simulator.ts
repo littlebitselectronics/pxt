@@ -44,6 +44,8 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
     debuggerDiv.className = 'ui item landscape only';
     root.appendChild(debuggerDiv);
 
+    const nestedEditorSim = /nestededitorsim=1/i.test(window.location.href);
+
     let options: pxsim.SimulatorDriverOptions = {
         restart: () => cfg.restartSimulator(),
         revealElement: (el) => {
@@ -164,7 +166,9 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         },
         onSimulatorReady: function () {
             pxt.perf.recordMilestone("simulator ready")
-            pxt.perf.report()
+            if (!pxt.perf.perfReportLogged) {
+                pxt.perf.report()
+            }
         },
         onSimulatorCommand: (msg: pxsim.SimulatorCommandMessage): void => {
             switch (msg.command) {
@@ -215,6 +219,7 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         },
         stoppedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.stoppedClass,
         invalidatedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.invalidatedClass,
+        nestedEditorSim: nestedEditorSim
     };
     driver = new pxsim.SimulatorDriver(document.getElementById('simulators'), options);
     config = cfg
@@ -259,7 +264,7 @@ export interface RunOptions {
 }
 
 export function run(pkg: pxt.MainPackage, debug: boolean,
-    res: pxtc.CompileResult, options: RunOptions) {
+    res: pxtc.CompileResult, options: RunOptions, trace: boolean) {
     const js = res.outfiles[pxtc.BINARY_JS]
     const boardDefinition = pxt.appTarget.simulator.boardDefinition;
     const parts = pxtc.computeUsedParts(res, true);
@@ -272,6 +277,7 @@ export function run(pkg: pxt.MainPackage, debug: boolean,
         mute,
         parts,
         debug,
+        trace,
         fnArgs,
         highContrast,
         light,
