@@ -26,7 +26,12 @@ namespace pxtblockly {
                 if (this.sourceBlock_.isInFlyout) {
                     // Can't create variables from within the flyout, so we just have to fake it
                     // by setting the text instead of the value
-                    this.setText(this.opts.initialMembers[0]);
+                    // this.setText(this.opts.initialMembers[0]);
+                    this.sourceBlock_.appendDummyInput(this.opts.initialMembers[0]);
+                    this.getOptions(false);
+                    this.setValue(this.opts.initialMembers[0]);
+                    this.doValueUpdate_(this.getValue());
+                    this.forceRerender();
                 }
                 else {
                     const ws = this.sourceBlock_.workspace;
