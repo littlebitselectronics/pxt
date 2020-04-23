@@ -52,6 +52,7 @@ namespace pxt.editor {
 
         tutorialOptions?: pxt.tutorial.TutorialOptions;
         lightbox?: boolean;
+        keymap?: boolean;
 
         simState?: SimState;
         autoRun?: boolean;
@@ -75,10 +76,12 @@ namespace pxt.editor {
         debugging?: boolean;
         bannerVisible?: boolean;
         pokeUserComponent?: string;
+        flashHint?: boolean;
 
         highContrast?: boolean;
         print?: boolean;
         greenScreen?: boolean;
+        accessibleBlocks?: boolean;
 
         home?: boolean;
         hasError?: boolean;
@@ -101,7 +104,8 @@ namespace pxt.editor {
         temporary?: boolean;
         tutorial?: pxt.tutorial.TutorialOptions;
         dependencies?: pxt.Map<string>;
-        tsOnly?: boolean;
+        tsOnly?: boolean; // DEPRECATED: use LanguageRestriction.NoBlocks or LanguageRestriction.JavaScriptOnly instead
+        languageRestriction?: LanguageRestriction;
         preferredEditor?: string; // preferred editor to open, pxt.BLOCKS_PROJECT_NAME, ...
         extensionUnderTest?: string; // workspace id of the extension under test
     }
@@ -111,6 +115,7 @@ namespace pxt.editor {
         path: string;
         loadBlocks?: boolean;
         prj?: ProjectTemplate;
+        preferredEditor?: string;
     }
 
     export interface ProjectFilters {
@@ -152,6 +157,18 @@ namespace pxt.editor {
         openHomeIfFailed?: boolean;
     }
 
+    export interface UserInfo {
+        id: string;
+        userName?: string;
+        name: string;
+        profile?: string;
+        loginHint?: string;
+        initials?: string;
+        photo?: string;
+    }
+
+    export type Activity = "tutorial" | "recipe" | "example";
+
     export interface IProjectView {
         state: IAppState;
         setState(st: IAppState): void;
@@ -181,12 +198,15 @@ namespace pxt.editor {
 
         exportAsync(): Promise<string>;
 
-        newEmptyProject(name?: string, documentation?: string): void;
+        newEmptyProject(name?: string, documentation?: string, preferredEditor?: string): void;
         newProject(options?: ProjectCreationOptions): void;
         createProjectAsync(options: ProjectCreationOptions): Promise<void>;
         importExampleAsync(options: ExampleImportOptions): Promise<void>;
         showScriptManager(): void;
         importProjectDialog(): void;
+        cloudSync(): boolean;
+        cloudSignInDialog(): void;
+        cloudSignOut(): void;
         removeProject(): void;
         editText(): void;
 
@@ -212,6 +232,7 @@ namespace pxt.editor {
         showTutorialHint(): void;
         pokeUserActivity(): void;
         stopPokeUserActivity(): void;
+        clearUserPoke(): void;
 
         anonymousPublishAsync(screenshotUri?: string): Promise<string>;
 
@@ -244,6 +265,7 @@ namespace pxt.editor {
 
         setBannerVisible(b: boolean): void;
         typecheckNow(): void;
+        shouldPreserveUndoStack(): boolean;
 
         openExtension(extension: string, url: string, consentRequired?: boolean): void;
         handleExtensionRequest(request: ExtensionRequest): void;
@@ -255,12 +277,14 @@ namespace pxt.editor {
         loadBlocklyAsync(): Promise<void>;
         isBlocksEditor(): boolean;
         isTextEditor(): boolean;
+        blocksScreenshotAsync(pixelDensity?: number): Promise<string>;
         renderBlocksAsync(req: EditorMessageRenderBlocksRequest): Promise<EditorMessageRenderBlocksResponse>;
         renderPythonAsync(req: EditorMessageRenderPythonRequest): Promise<EditorMessageRenderPythonResponse>;
 
         toggleHighContrast(): void;
         toggleGreenScreen(): void;
-        pair(): void;
+        toggleAccessibleBlocks(): void;
+        setAccessibleBlocks(enabled: boolean): void;
         launchFullEditor(): void;
 
         settings: EditorSettings;
@@ -272,9 +296,11 @@ namespace pxt.editor {
 
         editor: IEditor;
 
-        startTutorial(tutorialId: string, tutorialTitle?: string, recipe?: boolean): void;
+        startActivity(activitity: Activity, path: string, title?: string, editor?: string): void;
         showLightbox(): void;
         hideLightbox(): void;
+        showKeymap(show: boolean): void;
+        toggleKeymap(): void;
 
         showReportAbuse(): void;
         showLanguagePicker(): void;
@@ -287,19 +313,24 @@ namespace pxt.editor {
 
         showResetDialog(): void;
         showExitAndSaveDialog(): void;
-        showChooseHwDialog(): void;
+        showChooseHwDialog(skipDownload?: boolean): void;
         showExperimentsDialog(): void;
-        showRecipesDialog(): void;
 
         showPackageDialog(): void;
         showBoardDialogAsync(features?: string[], closeIcon?: boolean): Promise<void>;
+        checkForHwVariant(): boolean;
+        pairAsync(): Promise<void>;
+        disconnectAsync(): Promise<void>;
 
         showModalDialogAsync(options: ModalDialogOptions): Promise<void>;
 
-        askForProjectNameAsync(): Promise<string>;
+        askForProjectCreationOptionsAsync(): Promise<ProjectCreationOptions>;
 
         pushScreenshotHandler(handler: (msg: ScreenshotData) => void): void;
         popScreenshotHandler(): void;
+
+        openNewTab(header: pxt.workspace.Header, dependent: boolean): void;
+        createGitHubRepositoryAsync(): Promise<void>;
     }
 
     export interface IHexFileImporter {
@@ -346,10 +377,13 @@ namespace pxt.editor {
         deployAsync?: (r: pxtc.CompileResult) => Promise<void>;
         saveOnlyAsync?: (r: ts.pxtc.CompileResult) => Promise<void>;
         saveProjectAsync?: (project: pxt.cpp.HexFile) => Promise<void>;
+        renderBrowserDownloadInstructions?: () => any /* JSX.Element */;
+        renderUsbPairDialog?: (firmwareUrl?: string, failedOnce?: boolean) => any /* JSX.Element */;
         showUploadInstructionsAsync?: (fn: string, url: string, confirmAsync: (options: any) => Promise<number>) => Promise<void>;
         toolboxOptions?: IToolboxOptions;
         blocklyPatch?: (pkgTargetVersion: string, dom: Element) => void;
-        webUsbPairDialogAsync?: (confirmAsync: (options: any) => Promise<number>) => Promise<number>;
+        webUsbPairDialogAsync?: (pairAsync: () => Promise<boolean>, confirmAsync: (options: any) => Promise<number>) => Promise<number>;
+        mkPacketIOWrapper?: (io: pxt.packetio.PacketIO) => pxt.packetio.PacketIOWrapper;
 
         // Used with the @tutorialCompleted macro. See docs/writing-docs/tutorials.md for more info
         onTutorialCompleted?: () => void;

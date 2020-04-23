@@ -2,6 +2,7 @@
 
 # Getting started
 
+### @diffs false
 ### Introduction @unplugged
 
 Let's get started!
