@@ -1,3 +1,4 @@
+/// <reference path="./testBlocks/mb.ts" />
 pauseUntil(() => true)
 pauseUntil(() => true, 500)
 pauseUntil(undefined);

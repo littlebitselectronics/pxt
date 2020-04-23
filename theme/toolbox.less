@@ -8,6 +8,7 @@
     color: @blocklyToolboxText;
     overflow-x: visible;
     overflow-y: auto;
+    position: absolute;
     z-index: @blocklyToolboxZIndex;
     /* so blocks go over toolbox when dragging */
     -webkit-tap-highlight-color: transparent;
@@ -19,9 +20,7 @@
     transition-timing-function: ease-in;
 }
 
-.blocklyToolboxDiv text,
-.monacoToolboxDiv text,
-span.blocklyTreeIcon {
+.blocklyToolboxDiv text, .monacoToolboxDiv text {
     user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;
@@ -186,6 +185,7 @@ span.blocklyTreeIcon {
     height: 100%;
     display: none;
     vertical-align: middle;
+    user-select: none;
 }
 
 div.blocklyTreeIcon span {
@@ -197,23 +197,6 @@ div.blocklyTreeIcon span {
 }
 .blocklyFlyoutLabelIcon.blocklyFlyoutIconfunctions {
     font-family: xicon !important;
-}
-
-/*******************************
-      Toolbox Animation
-*******************************/
-#monacoEditorToolbox {
-    .blocklyTreeRoot > div > div > .blocklyTreeAnimate {
-        animation: gliss 0.6s ease-in-out;
-    }
-}
-@keyframes gliss {
-    50% { border-left-width: 1.5rem; }
-}
-@keyframes glisssmall {
-    0% { width: 50px; }
-    50% { border-left-width: 1rem; }
-    100% { width: 50px; }
 }
 
 /*******************************
@@ -305,11 +288,6 @@ div.blocklyTreeIcon span {
     }
     #root:not(.flyoutOnly) #blocklyTrashIcon {
         width: @blocklyRowWidthMobile;
-    }
-    #monacoEditorToolbox {
-        .blocklyTreeRoot > div > div > .blocklyTreeAnimate {
-            animation: glisssmall 0.6s ease-in-out;
-        }
     }
 }
 

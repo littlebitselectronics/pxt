@@ -82,7 +82,7 @@ interface Array<T> {
       */
     //% helper=arrayJoin weight=40
     join(sep?: string): string;
-
+    
     /**
       * Tests whether at least one element in the array passes the test implemented by the provided function.
       * @param callbackfn A function that accepts up to two arguments. The some method calls the callbackfn function one time for each element in the array.
@@ -96,7 +96,7 @@ interface Array<T> {
       */
     //% helper=arrayEvery weight=40
     every(callbackfn: (value: T, index: number) => boolean): boolean;
-
+    
     /**
       * Sort the elements of an array in place and returns the array. The sort is not necessarily stable.
       * @param specifies a function that defines the sort order. If omitted, the array is sorted according to the prmitive type
@@ -117,7 +117,7 @@ interface Array<T> {
       */
     //% helper=arrayForEach weight=40
     forEach(callbackfn: (value: T, index: number) => void): void;
-
+    
     /**
       * Return the elements of an array that meet the condition specified in a callback function.
       * @param callbackfn A function that accepts up to two arguments. The filter method calls the callbackfn function one time for each element in the array.
@@ -130,10 +130,10 @@ interface Array<T> {
       */
     //% helper=arrayFill weight=39
     fill(value: T, start?: number, end?: number): T[];
-
+    
     /**
      * Returns the value of the first element in the array that satisfies the provided testing function. Otherwise undefined is returned.
-     * @param callbackfn
+     * @param callbackfn 
      */
     //% helper=arrayFind weight=40
     find(callbackfn: (value: T, index: number) => boolean): T;
@@ -204,7 +204,7 @@ declare interface String {
      * Returns a string that contains the concatenation of two or more strings.
      * @param other The string to append to the end of the string.
      */
-    //% shim=String_::concat
+    //% shim=String_::concat weight=49
     //% blockId="string_concat" blockNamespace="text"
     // block="join %list=text|%other"
     concat(other: string): string;
@@ -216,11 +216,10 @@ declare interface String {
     //% shim=String_::charAt weight=48
     //% help=text/char-at
     //% blockId="string_get" block="char from %this=text|at %pos" blockNamespace="text"
-    //% advanced=true
     charAt(index: number): string;
 
     /** Returns the length of a String object. */
-    //% property shim=String_::length
+    //% property shim=String_::length weight=47
     //% blockId="text_length" block="length of %VALUE" blockBuiltin=true blockNamespace="text"
     length: number;
 
@@ -229,7 +228,6 @@ declare interface String {
      * @param index The zero-based index of the desired character. If there is no character at the specified index, NaN is returned.
      */
     //% shim=String_::charCodeAt
-    //% advanced=true
     charCodeAt(index: number): number;
 
     /**
@@ -239,7 +237,6 @@ declare interface String {
     //% shim=String_::compare
     //% help=text/compare
     //% blockId="string_compare" block="compare %this=text| to %that" blockNamespace="text"
-    //% advanced=true
     compare(that: string): number;
 
     /**
@@ -250,28 +247,7 @@ declare interface String {
     //% shim=String_::substr length.defl=10
     //% help=text/substr
     //% blockId="string_substr" block="substring of %this=text|from %start|of length %length" blockNamespace="text"
-    //% advanced=true
     substr(start: number, length?: number): string;
-
-    /**
-     * Return the current string with the first occurence of toReplace
-     * replaced with the replacer
-     * @param toReplace the substring to replace in the current string
-     * @param replacer either the string that replaces toReplace in the current string,
-     *                or a function that accepts the substring and returns the replacement string.
-     */
-    //% helper=stringReplace
-    replace(toReplace: string, replacer: string | ((sub: string) => string)): string;
-
-    /**
-     * Return the current string with each occurence of toReplace
-     * replaced with the replacer
-     * @param toReplace the substring to replace in the current string
-     * @param replacer either the string that replaces toReplace in the current string,
-     *                or a function that accepts the substring and returns the replacement string.
-     */
-    //% helper=stringReplaceAll
-    replaceAll(toReplace: string, replacer: string | ((sub: string) => string)): string;
 
     /**
      * Return a substring of the current string.
@@ -279,14 +255,12 @@ declare interface String {
      * @param end one-past-last character index
      */
     //% helper=stringSlice
-    //% advanced=true
     slice(start: number, end?: number): string;
 
     /** Returns a value indicating if the string is empty */
     //% helper=stringEmpty
     //% blockId="string_isempty" blockNamespace="text"
     //% block="%this=text| is empty"
-    //% advanced=true
     isEmpty(): boolean;
 
     /**
@@ -298,7 +272,6 @@ declare interface String {
     //% help=text/index-of
     //% blockId="string_indexof" blockNamespace="text"
     //% block="%this=text|find index of %searchValue"
-    //% advanced=true
     indexOf(searchValue: string, start?: number): number;
 
     /**
@@ -310,32 +283,24 @@ declare interface String {
     //% help=text/includes
     //% blockId="string_includes" blockNamespace="text"
     //% block="%this=text|includes %searchValue"
-    //% advanced=true
     includes(searchValue: string, start?: number): boolean;
 
     /**
      * Splits the string according to the separators
-     * @param separator
-     * @param limit
+     * @param separator 
+     * @param limit 
      */
     //% helper=stringSplit
     //% help=text/split
     //% blockId="string_split" blockNamespace="text"
     //% block="split %this=text|at %separator"
-    //% advanced=true
     split(separator?: string, limit?: number): string[];
-
-    /**
-     * Return a substring of the current string with whitespace removed from both ends
-     */
-    trim(): string;
 
     /**
      * Converts the string to lower case characters.
      */
     //% helper=stringToLowerCase
     //% help=text/to-lower-case
-    //% advanced=true
     toLowerCase(): string;
 
     [index: number]: string;
@@ -349,7 +314,6 @@ declare interface String {
 //% help=text/parse-float
 //% blockId="string_parsefloat" block="parse to number %text" blockNamespace="text"
 //% text.defl="123"
-//% advanced=true
 declare function parseFloat(text: string): number;
 
 interface Object { }
@@ -386,7 +350,6 @@ declare namespace String {
     //% help=math/from-char-code
     //% shim=String_::fromCharCode weight=1
     //% blockNamespace="text" blockId="stringFromCharCode" block="text from char code %code"
-    //% advanced=true
     function fromCharCode(code: number): string;
 }
 
@@ -467,7 +430,6 @@ declare namespace Math {
      * @param x An angle in radians
      */
     //% shim=Math_::sin
-    //% help=math/trigonometry
     function sin(x: number): number;
 
     /**
@@ -475,7 +437,6 @@ declare namespace Math {
      * @param x An angle in radians
      */
     //% shim=Math_::cos
-    //% help=math/trigonometry
     function cos(x: number): number;
 
     /**
@@ -526,7 +487,6 @@ declare namespace Math {
      * @param x A numeric expression.
      */
     //% shim=Math_::ceil
-      //% help=math
     function ceil(x: number): number;
 
     /**
@@ -534,7 +494,6 @@ declare namespace Math {
       * @param x A numeric expression.
       */
     //% shim=Math_::floor
-      //% help=math
     function floor(x: number): number;
 
     /**
@@ -542,7 +501,6 @@ declare namespace Math {
       * @param x A numeric expression.
       */
     //% shim=Math_::trunc
-    //% help=math
     function trunc(x: number): number;
 
     /**
@@ -550,7 +508,6 @@ declare namespace Math {
       * @param x The value to be rounded to the nearest number.
       */
     //% shim=Math_::round
-    //% help=math
     function round(x: number): number;
 
     /**

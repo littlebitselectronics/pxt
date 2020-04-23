@@ -171,7 +171,7 @@ namespace pxt.blocks {
         // Should be set to initialize the workspace inside a mutator dialog and return the top block
         public decompose(workspace: Blockly.WorkspaceSvg): Blockly.Block {
             // Initialize flyout workspace's top block and add sub-blocks based on visible parameters
-            const topBlock = workspace.newBlock(this.topBlockType) as Blockly.BlockSvg;
+            const topBlock = workspace.newBlock(this.topBlockType);
             topBlock.initSvg();
 
             for (const input of topBlock.inputList) {
@@ -179,7 +179,7 @@ namespace pxt.blocks {
                     let currentConnection = input.connection;
 
                     this.getVisibleBlockTypes().forEach(sub => {
-                        const subBlock = workspace.newBlock(sub) as Blockly.BlockSvg;
+                        const subBlock = workspace.newBlock(sub);
                         subBlock.initSvg();
                         currentConnection.connect(subBlock.previousConnection);
                         currentConnection = subBlock.nextConnection;

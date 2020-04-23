@@ -14,8 +14,6 @@ namespace pxtblockly {
         initWidth: string;
         initHeight: string;
 
-        disableResize: string;
-
         filter?: string;
     }
 
@@ -23,7 +21,6 @@ namespace pxtblockly {
         initColor: number;
         initWidth: number;
         initHeight: number;
-        disableResize: boolean;
         filter?: string;
     }
 
@@ -63,7 +60,7 @@ namespace pxtblockly {
                 return;
             }
             // Build the DOM.
-            this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null) as SVGGElement;
+            this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null);
             if (!this.visible_) {
                 (this.fieldGroup_ as any).style.display = 'none';
             }
@@ -84,7 +81,7 @@ namespace pxtblockly {
 
         showEditor_() {
             (this.params as any).blocksInfo = this.blocksInfo;
-            const fv = pxt.react.getFieldEditorView("image-editor", this.state, this.params);
+            const fv = pxt.react.getFieldEditorView("image-editor", this.getValue(), this.params);
 
             if (this.undoRedoState) {
                 fv.restorePersistentData(this.undoRedoState);
@@ -96,7 +93,7 @@ namespace pxtblockly {
                 if (result) {
                     const old = this.getValue();
 
-                    this.state = result;
+                    this.state = pxt.sprite.imageLiteralToBitmap(result);
                     this.redrawPreview();
 
                     this.undoRedoState = fv.getPersistentData();
@@ -139,7 +136,7 @@ namespace pxtblockly {
             const bg = new svg.Rect()
                 .at(PADDING, PADDING)
                 .size(BG_WIDTH, BG_WIDTH)
-                .setClass("blocklySpriteField")
+                .fill("#dedede")
                 .stroke("#898989", 1)
                 .corner(4);
 
@@ -170,7 +167,6 @@ namespace pxtblockly {
             initColor: 1,
             initWidth: 16,
             initHeight: 16,
-            disableResize: false,
         };
 
         if (!opts) {
@@ -209,10 +205,6 @@ namespace pxtblockly {
 
         if (opts.filter) {
             parsed.filter = opts.filter;
-        }
-
-        if (opts.disableResize) {
-            parsed.disableResize = opts.disableResize.toLowerCase() === "true" || opts.disableResize === "1";
         }
 
         parsed.initColor = withDefault(opts.initColor, parsed.initColor);

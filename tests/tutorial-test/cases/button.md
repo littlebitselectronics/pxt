@@ -1,6 +1,5 @@
 # Description
 
-### @noDiffs true
 ### ~button /#tutorial:/tutorials/tutorial-
 
 Tutorials may have a button, only to be displayed during markdown

@@ -7,8 +7,6 @@ namespace pxt.gallery {
 
     export interface GalleryProject {
         name: string;
-        snippetType: string;
-        source: string;
         filesOverride: pxt.Map<string>;
         dependencies: pxt.Map<string>;
         features?: string[];
@@ -41,25 +39,21 @@ namespace pxt.gallery {
     export function parseExampleMarkdown(name: string, md: string): GalleryProject {
         if (!md) return undefined;
 
-        const m = /```(blocks?|typescript|python|spy|sim)\s+((.|\s)+?)\s*```/i.exec(md);
+        const m = /```(blocks?|typescript)\s+((.|\s)+?)\s*```/i.exec(md);
         if (!m) return undefined;
 
         const dependencies = parsePackagesFromMarkdown(md);
-        const snippetType = m[1];
-        const source = m[2];
+        let src = m[2];
         const features = parseFeaturesFromMarkdown(md);
-        const prj = {
+        return {
             name,
             filesOverride: {
                 "main.blocks": `<xml xmlns="http://www.w3.org/1999/xhtml"></xml>`,
-                [m[1] === "python" ? "main.py" : "main.ts"]: source
+                "main.ts": src
             },
             dependencies,
-            features,
-            snippetType,
-            source
+            features
         };
-        return prj;
     }
 
     export function parseGalleryMardown(md: string): Gallery[] {
@@ -94,25 +88,16 @@ namespace pxt.gallery {
             } else if (incard)
                 cards += line + '\n';
         })
-        // apply transformations
-        galleries.forEach(gallery => gallery.cards.forEach(card => {
-            if (card.otherActions && !card.otherActions.length
-                && (card.cardType == "tutorial" || card.cardType == "example")) {
-                const editors = ["js"];
-                if (pxt.appTarget.appTheme.python) editors.unshift("py");
-                card.otherActions = editors.map((editor: CodeCardEditorType) => (<CodeCardAction>{
-                    url: card.url,
-                    cardType: card.cardType,
-                    editor
-                }));
-            }
-        }))
-
         return galleries;
     }
 
     export function loadGalleryAsync(name: string): Promise<Gallery[]> {
-        return pxt.Cloud.markdownAsync(name)
+        return pxt.Cloud.markdownAsync(name, pxt.Util.userLanguage(), pxt.Util.localizeLive)
             .then(md => parseGalleryMardown(md))
+    }
+
+    export function loadExampleAsync(name: string, path: string): Promise<GalleryProject> {
+        return pxt.Cloud.markdownAsync(path, pxt.Util.userLanguage(), pxt.Util.localizeLive)
+            .then(md => parseExampleMarkdown(name, md))
     }
 }

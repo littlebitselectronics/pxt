@@ -1,5 +1,4 @@
 ### @activities true
-### @noDiffs true
 
 # Tutorial title
 

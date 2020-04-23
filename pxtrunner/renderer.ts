@@ -3,9 +3,7 @@
 namespace pxt.runner {
     const JS_ICON = "icon xicon js";
     const PY_ICON = "icon xicon python";
-    const BLOCKS_ICON = "icon xicon blocks";
-    const PY_FILE = "main.py";
-    const BLOCKS_FILE = "main.blocks";
+    const BLOCKS_ICON = "icon xicon blocks"
 
     export interface ClientRenderOptions {
         snippetClass?: string;
@@ -13,16 +11,12 @@ namespace pxt.runner {
         blocksClass?: string;
         blocksXmlClass?: string;
         diffBlocksXmlClass?: string;
-        diffBlocksClass?: string;
-        diffClass?: string;
         staticPythonClass?: string; // typescript to be converted to static python
-        diffStaticPythonClass?: string; // diff between two spy snippets
         projectClass?: string;
         blocksAspectRatio?: number;
         simulatorClass?: string;
         linksClass?: string;
         namespacesClass?: string;
-        apisClass?: string;
         codeCardClass?: string;
         tutorial?: boolean;
         snippetReplaceParent?: boolean;
@@ -37,36 +31,6 @@ namespace pxt.runner {
         split?: boolean; // split in multiple divs if too big
     }
 
-    export function defaultClientRenderOptions() {
-        const renderOptions: ClientRenderOptions = {
-            blocksAspectRatio: window.innerHeight < window.innerWidth ? 1.62 : 1 / 1.62,
-            snippetClass: 'lang-blocks',
-            signatureClass: 'lang-sig',
-            blocksClass: 'lang-block',
-            blocksXmlClass: 'lang-blocksxml',
-            diffBlocksXmlClass: 'lang-diffblocksxml',
-            diffClass: 'lang-diff',
-            diffStaticPythonClass: 'lang-diffspy',
-            diffBlocksClass: 'lang-diffblocks',
-            staticPythonClass: 'lang-spy',
-            simulatorClass: 'lang-sim',
-            linksClass: 'lang-cards',
-            namespacesClass: 'lang-namespaces',
-            apisClass: 'lang-apis',
-            codeCardClass: 'lang-codecard',
-            packageClass: 'lang-package',
-            projectClass: 'lang-project',
-            snippetReplaceParent: true,
-            simulator: true,
-            showEdit: true,
-            hex: true,
-            tutorial: false,
-            showJavaScript: false,
-            hexName: pxt.appTarget.id
-        }
-        return renderOptions;
-    }
-
     export interface WidgetOptions {
         showEdit?: boolean;
         showJs?: boolean;
@@ -79,73 +43,12 @@ namespace pxt.runner {
 
     function highlight($js: JQuery) {
         if (typeof hljs !== "undefined") {
-            if ($js.hasClass("highlight")) {
+            if ($js.hasClass("highlight"))
                 hljs.highlightBlock($js[0]);
-            }
-            else {
-                $js.find('code.highlight').each(function (i, block) {
-                    hljs.highlightBlock(block);
-                });
-            }
-            highlightLine($js);
+            else $js.find('code.highlight').each(function (i, block) {
+                hljs.highlightBlock(block);
+            });
         }
-    }
-
-    function highlightLine($js: JQuery) {
-        // apply line highlighting
-        $js.find("span.hljs-comment:contains(@highlight)")
-            .each((i, el) => {
-                try {
-                    highlightLineElement(el);
-                } catch (e) {
-                    pxt.reportException(e);
-                }
-            })
-    }
-
-    function highlightLineElement(el: Element) {
-        const $el = $(el);
-        const span = document.createElement("span");
-        span.className = "highlight-line"
-
-        // find new line and split text node
-        let next = el.nextSibling;
-        if (!next || next.nodeType != Node.TEXT_NODE) return; // end of snippet?
-        let text = (next as Text).textContent;
-        let inewline = text.indexOf('\n');
-        if (inewline < 0)
-            return; // there should have been a new line here
-
-        // split the next node
-        (next as Text).textContent = text.substring(0, inewline + 1);
-        $(document.createTextNode(text.substring(inewline + 1).replace(/^\s+/, ''))).insertAfter($(next));
-
-        // process and highlight new line
-        next = next.nextSibling;
-        while (next) {
-            let nextnext = next.nextSibling; // before we hoist it from the tree
-            if (next.nodeType == Node.TEXT_NODE) {
-                text = (next as Text).textContent;
-                const inewline = text.indexOf('\n');
-                if (inewline < 0) {
-                    span.appendChild(next);
-                    next = nextnext;
-                } else {
-                    // we've hit the end of the line... split node in two
-                    span.appendChild(document.createTextNode(text.substring(0, inewline)));
-                    (next as Text).textContent = text.substring(inewline + 1);
-                    break;
-                }
-            } else {
-                span.appendChild(next);
-                next = nextnext;
-            }
-        }
-
-        // insert back
-        $(span).insertAfter($el);
-        // remove line entry
-        $el.remove();
     }
 
     function appendBlocks($parent: JQuery, $svg: JQuery) {
@@ -199,28 +102,12 @@ namespace pxt.runner {
 
         const theme = pxt.appTarget.appTheme || {};
         if (woptions.showEdit && !theme.hideDocsEdit && decompileResult) { // edit button
-            const $editBtn = snippetBtn(lf("Edit"), "edit icon");
-
-            const { package: pkg, compileBlocks, compilePython } = decompileResult;
-            const host = pkg.host();
-
-            if ($svg && compileBlocks) {
-                pkg.setPreferredEditor(pxt.BLOCKS_PROJECT_NAME);
-                host.writeFile(pkg, BLOCKS_FILE, compileBlocks.outfiles[BLOCKS_FILE]);
-            } else if ($py && compilePython) {
-                pkg.setPreferredEditor(pxt.PYTHON_PROJECT_NAME);
-                host.writeFile(pkg, PY_FILE, compileBlocks.outfiles[PY_FILE]);
-            } else {
-                pkg.setPreferredEditor(pxt.JAVASCRIPT_PROJECT_NAME);
-            }
-
-            const compressed = pkg.compressToFileAsync();
-            $editBtn.click(() => {
+            const $editBtn = snippetBtn(lf("Edit"), "edit icon").click(() => {
                 pxt.tickEvent("docs.btn", { button: "edit" });
-                compressed.done(buf => {
-                    window.open(`${getEditUrl(options)}/#project:${ts.pxtc.encodeBase64(Util.uint8ArrayToString(buf))}`, 'pxt');
-                });
-            });
+                decompileResult.package.setPreferredEditor(options.showJavaScript ? pxt.JAVASCRIPT_PROJECT_NAME : pxt.BLOCKS_PROJECT_NAME)
+                decompileResult.package.compressToFileAsync()
+                    .done(buf => window.open(`${getEditUrl(options)}/#project:${ts.pxtc.encodeBase64(Util.uint8ArrayToString(buf))}`, 'pxt'))
+            })
             $menu.append($editBtn);
         }
 
@@ -244,10 +131,9 @@ namespace pxt.runner {
         if (woptions.run && !theme.hideDocsSimulator) {
             let $runBtn = snippetBtn(lf("Run"), "play icon").click(() => {
                 pxt.tickEvent("docs.btn", { button: "sim" });
-                if ($c.find('.sim')[0]) {
+                if ($c.find('.sim')[0])
                     $c.find('.sim').remove(); // remove previous simulators
-                    scrollJQueryIntoView($c);
-                } else {
+                else {
                     let padding = '81.97%';
                     if (pxt.appTarget.simulator) padding = (100 / pxt.appTarget.simulator.aspectRatio) + '%';
                     const deps = options.package ? "&deps=" + encodeURIComponent(options.package) : "";
@@ -255,8 +141,6 @@ namespace pxt.runner {
                     const data = encodeURIComponent($js.text());
                     let $embed = $(`<div class="ui card sim"><div class="ui content"><div style="position:relative;height:0;padding-bottom:${padding};overflow:hidden;"><iframe style="position:absolute;top:0;left:0;width:100%;height:100%;" src="${url}" data-code="${data}" allowfullscreen="allowfullscreen" sandbox="allow-popups allow-forms allow-scripts allow-same-origin" frameborder="0"></iframe></div></div></div>`);
                     $c.append($embed);
-
-                    scrollJQueryIntoView($embed);
                 }
             })
             $menu.append($runBtn);
@@ -283,14 +167,11 @@ namespace pxt.runner {
             if (!$svg) return;
             const $svgBtn = snippetBtn(lf("Blocks"), BLOCKS_ICON).click(() => {
                 pxt.tickEvent("docs.btn", { button: "blocks" });
-                if ($c.find('.blocks')[0]) {
+                if ($c.find('.blocks')[0])
                     $c.find('.blocks').remove();
-                    scrollJQueryIntoView($c);
-                } else {
+                else {
                     if ($js) appendBlocks($js.parent(), $svg);
                     else appendBlocks($c, $svg);
-
-                    scrollJQueryIntoView($svg);
                 }
             })
             $menu.append($svgBtn);
@@ -303,14 +184,11 @@ namespace pxt.runner {
             else {
                 const $jsBtn = snippetBtn("JavaScript", JS_ICON).click(() => {
                     pxt.tickEvent("docs.btn", { button: "js" });
-                    if ($c.find('.js')[0]) {
+                    if ($c.find('.js')[0])
                         $c.find('.js').remove();
-                        scrollJQueryIntoView($c);
-                    } else {
+                    else {
                         if ($svg) appendJs($svg.parent(), $js, woptions);
                         else appendJs($c, $js, woptions);
-
-                        scrollJQueryIntoView($js);
                     }
                 })
                 $menu.append($jsBtn);
@@ -324,25 +202,15 @@ namespace pxt.runner {
             } else {
                 const $pyBtn = snippetBtn("Python", PY_ICON).click(() => {
                     pxt.tickEvent("docs.btn", { button: "py" });
-                    if ($c.find('.py')[0]) {
+                    if ($c.find('.py')[0])
                         $c.find('.py').remove();
-                        scrollJQueryIntoView($c);
-                    } else {
+                    else {
                         if ($svg) appendPy($svg.parent(), $py, woptions);
                         else appendPy($c, $py, woptions);
-
-                        scrollJQueryIntoView($py);
                     }
                 })
                 $menu.append($pyBtn);
             }
-        }
-
-        function scrollJQueryIntoView($toScrollTo: JQuery<HTMLElement>) {
-            $toScrollTo[0]?.scrollIntoView({
-                behavior: "smooth",
-                block: "center"
-            });
         }
     }
 
@@ -356,8 +224,7 @@ namespace pxt.runner {
         const existingFilters: Map<boolean> = {};
         return consumeNext()
             .then(() => {
-                Blockly.Workspace.getAll().forEach(el => el.dispose());
-                pxt.blocks.cleanRenderingWorkspace();
+                Blockly.Workspace.getAll().forEach(el => el.dispose())
             });
 
         function consumeNext(): Promise<void> {
@@ -365,7 +232,7 @@ namespace pxt.runner {
             if (!job) return Promise.resolve(); // done
 
             const { el, options, render } = job;
-            return pxt.runner.decompileSnippetAsync(el.text(), options)
+            return pxt.runner.decompileToBlocksAsync(el.text(), options)
                 .then(r => {
                     const errors = r.compileJS && r.compileJS.diagnostics && r.compileJS.diagnostics.filter(d => d.category == pxtc.DiagnosticCategory.Error);
                     if (errors && errors.length) {
@@ -422,7 +289,7 @@ namespace pxt.runner {
 
         let snippetCount = 0;
         return renderNextSnippetAsync(options.snippetClass, (c, r) => {
-            const s = r.compileBlocks && r.compileBlocks.success ? $(r.blocksSvg as HTMLElement) : undefined;
+            const s = r.compileBlocks && r.compileBlocks.success ? $(r.blocksSvg) : undefined;
             const p = r.compilePython && r.compilePython.success && r.compilePython.outfiles["main.py"];
             const js = $('<code class="lang-typescript highlight"/>').text(c.text().trim());
             const py = p ? $('<code class="lang-python highlight"/>').text(p.trim()) : undefined;
@@ -465,16 +332,14 @@ namespace pxt.runner {
             const symbolInfo = r.apiInfo.byQName[info.qName];
             if (!symbolInfo) return;
             let block = Blockly.Blocks[symbolInfo.attributes.blockId];
-            let xml = block?.codeCard?.blocksXml || undefined;
+            let xml = block && block.codeCard ? block.codeCard.blocksXml : undefined;
 
-            const blocksHtml = xml ? pxt.blocks.render(xml) : r.compileBlocks?.success ? r.blocksSvg : undefined;
-            const s = blocksHtml ? $(blocksHtml as HTMLElement) : undefined
-            let jsSig = ts.pxtc.service.displayStringForSymbol(symbolInfo, /** python **/ false, r.apiInfo)
-                .split("\n")[1] + ";";
-            const js = $('<code class="lang-typescript highlight"/>').text(jsSig);
-
-            const pySig = pxt.appTarget?.appTheme?.python && ts.pxtc.service.displayStringForSymbol(symbolInfo, /** python **/ true, r.apiInfo).split("\n")[1];
-            const py: JQuery = pySig && $('<code class="lang-python highlight"/>').text(pySig);
+            const s = xml ? $(pxt.blocks.render(xml)) : r.compileBlocks && r.compileBlocks.success ? $(r.blocksSvg) : undefined;
+            let sig = info.decl.getText().replace(/^export/, '');
+            sig = sig.slice(0, sig.indexOf('{')).trim() + ';';
+            const js = $('<code class="lang-typescript highlight"/>').text(sig);
+            // TODO python
+            const py: JQuery = undefined;// $('<code class="lang-python highlight"/>').text(sig);
             if (options.snippetReplaceParent) c = c.parent();
             // add an html widge that allows to translate the block
             if (pxt.Util.isTranslationMode()) {
@@ -500,7 +365,6 @@ namespace pxt.runner {
     }
 
     function renderStaticPythonAsync(options: ClientRenderOptions): Promise<void> {
-        // Highlight python snippets if the snippet has compile python
         const woptions: WidgetOptions = {
             showEdit: !!options.showEdit,
             run: !!options.simulator
@@ -592,110 +456,10 @@ namespace pxt.runner {
         }, { package: opts.package, snippetMode: true, aspectRatio: opts.blocksAspectRatio });
     }
 
-
-    function renderDiffAsync(opts: ClientRenderOptions): Promise<void> {
-        if (!opts.diffClass) return Promise.resolve();
-        const cls = opts.diffClass;
-        function renderNextDiffAsync(cls: string): Promise<void> {
-            let $el = $("." + cls).first();
-            if (!$el[0]) return Promise.resolve();
-
-            const { fileA: oldSrc, fileB: newSrc } = pxt.diff.split($el.text());
-
-            try {
-                const diffEl = pxt.diff.render(oldSrc, newSrc, {
-                    hideLineNumbers: true,
-                    hideMarkerLine: true,
-                    hideMarker: true,
-                    hideRemoved: true,
-                    update: true,
-                    ignoreWhitespace: true,
-                });
-                if (opts.snippetReplaceParent) $el = $el.parent();
-                const segment = $('<div class="ui segment codewidget"/>').append(diffEl);
-                $el.removeClass(cls);
-                $el.replaceWith(segment);
-            } catch (e) {
-                pxt.reportException(e)
-                $el.append($('<div/>').addClass("ui segment warning").text(e.message));
-            }
-            return Promise.delay(1, renderNextDiffAsync(cls));
-        }
-
-        return renderNextDiffAsync(cls);
-    }
-
-    function renderDiffBlocksAsync(opts: ClientRenderOptions): Promise<void> {
-        if (!opts.diffBlocksClass) return Promise.resolve();
-        const cls = opts.diffBlocksClass;
-        function renderNextDiffAsync(cls: string): Promise<void> {
-            let $el = $("." + cls).first();
-            if (!$el[0]) return Promise.resolve();
-
-            const { fileA: oldSrc, fileB: newSrc } = pxt.diff.split($el.text(), {
-                removeTrailingSemiColumns: true
-            });
-            return Promise.mapSeries([oldSrc, newSrc], src => pxt.runner.decompileSnippetAsync(src, {
-                generateSourceMap: true
-            }))
-                .then(resps => {
-                    try {
-                        const diffBlocks = pxt.blocks.decompiledDiffAsync(
-                            oldSrc, resps[0].compileBlocks, newSrc, resps[1].compileBlocks, {
-                            hideDeletedTopBlocks: true,
-                            hideDeletedBlocks: true
-                        });
-                        const diffJs = pxt.diff.render(oldSrc, newSrc, {
-                            hideLineNumbers: true,
-                            hideMarkerLine: true,
-                            hideMarker: true,
-                            hideRemoved: true,
-                            update: true,
-                            ignoreWhitespace: true
-                        })
-                        let diffPy: HTMLElement;
-                        const [oldPy, newPy] = resps.map(resp =>
-                            resp.compilePython
-                            && resp.compilePython.outfiles
-                            && resp.compilePython.outfiles["main.py"]);
-                        if (oldPy && newPy) {
-                            diffPy = pxt.diff.render(oldPy, newPy, {
-                                hideLineNumbers: true,
-                                hideMarkerLine: true,
-                                hideMarker: true,
-                                hideRemoved: true,
-                                update: true,
-                                ignoreWhitespace: true
-                            })
-                        }
-                        fillWithWidget(opts, $el.parent(), $(diffJs), diffPy && $(diffPy), $(diffBlocks.svg as HTMLElement), undefined, {
-                            showEdit: false,
-                            run: false,
-                            hexname: undefined,
-                            hex: undefined
-                        });
-                    } catch (e) {
-                        pxt.reportException(e)
-                        $el.append($('<div/>').addClass("ui segment warning").text(e.message));
-                    }
-                    return Promise.delay(1, renderNextDiffAsync(cls));
-                })
-        }
-
-        return renderNextDiffAsync(cls);
-    }
-
-    let decompileApiPromise: Promise<DecompileResult>;
-    function decompileApiAsync(options: ClientRenderOptions): Promise<DecompileResult> {
-        if (!decompileApiPromise)
-            decompileApiPromise = pxt.runner.decompileSnippetAsync('', options);
-        return decompileApiPromise;
-    }
-
     function renderNamespaces(options: ClientRenderOptions): Promise<void> {
         if (pxt.appTarget.id == "core") return Promise.resolve();
 
-        return decompileApiAsync(options)
+        return pxt.runner.decompileToBlocksAsync('', options)
             .then((r) => {
                 let res: pxt.Map<string> = {};
                 const info = r.compileBlocks.blocksInfo;
@@ -767,7 +531,7 @@ namespace pxt.runner {
             if (!m) return renderNextAsync();
 
             const code = m[1];
-            return pxt.runner.decompileSnippetAsync(code, options)
+            return pxt.runner.decompileToBlocksAsync(code, options)
                 .then(r => {
                     if (r.blocksSvg) {
                         let $newel = $('<span class="block"/>').append(r.blocksSvg);
@@ -819,73 +583,6 @@ namespace pxt.runner {
         return render();
     }
 
-    function renderApisAsync(options: ClientRenderOptions, replaceParent: boolean): Promise<void> {
-        const cls = options.apisClass;
-        if (!cls) return Promise.resolve();
-
-        const apisEl = $('.' + cls);
-        if (!apisEl.length) return Promise.resolve();
-
-        return decompileApiAsync(options)
-            .then((r) => {
-                const info = r.compileBlocks.blocksInfo;
-                const symbols = pxt.Util.values(info.apis.byQName)
-                    .filter(symbol => !symbol.attributes.hidden && !!symbol.attributes.jsDoc && !/^__/.test(symbol.name));
-                apisEl.each((i, e) => {
-                    let c = $(e);
-                    const namespaces = pxt.Util.toDictionary(c.text().split('\n'), n => n); // list of namespace to list apis for.
-                    const csymbols = symbols.filter(symbol => !!namespaces[symbol.namespace])
-                    if (!csymbols.length) return;
-
-                    csymbols.sort((l,r) => {
-                        // render cards first
-                        const lcard = !l.attributes.blockHidden && Blockly.Blocks[l.attributes.blockId];
-                        const rcard = !r.attributes.blockHidden && Blockly.Blocks[r.attributes.blockId]
-                        if (!!lcard != !!rcard) return -(lcard ? 1 : 0) + (rcard ? 1 : 0);
-
-                        // sort alphabetically
-                        return l.name.localeCompare(r.name);
-                    })
-
-                    const ul = $('<div />').addClass('ui divided items');
-                    ul.attr("role", "listbox");
-                    csymbols.forEach(symbol => addSymbolCardItem(ul, symbol, "item"));
-                    if (replaceParent) c = c.parent();
-                    c.replaceWith(ul)
-                })
-            });
-    }
-
-    function addCardItem(ul: JQuery, card: pxt.CodeCard) {
-        if (!card) return;
-        const mC = /^\/(v\d+)/.exec(card.url);
-        const mP = /^\/(v\d+)/.exec(window.location.pathname);
-        const inEditor = /#doc/i.test(window.location.href);
-        if (card.url && !mC && mP && !inEditor) card.url = `/${mP[1]}/${card.url}`;
-        ul.append(pxt.docs.codeCard.render(card, { hideHeader: true, shortName: true }));
-    }
-
-    function addSymbolCardItem(ul: JQuery, symbol: pxtc.SymbolInfo, cardStyle?: string) {
-        const attributes = symbol.attributes;
-        const block = !attributes.blockHidden && Blockly.Blocks[attributes.blockId];
-        const card = block?.codeCard;
-        if (card) {
-            const ccard = U.clone(block.codeCard) as pxt.CodeCard;
-            if (cardStyle) ccard.style = cardStyle;
-            addCardItem(ul, ccard);
-        }
-        else {
-            // default to text
-            // no block available here
-            addCardItem(ul, {
-                name: symbol.qName,
-                description: attributes.jsDoc,
-                url: attributes.help || undefined,
-                style: cardStyle
-            })
-        }
-    }
-
     function renderLinksAsync(options: ClientRenderOptions, cls: string, replaceParent: boolean, ns: boolean): Promise<void> {
         return renderNextSnippetAsync(cls, (c, r) => {
             const cjs = r.compileProgram;
@@ -894,17 +591,23 @@ namespace pxt.runner {
             const stmts = file.statements.slice(0);
             const ul = $('<div />').addClass('ui cards');
             ul.attr("role", "listbox");
+            const addItem = (card: pxt.CodeCard) => {
+                if (!card) return;
+                const mC = /^\/(v\d+)/.exec(card.url);
+                const mP = /^\/(v\d+)/.exec(window.location.pathname);
+                const inEditor = /#doc/i.test(window.location.href);
+                if (card.url && !mC && mP && !inEditor) card.url = `/${mP[1]}/${card.url}`;
+                ul.append(pxt.docs.codeCard.render(card, { hideHeader: true, shortName: true }));
+            }
             stmts.forEach(stmt => {
-                const kind = stmt.kind;
-                const info = decompileCallInfo(stmt);
+                let info = decompileCallInfo(stmt);
                 if (info && r.apiInfo && r.apiInfo.byQName[info.qName]) {
-                    const symbol = r.apiInfo.byQName[info.qName];
-                    const attributes = symbol.attributes;
-                    const block = Blockly.Blocks[attributes.blockId];
+                    const attributes = r.apiInfo.byQName[info.qName].attributes;
+                    let block = Blockly.Blocks[attributes.blockId];
                     if (ns) {
-                        const ii = symbol;
-                        const nsi = r.compileBlocks.blocksInfo.apis.byQName[ii.namespace];
-                        addCardItem(ul, {
+                        let ii = r.compileBlocks.blocksInfo.apis.byQName[info.qName];
+                        let nsi = r.compileBlocks.blocksInfo.apis.byQName[ii.namespace];
+                        addItem({
                             name: nsi.attributes.blockNamespace || nsi.name,
                             url: nsi.attributes.help || ("reference/" + (nsi.attributes.blockNamespace || nsi.name).toLowerCase()),
                             description: nsi.attributes.jsDoc,
@@ -914,17 +617,27 @@ namespace pxt.runner {
                                     ? `<xml xmlns="http://www.w3.org/1999/xhtml"><block type="${attributes.blockId}"></block></xml>`
                                     : undefined
                         })
+                    } else if (block) {
+                        let card = U.clone(block.codeCard) as pxt.CodeCard;
+                        if (card) {
+                            addItem(card);
+                        }
                     } else {
-                        addSymbolCardItem(ul, symbol);
+                        // no block available here
+                        addItem({
+                            name: info.qName,
+                            description: attributes.jsDoc,
+                            url: attributes.help || undefined
+                        })
                     }
                 } else
-                    switch (kind) {
-                        case ts.SyntaxKind.ExpressionStatement: {
-                            const es = stmt as ts.ExpressionStatement;
+                    switch (stmt.kind) {
+                        case ts.SyntaxKind.ExpressionStatement:
+                            let es = stmt as ts.ExpressionStatement;
                             switch (es.expression.kind) {
                                 case ts.SyntaxKind.TrueKeyword:
                                 case ts.SyntaxKind.FalseKeyword:
-                                    addCardItem(ul, {
+                                    addItem({
                                         name: "Boolean",
                                         url: "blocks/logic/boolean",
                                         description: lf("True or false values"),
@@ -936,9 +649,8 @@ namespace pxt.runner {
                                     break;
                             }
                             break;
-                        }
                         case ts.SyntaxKind.IfStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Logic" : "if",
                                 url: "blocks/logic" + (ns ? "" : "/if"),
                                 description: ns ? lf("Logic operators and constants") : lf("Conditional statement"),
@@ -946,7 +658,7 @@ namespace pxt.runner {
                             });
                             break;
                         case ts.SyntaxKind.WhileStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Loops" : "while",
                                 url: "blocks/loops" + (ns ? "" : "/while"),
                                 description: ns ? lf("Loops and repetition") : lf("Repeat code while a condition is true."),
@@ -954,7 +666,7 @@ namespace pxt.runner {
                             });
                             break;
                         case ts.SyntaxKind.ForOfStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Loops" : "for of",
                                 url: "blocks/loops" + (ns ? "" : "/for-of"),
                                 description: ns ? lf("Loops and repetition") : lf("Repeat code for each item in a list."),
@@ -962,7 +674,7 @@ namespace pxt.runner {
                             });
                             break;
                         case ts.SyntaxKind.BreakStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Loops" : "break",
                                 url: "blocks/loops" + (ns ? "" : "/break"),
                                 description: ns ? lf("Loops and repetition") : lf("Break out of the current loop."),
@@ -970,14 +682,14 @@ namespace pxt.runner {
                             });
                             break;
                         case ts.SyntaxKind.ContinueStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Loops" : "continue",
                                 url: "blocks/loops" + (ns ? "" : "/continue"),
                                 description: ns ? lf("Loops and repetition") : lf("Skip iteration and continue the current loop."),
                                 blocksXml: '<xml xmlns="http://www.w3.org/1999/xhtml"><block type="continue_keyboard"></block></xml>'
                             });
                             break;
-                        case ts.SyntaxKind.ForStatement: {
+                        case ts.SyntaxKind.ForStatement:
                             let fs = stmt as ts.ForStatement;
                             // look for the 'repeat' loop style signature in the condition expression, explicitly: (let i = 0; i < X; i++)
                             // for loops will have the '<=' conditional.
@@ -987,14 +699,14 @@ namespace pxt.runner {
                                     fs.condition.getChildAt(1).kind == ts.SyntaxKind.LessThanToken);
                             }
                             if (forloop) {
-                                addCardItem(ul, {
+                                addItem({
                                     name: ns ? "Loops" : "for",
                                     url: "blocks/loops" + (ns ? "" : "/for"),
                                     description: ns ? lf("Loops and repetition") : lf("Repeat code for a given number of times using an index."),
                                     blocksXml: '<xml xmlns="http://www.w3.org/1999/xhtml"><block type="controls_simple_for"></block></xml>'
                                 });
                             } else {
-                                addCardItem(ul, {
+                                addItem({
                                     name: ns ? "Loops" : "repeat",
                                     url: "blocks/loops" + (ns ? "" : "/repeat"),
                                     description: ns ? lf("Loops and repetition") : lf("Repeat code for a given number of times."),
@@ -1002,9 +714,8 @@ namespace pxt.runner {
                                 });
                             }
                             break;
-                        }
                         case ts.SyntaxKind.VariableStatement:
-                            addCardItem(ul, {
+                            addItem({
                                 name: ns ? "Variables" : "variable declaration",
                                 url: "blocks/variables" + (ns ? "" : "/assign"),
                                 description: ns ? lf("Variables") : lf("Assign a value to a named variable."),
@@ -1012,7 +723,7 @@ namespace pxt.runner {
                             });
                             break;
                         default:
-                            pxt.debug(`card kind: ${kind}`)
+                            pxt.debug(`card kind: ${stmt.kind}`)
                     }
             })
 
@@ -1120,45 +831,16 @@ namespace pxt.runner {
         })
     }
 
-    function renderDirectPython(options?: ClientRenderOptions) {
-        // Highlight python snippets written with the ```python
-        // language tag (as opposed to the ```spy tag, see renderStaticPythonAsync for that)
-        const woptions: WidgetOptions = {
-            showEdit: !!options.showEdit,
-            run: !!options.simulator
-        }
-
-        function render(e: HTMLElement, ignored: boolean) {
-            if (typeof hljs !== "undefined") {
-                $(e).text($(e).text().replace(/^\s*\r?\n/, ''))
-                hljs.highlightBlock(e)
-                highlightLine($(e));
-            }
-            const opts = pxt.U.clone(woptions);
-            if (ignored) {
-                opts.run = false;
-                opts.showEdit = false;
-            }
-            fillWithWidget(options, $(e).parent(), $(e), /* py */ undefined, /* JQuery */ undefined, /* decompileResult */ undefined, opts);
-        }
-
-        $('code.lang-python').each((i, e) => {
-            render(e, false);
-            $(e).removeClass('lang-python');
-        });
-    }
-
     function renderTypeScript(options?: ClientRenderOptions) {
         const woptions: WidgetOptions = {
             showEdit: !!options.showEdit,
             run: !!options.simulator
         }
 
-        function render(e: HTMLElement, ignored: boolean) {
+        function render(e: Node, ignored: boolean) {
             if (typeof hljs !== "undefined") {
                 $(e).text($(e).text().replace(/^\s*\r?\n/, ''))
                 hljs.highlightBlock(e)
-                highlightLine($(e));
             }
             const opts = pxt.U.clone(woptions);
             if (ignored) {
@@ -1229,7 +911,7 @@ namespace pxt.runner {
 
     export function renderAsync(options?: ClientRenderOptions): Promise<void> {
         pxt.analytics.enable();
-        if (!options) options = defaultClientRenderOptions();
+        if (!options) options = {}
         if (options.pxtUrl) options.pxtUrl = options.pxtUrl.replace(/\/$/, '');
         if (options.showEdit) options.showEdit = !pxt.BrowserUtils.isIFrame();
 
@@ -1239,21 +921,17 @@ namespace pxt.runner {
         renderGhost(options);
         renderSims(options);
         renderTypeScript(options);
-        renderDirectPython(options);
         return Promise.resolve()
             .then(() => renderNextCodeCardAsync(options.codeCardClass, options))
             .then(() => renderNamespaces(options))
             .then(() => renderInlineBlocksAsync(options))
             .then(() => renderLinksAsync(options, options.linksClass, options.snippetReplaceParent, false))
             .then(() => renderLinksAsync(options, options.namespacesClass, options.snippetReplaceParent, true))
-            .then(() => renderApisAsync(options, options.snippetReplaceParent))
             .then(() => renderSignaturesAsync(options))
             .then(() => renderSnippetsAsync(options))
             .then(() => renderBlocksAsync(options))
             .then(() => renderBlocksXmlAsync(options))
             .then(() => renderDiffBlocksXmlAsync(options))
-            .then(() => renderDiffBlocksAsync(options))
-            .then(() => renderDiffAsync(options))
             .then(() => renderStaticPythonAsync(options))
             .then(() => renderProjectAsync(options))
             .then(() => consumeRenderQueueAsync())

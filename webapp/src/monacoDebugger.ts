@@ -64,7 +64,7 @@ export class MonacoBreakpoint implements monaco.IDisposable {
                 range: this.range,
                 options: {
                     glyphMarginClassName: glyphClass,
-                    glyphMarginHoverMessage: { value: glyphHover }
+                    glyphMarginHoverMessage: glyphHover
                 }
             }
         ]);
@@ -73,16 +73,13 @@ export class MonacoBreakpoint implements monaco.IDisposable {
 }
 
 export class BreakpointCollection implements monaco.IDisposable {
-    // This maps TS files to breakpoints. See loadBreakpointsForFile for how Python is handled
     protected fileToBreakpoint: pxt.Map<pxtc.Breakpoint[]>;
     protected loadedBreakpoints: MonacoBreakpoint[];
     protected activeBreakpoints: number[];
-    protected sourcemap: pxtc.SourceMapHelpers;
 
-    constructor(allBreakpoints: pxtc.Breakpoint[], sourcemap?: pxtc.SourceMapHelpers) {
+    constructor(allBreakpoints: pxtc.Breakpoint[]) {
         this.fileToBreakpoint = {};
         this.activeBreakpoints = [];
-        this.sourcemap = sourcemap;
 
         for (const bp of allBreakpoints) {
             if (!this.fileToBreakpoint[bp.fileName]) this.fileToBreakpoint[bp.fileName] = [];
@@ -95,24 +92,7 @@ export class BreakpointCollection implements monaco.IDisposable {
 
         if (!file) return;
 
-        const isPython = file.getExtension() === "py";
-        let srcName = file.getTextFileName();
-
-        if (isPython) srcName = file.getFileNameWithExtension("ts");
-
-        let fileBreakpoints = this.fileToBreakpoint[srcName];
-
-        if (isPython) {
-            if (!this.sourcemap) return;
-
-            fileBreakpoints = fileBreakpoints?.map(bp => {
-                const pyLoc = this.sourcemap.ts.locToLoc(bp);
-                return {
-                    ...bp,
-                    ...pyLoc
-                }
-            });
-        }
+        const fileBreakpoints = this.fileToBreakpoint[file.getTypeScriptName()];
 
         if (fileBreakpoints) {
             this.loadedBreakpoints = fileBreakpoints.map(bp => {
@@ -160,10 +140,6 @@ export class BreakpointCollection implements monaco.IDisposable {
     }
 
     getLocationOfBreakpoint(id: number): pxtc.LocationInfo {
-        // Check loaded breakpoints first in case this is a Python file
-        const loaded = this.getLoadedBreakpoint(id);
-        if (loaded) return loaded;
-
         for (const file of Object.keys(this.fileToBreakpoint)) {
             const bps = this.fileToBreakpoint[file];
 
@@ -173,15 +149,6 @@ export class BreakpointCollection implements monaco.IDisposable {
         }
 
         return undefined;
-    }
-
-    getLoadedBreakpoint(id: number) {
-        if (this.loadedBreakpoints) {
-            for (const bp of this.loadedBreakpoints) {
-                if (bp.source.id === id) return bp.source;
-            }
-        }
-        return null;
     }
 
     protected getBreakpointForLine(lineNo: number) {

@@ -257,40 +257,6 @@ The **sig** "language" displays a signature of the first function call in the sn
 **Example:** the [forever](https://makecode.microbit.org/reference/basic/forever) reference doc
 and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/reference/basic/forever.md) source.
 
-### diff
-
-Render a diff between two JavaScript snippets. The snippet consists of two text section separated by a line of ``-`` (at least 10).
-
-    ```diff
-    let x = 1
-    ----------
-    let x = 1
-    let y = 1
-    ```
-
-#### ~ hint
-
-Avoid using trailing ``;`` in your JavaScript snippets.
-
-#### ~
-
-### diffblocks
-
-Render a diff of blocks between two JavaScript snippets. The snippet consists of two text section separated by a line of ``-`` (at least 10).
-
-    ```diffblocks
-    let x = 1
-    ----------
-    let x = 1
-    let y = 1
-    ```
-
-#### ~ hint
-
-You can use the ``gost`` code section to provide the code of a step that has a gif instead of code.
-
-#### ~
-
 ### cards
 
 The **cards** "language" displays a code card for each function call.
@@ -339,14 +305,6 @@ If you need a rendering of typescript, javascript code, specify the language as 
     let x = 0;
     ```
 
-#### ~ hint
-
-In tutorial, MakeCode automatically renders a diff between each typescrit or spy snippets.
-To reset the diff on a step, use the ``@resetDiff`` metadata. 
-Use ``### @noDiffs`` to disable diffs for the entire tutorial
-
-#### ~
-
 ### spy
 
 If your editor supports [Static Python](/js/python), you can specify a TypeScript snippet to be rendered as Static Python
@@ -387,14 +345,6 @@ To render one or more code cards as JSON into cards, use **codecard**.
     }]
     ```
 
-### apis
-
-Render all blocks from a given set of namespaces as code cards.
-
-    ```apis
-    basic
-    ```
-
 ### ignore #ignore
 
 Append `-ignore` to any of the above to ignore a snippet in automated testing:
@@ -422,15 +372,4 @@ You can use `typescript-valid` to showcase typescript that is **correct**:
     ```typescript-valid
     // You can include any TS in here, e.g. to showcase correct syntax
     callFunction();
-    ```
-
-### @highlight
-
-The render will higlight the next line or block following a 
-comment with **@highlight**.
-
-    ```blocks
-    console.log(":)")
-    // @highlight
-    console.log(":(")
     ```

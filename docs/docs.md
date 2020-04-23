@@ -9,7 +9,6 @@ for creating JavaScript/Blocks online editors.
 
 * [About MakeCode](/about)
 * [Blog](/blog)
-* [Online Learning](/online-learning)
 * [Contact Us](/contact)
 * [JS Editor Features](/js/editor)
 * [Programming Language](/language)

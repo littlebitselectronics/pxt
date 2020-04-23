@@ -2,8 +2,12 @@ declare var require: any;
 import * as Promise from "bluebird";
 (window as any).Promise = Promise;
 
-const PouchDB = require("pouchdb")
-    .plugin(require('pouchdb-adapter-memory'));
+const PouchDB = require("pouchdb");
+/* tslint:disable:no-submodule-imports TODO(tslint) */
+require('pouchdb/extras/memory');
+// pouchdb 7.0 - broken in IE
+// PouchDB.plugin(require('pouchdb-adapter-memory'));
+/* tslint:enable:no-submodule-imports */
 
 (Promise as any).config({
     // Enables all warnings except forgotten return statements.

@@ -106,8 +106,7 @@ the online editor.
 They usually contain unit tests for extension.
 
 Similarly, dependencies from `testDependencies` are only included when compiled
-as top-level. The ``testDependencies`` can be added for multiple targets
-and will only be added if they can be resolved.
+as top-level.
 
 ## C++ dependencies
 

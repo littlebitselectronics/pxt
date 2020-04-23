@@ -1,6 +1,5 @@
 # Hide Iteration
 
-### @noDiffs true
 ### @hideIteration true
 
 ## Introduction

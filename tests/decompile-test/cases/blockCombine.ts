@@ -1,3 +1,5 @@
+/// <reference path="./testBlocks/blockCombine.ts" />
+
 let bcTest = bc.createTest();
 bcTest.x = 12;
 bcTest.z = 13;

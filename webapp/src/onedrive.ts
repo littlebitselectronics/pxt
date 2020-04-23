@@ -129,7 +129,7 @@ export class Provider extends cloudsync.ProviderBase implements cloudsync.Provid
             let expiresInSeconds = qs["expires_in"];
 
             if (accessToken) {
-                let ex = pxt.storage.getLocal(cloudsync.OAUTH_STATE);
+                let ex = pxt.storage.getLocal("oauthState");
                 if (!ex) {
                     reportError("OAuth not started");
                     return;
@@ -138,8 +138,8 @@ export class Provider extends cloudsync.ProviderBase implements cloudsync.Provid
                     reportError("OAuth state mismatch");
                     return;
                 }
-                pxt.storage.removeLocal(cloudsync.OAUTH_STATE);
-                pxt.storage.setLocal(cloudsync.OAUTH_HASH, frameHash);
+                pxt.storage.removeLocal("oauthState");
+                pxt.storage.setLocal("oauthHash", frameHash);
             } else {
                 reportError("access_token not in #");
                 return;
@@ -173,7 +173,7 @@ export class Provider extends cloudsync.ProviderBase implements cloudsync.Provid
 
         // Pop out
         const popupCallback = () => {
-            const qs = core.parseQueryString(pxt.storage.getLocal(cloudsync.OAUTH_HASH) || "")
+            const qs = core.parseQueryString(pxt.storage.getLocal("oauthHash") || "")
             const accessToken = qs["access_token"];
             const expiresInSeconds = parseInt(qs["expires_in"]);
 
@@ -248,7 +248,7 @@ export class Provider extends cloudsync.ProviderBase implements cloudsync.Provid
                 let expiresInSeconds = qs["expires_in"];
 
                 if (accessToken) {
-                    let ex = pxt.storage.getLocal(cloudsync.OAUTH_STATE);
+                    let ex = pxt.storage.getLocal("oauthState");
                     if (!ex) {
                         pxt.debug("OAuth not started")
                         retryLogin();
@@ -259,8 +259,8 @@ export class Provider extends cloudsync.ProviderBase implements cloudsync.Provid
                         retryLogin();
                         return;
                     }
-                    pxt.storage.removeLocal(cloudsync.OAUTH_STATE);
-                    pxt.storage.setLocal(cloudsync.OAUTH_HASH, frameHash);
+                    pxt.storage.removeLocal("oauthState");
+                    pxt.storage.setLocal("oauthHash", frameHash);
                 } else {
                     pxt.debug("access_token not in #")
                     retryLogin();

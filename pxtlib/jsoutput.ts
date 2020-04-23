@@ -270,17 +270,15 @@ namespace pxt.blocks {
         ".": 18,
     }
 
-    export interface BlockSourceInterval {
+    export interface SourceInterval {
         id: string;
-        startLine: number; // 0-indexed of the line itself
-        startPos: number; // 0-indexed from start of file including newlines
-        endLine: number;
-        endPos: number;
+        start: number;
+        end: number;
     }
 
     export function flattenNode(app: JsNode[]) {
-        let sourceMap: BlockSourceInterval[] = [];
-        let sourceMapById: pxt.Map<BlockSourceInterval> = {};
+        let sourceMap: SourceInterval[] = [];
+        let sourceMapById: pxt.Map<SourceInterval> = {};
         let output = ""
         let indent = ""
         let variables: Map<string>[] = [{}];
@@ -352,8 +350,7 @@ namespace pxt.blocks {
                 }
             }
 
-            let startLine = getCurrentLine();
-            let startPos = output.length;
+            let start = getCurrentLine();
 
             switch (n.type) {
                 case NT.Infix:
@@ -383,23 +380,16 @@ namespace pxt.blocks {
                     break
             }
 
-            let endLine = getCurrentLine();
-            // end position is non-inclusive
-            let endPos = Math.max(output.length, 1);
+            let end = getCurrentLine();
 
             if (n.id) {
                 if (sourceMapById[n.id]) {
                     const node = sourceMapById[n.id];
-                    node.startLine = Math.min(node.startLine, startLine);
-                    node.endLine = Math.max(node.endLine, endLine);
-                    node.startPos = Math.min(node.startPos, startPos);
-                    node.endPos = Math.max(node.endPos, endPos);
+                    node.start = Math.min(node.start, start);
+                    node.end = Math.max(node.end, end);
                 }
                 else {
-                    const interval: BlockSourceInterval = {
-                        id: n.id,
-                        startLine: startLine, startPos, endLine: endLine, endPos
-                    }
+                    const interval = { id: n.id, start: start, end: end }
                     sourceMapById[n.id] = interval;
                     sourceMap.push(interval)
                 }

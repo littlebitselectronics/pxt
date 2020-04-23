@@ -50,8 +50,8 @@ namespace pxtblockly {
             this.renderScreenPicker();
         }
 
-        doValueUpdate_(value: string) {
-            super.doValueUpdate_(value);
+        setValue(value: string) {
+            super.setValue(value);
             if (this.resetCrosshair) this.resetCrosshair();
         }
 
@@ -166,12 +166,14 @@ namespace pxtblockly {
 
         private setXY(x: number, y: number) {
             const xField = this.getFieldByName(this.params.xInputName);
-            if (xField && typeof xField.getValue() == "number") {
+            if (xField) {
                 xField.setValue(String(x));
+                xField.setText(String(x));
             }
             const yField = this.getFieldByName(this.params.yInputName);
-            if (yField && typeof yField.getValue() == "number") {
+            if (yField) {
                 yField.setValue(String(y));
+                yField.setText(String(y));
             }
         }
 

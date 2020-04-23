@@ -14,6 +14,9 @@
 </block>
 </value>
 <next>
+<block type="typescript_statement">
+<mutation declaredvars="var2" numlines="1" error="Variable type is not supported by Blockly" line0="let var2&#58; testNamespace.TestClass &#61; null&#59;" />
+<next>
 <block type="variables_set">
 <field name="VAR">var2</field>
 <value name="VALUE">
@@ -60,6 +63,9 @@
 </next>
 </block>
 </next>
+</block>
+</next>
+<comment pinned="false">&#47; &#60;reference path&#61;&#34;.&#47;testBlocks&#47;basic.ts&#34; &#47;&#62;</comment>
 </block>
 </statement>
 </block>

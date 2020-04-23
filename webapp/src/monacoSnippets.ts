@@ -14,7 +14,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "loops_while",
                     snippetName: "while",
                     snippet: `while(true) {\n\n}`,
-                    pySnippet: `while True:\n    pass`,
+                    pySnippet: `while True:\n  pass`,
                     attributes: {
                         blockId: 'device_while',
                         weight: 48,
@@ -25,7 +25,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "loops_for",
                     snippetName: "for",
                     snippet: `for(let i = 0; i < 5; i++) {\n\n}`,
-                    pySnippet: `for i in range(4):\n    pass`,
+                    pySnippet: `for i in range(0, 4):\n  pass`,
                     attributes: {
                         blockId: 'pxt_controls_for',
                         weight: 47,
@@ -48,7 +48,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "logic_if",
                     snippetName: "if",
                     snippet: `if (true) {\n\n}`,
-                    pySnippet: `if True:\n    pass`,
+                    pySnippet: `if True:\n  pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 49,
@@ -59,7 +59,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "logic_if_else",
                     snippetName: "if else",
                     snippet: `if (true) {\n\n} else {\n\n}`,
-                    pySnippet: `if True:\n    pass\nelse:\n    pass`,
+                    pySnippet: `if True:\n  pass\nelse:\n  pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 48,
@@ -256,7 +256,6 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     pySnippet: `randint(0, 10)`,
                     attributes: {
                         weight: 65,
-                        blockId: "device_random",
                         jsDoc: lf("Returns a random number between min and max")
                     },
                     retType: "number"
@@ -264,7 +263,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             ],
             attributes: {
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
-                weight: 50.08,
+                weight: 50.06,
                 icon: "math",
                 paramDefl: {}
             }
@@ -278,7 +277,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     snippetName: "function doSomething",
                     snippet: `function doSomething() {\n\n}`,
                     pySnippetName: "def do_something",
-                    pySnippet: `def do_something():\n    pass`,
+                    pySnippet: `def do_something():\n  pass`,
                     attributes: {
                         blockId: 'procedures_defnoreturn',
                         jsDoc: lf("Define a function")
@@ -297,8 +296,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
             ],
             attributes: {
-                advanced: false,
-                weight: 50.06,
+                advanced: true,
+                weight: 50.08,
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 icon: "functions",
                 paramDefl: {}
@@ -544,8 +543,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
             ],
             attributes: {
-                weight: 88,
-                advanced: false,
+                advanced: true,
+                weight: 50.06,
                 icon: "text",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
@@ -600,20 +599,6 @@ export function getPauseUntil() {
     }
 
     return pauseUntil;
-}
-
-// Map of defined snippets to blockIds, for when multiple
-// blocks (eg "for index" and "repeat") map to the same snippet
-let _blockIdMap: pxt.Map<string[]>;
-export function blockIdMap() {
-    if (!_blockIdMap) {
-        _blockIdMap = {
-            "pxt_controls_for": ["controls_repeat_ext"]
-        }
-        const targetIds = pxt.appTarget.blockIdMap;
-        if (targetIds) Object.keys(targetIds).forEach(id => _blockIdMap[id] = targetIds[id]);
-    }
-    return _blockIdMap;
 }
 
 export function getBuiltinCategory(ns: string) {
