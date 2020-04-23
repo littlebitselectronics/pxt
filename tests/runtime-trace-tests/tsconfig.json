@@ -16,8 +16,6 @@
         "sourceMap": false
     },
     "files": [
-        "tracerunner.ts",
-        "../common/testUtils.ts",
-        "../common/testHost.ts"
+        "tracerunner.ts"
     ]
 }

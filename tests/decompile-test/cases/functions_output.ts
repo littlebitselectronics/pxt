@@ -1,3 +1,4 @@
+/// <reference path="./testBlocks/basic.ts" />
 
 let x1 = testNamespace.noArgumentOutput()
 let x2 = false || testNamespace.booleanArgumentOutput(true)

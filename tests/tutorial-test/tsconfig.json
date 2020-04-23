@@ -16,8 +16,6 @@
         "sourceMap": false
     },
     "files": [
-        "tutorialrunner.ts",
-        "../common/testUtils.ts",
-        "../common/testHost.ts"
+        "tutorialrunner.ts"
     ]
 }

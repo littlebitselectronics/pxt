@@ -73,6 +73,7 @@ interface AppTheme {
         homeUrl?: string;
         shareUrl?: string;
         embedUrl?: string;
+        betaUrl?: string;   // beta tag and URL
         privacyUrl?: string;
         termsOfUseUrl?: string;
         contactUrl?: string;

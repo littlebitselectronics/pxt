@@ -8,19 +8,7 @@
         "out": "../built/pxtcompiler.js",
         "newLine": "LF",
         "sourceMap": false,
-        "lib": [
-            "dom",
-            "dom.iterable",
-            "scripthost",
-            "es6"
-        ],
-        "types": [
-            "fuse",
-            "bluebird"
-        ],
-        "incremental": true
-    },
-    "exclude": [
-        "ext-typescript/lib/lib.d.ts"
-    ]
+        "lib": ["dom", "dom.iterable", "scripthost", "es6"],
+        "types": ["fuse", "bluebird"]
+    }
 }

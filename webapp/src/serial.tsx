@@ -429,11 +429,7 @@ export class Editor extends srceditor.Editor {
     downloadRaw() {
         core.infoNotification(lf("Exporting text...."));
         const time = new Date(Date.now()).toString().replace(/[^\d]+/g, '-').replace(/(^-|-$)/g, '');
-        let buf = this.rawDataBuffer;
-        // ensure \r\n newlines for windows <10
-        if (pxt.BrowserUtils.isWindows())
-            buf = buf.replace(/[^\r]\n/g, '\r\n');
-        pxt.commands.browserDownloadAsync(Util.toUTF8(buf), pxt.appTarget.id + '-' + lf("{id:csvfilename}console") + '-' + time + ".txt", "text/plain")
+        pxt.commands.browserDownloadAsync(Util.toUTF8(this.rawDataBuffer), pxt.appTarget.id + '-' + lf("{id:csvfilename}console") + '-' + time + ".txt", "text/plain")
     }
 
     goBack() {

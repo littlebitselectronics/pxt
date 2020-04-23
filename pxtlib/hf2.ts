@@ -32,6 +32,30 @@ namespace pxt.HF2 {
         NXP = 0x0D28, // aka Freescale, KL26 etc
     }
 
+
+    export interface TalkArgs {
+        cmd: number;
+        data?: Uint8Array;
+    }
+
+    export interface PacketIO {
+        sendPacketAsync(pkt: Uint8Array): Promise<void>;
+        onData: (v: Uint8Array) => void;
+        onError: (e: Error) => void;
+        onEvent: (v: Uint8Array) => void;
+        error(msg: string): any;
+        reconnectAsync(): Promise<void>;
+        disconnectAsync(): Promise<void>;
+        isSwitchingToBootloader?: () => void;
+
+        // these are implemneted by HID-bridge
+        talksAsync?(cmds: TalkArgs[]): Promise<Uint8Array[]>;
+        sendSerialAsync?(buf: Uint8Array, useStdErr: boolean): Promise<void>;
+        onSerial?: (v: Uint8Array, isErr: boolean) => void;
+    }
+
+    export let mkPacketIOAsync: () => Promise<pxt.HF2.PacketIO>
+
     // see https://github.com/microsoft/uf2/blob/master/hf2.md for full spec
     export const HF2_CMD_BININFO = 0x0001 // no arguments
     export const HF2_MODE_BOOTLOADER = 0x01
@@ -150,6 +174,8 @@ namespace pxt.HF2 {
         return res
     }
 
+
+
     export interface BootloaderInfo {
         Header: string;
         Parsed: {
@@ -172,13 +198,10 @@ namespace pxt.HF2 {
             pxt.debug("HF2: " + msg)
     }
 
-    export class Wrapper implements pxt.packetio.PacketIOWrapper {
+    export class Wrapper {
         private cmdSeq = U.randomUint32();
-        constructor(public readonly io: pxt.packetio.PacketIO) {
+        constructor(public io: PacketIO) {
             let frames: Uint8Array[] = []
-            io.onDeviceConnectionChanged = connect =>
-                this.disconnectAsync()
-                    .then(() => connect && this.reconnectAsync());
             io.onSerial = (b, e) => this.onSerial(b, e)
             io.onData = buf => {
                 let tp = buf[0] & HF2_FLAG_MASK
@@ -268,10 +291,10 @@ namespace pxt.HF2 {
             this.eventHandlers[id + ""] = f
         }
 
-        reconnectAsync(): Promise<void> {
+        reconnectAsync(first = false): Promise<void> {
             this.resetState()
+            if (first) return this.initAsync()
             log(`reconnect raw=${this.rawMode}`);
-
             return this.io.reconnectAsync()
                 .then(() => this.initAsync())
                 .catch(e => {
@@ -403,13 +426,9 @@ namespace pxt.HF2 {
                 })
         }
 
-        reflashAsync(resp: pxtc.CompileResult): Promise<void> {
+        reflashAsync(blocks: pxtc.UF2.Block[]) {
             log(`reflash`)
-            U.assert(pxt.appTarget.compile.useUF2);
-            const f = resp.outfiles[pxtc.BINARY_UF2]
-            const blocks = pxtc.UF2.parseFile(pxt.Util.stringToUint8Array(atob(f)))
-            return this.io.reconnectAsync()
-                .then(() => this.flashAsync(blocks))
+            return this.flashAsync(blocks)
                 .then(() => Promise.delay(100))
                 .then(() => this.reconnectAsync())
         }
@@ -533,18 +552,13 @@ namespace pxt.HF2 {
 
     }
 
-    export function mkPacketIOWrapper(io: pxt.packetio.PacketIO): pxt.packetio.PacketIOWrapper {
-        pxt.log(`packetio: wrapper hf2`)
-        return new Wrapper(io);
-    }
-
     export type ReadAsync = (addr: number, len: number) => Promise<ArrayLike<number>>
-    function readChecksumBlockAsync(readWordsAsync: ReadAsync): Promise<pxtc.ChecksumBlock> {
+    function readChecksumBlockAsync(readWordsAsync: ReadAsync): Promise<pxtc.hex.ChecksumBlock> {
         if (!pxt.appTarget.compile.flashChecksumAddr)
-            return Promise.resolve(null as pxtc.ChecksumBlock)
+            return Promise.resolve(null as pxtc.hex.ChecksumBlock)
         return readWordsAsync(pxt.appTarget.compile.flashChecksumAddr, 12)
             .then(buf => {
-                let blk = pxtc.parseChecksumBlock(buf)
+                let blk = pxtc.hex.parseChecksumBlock(buf)
                 if (!blk)
                     return null
                 return readWordsAsync(blk.endMarkerPos, 1)
@@ -562,7 +576,7 @@ namespace pxt.HF2 {
         if (!pxt.appTarget.compile.flashChecksumAddr)
             return Promise.resolve(blocks)
         let blBuf = pxtc.UF2.readBytes(blocks, pxt.appTarget.compile.flashChecksumAddr, 12 * 4)
-        let blChk = pxtc.parseChecksumBlock(blBuf)
+        let blChk = pxtc.hex.parseChecksumBlock(blBuf)
         if (!blChk)
             return Promise.resolve(blocks)
         return readChecksumBlockAsync(readWordsAsync)

@@ -3,7 +3,9 @@
 function testRefLocals(): void {
     msg("start test ref locals");
     let s = "";
-    for (let i of [3, 2, 1]) {
+    // For 4 or more it runs out of memory
+    for (let i = 0; i < 3; i++) {
+        msg(i + "");
         let copy = i;
         control.runInBackground(() => {
             pause(10 * i);
@@ -15,7 +17,7 @@ function testRefLocals(): void {
         });
     }
     pause(200);
-    assert(s == "111213", "reflocals");
+    assert(s == "101112", "reflocals");
 }
 
 function byRefParam_0(p: number): void {

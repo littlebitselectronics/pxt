@@ -27,7 +27,6 @@ namespace pxtblockly {
             if (Blockly.DropDownDiv.hideIfOwner(this)) {
                 return;
             }
-            let sourceBlock = this.sourceBlock_ as Blockly.BlockSvg;
             // If there is an existing drop-down someone else owns, hide it immediately and clear it.
             Blockly.DropDownDiv.hideWithoutAnimation();
             Blockly.DropDownDiv.clearContent();
@@ -64,14 +63,14 @@ namespace pxtblockly {
                     button.style.width = content.width + 'px';
                     button.style.height = content.height + 'px';
                 }
-                let backgroundColor = sourceBlock.getColour();
+                let backgroundColor = this.sourceBlock_.getColour();
                 if (value == this.getValue()) {
                     // This icon is selected, show it in a different colour
-                    backgroundColor = sourceBlock.getColourTertiary();
+                    backgroundColor = this.sourceBlock_.getColourTertiary();
                     button.setAttribute('aria-selected', 'true');
                 }
                 button.style.backgroundColor = backgroundColor;
-                button.style.borderColor = sourceBlock.getColourTertiary();
+                button.style.borderColor = this.sourceBlock_.getColourTertiary();
                 Blockly.bindEvent_(button, 'click', this, this.buttonClick_);
                 Blockly.bindEvent_(button, 'mouseover', button, function () {
                     this.setAttribute('class', 'blocklyDropDownButton blocklyDropDownButtonHover');
@@ -99,27 +98,30 @@ namespace pxtblockly {
             contentDiv.style.width = (this as any).width_ + 'px';
             dropdownDiv.appendChild(contentDiv);
 
-            Blockly.DropDownDiv.setColour(sourceBlock.getColour(), sourceBlock.getColourTertiary());
+            Blockly.DropDownDiv.setColour(this.sourceBlock_.getColour(), this.sourceBlock_.getColourTertiary());
 
-            // Position based on the field position.
-            Blockly.DropDownDiv.showPositionedByField(this, this.onHideCallback.bind(this));
+            // Calculate positioning based on the field position.
+            let scale = (this.sourceBlock_.workspace as Blockly.WorkspaceSvg).scale;
+            let bBox = { width: this.size_.width, height: this.size_.height };
+            bBox.width *= scale;
+            bBox.height *= scale;
+            let position = this.fieldGroup_.getBoundingClientRect();
+            let primaryX = position.left + bBox.width / 2;
+            let primaryY = position.top + bBox.height;
+            let secondaryX = primaryX;
+            let secondaryY = position.top;
+            // Set bounds to workspace; show the drop-down.
+            (Blockly.DropDownDiv as any).setBoundsElement((this.sourceBlock_.workspace as Blockly.WorkspaceSvg).getParentSvg().parentNode);
+            (Blockly.DropDownDiv as any).show(this, primaryX, primaryY, secondaryX, secondaryY,
+                this.onHide_.bind(this));
 
             // Update colour to look selected.
-            this.savedPrimary_ = sourceBlock?.getColour();
-            if (sourceBlock?.isShadow()) {
-                sourceBlock.setColour(sourceBlock.style.colourTertiary);
-            } else if (this.borderRect_) {
-                this.borderRect_.setAttribute('fill', sourceBlock.style.colourTertiary);
-            }
-        }
-
-        // Update color (deselect) on dropdown hide
-        protected onHideCallback() {
-            let source = this.sourceBlock_ as Blockly.BlockSvg;
-            if (source?.isShadow()) {
-                source.setColour(this.savedPrimary_);
-            } else if (this.borderRect_) {
-                this.borderRect_.setAttribute('fill', this.savedPrimary_);
+            if (this.sourceBlock_.isShadow()) {
+                this.savedPrimary_ = this.sourceBlock_.getColour();
+                this.sourceBlock_.setColour(this.sourceBlock_.getColourTertiary(),
+                    this.sourceBlock_.getColourSecondary(), this.sourceBlock_.getColourTertiary());
+            } else if (this.box_) {
+                this.box_.setAttribute('fill', this.sourceBlock_.getColourTertiary());
             }
         }
 

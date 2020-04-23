@@ -32,21 +32,16 @@ export class File implements pxt.editor.IFile {
     constructor(public epkg: EditorPackage, public name: string, public content: string) { }
 
     isReadonly() {
-        return !this.epkg.header;
+        return !this.epkg.header
     }
 
     getName() {
         return this.epkg.getPkgId() + "/" + this.name
     }
 
-    getTextFileName() {
+    getTypeScriptName() {
         if (this.epkg.isTopLevel()) return this.name
         else return "pxt_modules/" + this.epkg.getPkgId() + "/" + this.name
-    }
-
-    getFileNameWithExtension(ext: string) {
-        const base = this.getTextFileName();
-        return base.substring(0, base.length - this.getExtension().length) + ext;
     }
 
     getExtension() {
@@ -77,8 +72,6 @@ export class File implements pxt.editor.IFile {
     weight() {
         if (/^main\./.test(this.name))
             return 5;
-        if (/^_locales\//.test(this.name))
-            return 500;
         if (extWeight.hasOwnProperty(this.getExtension()))
             return extWeight[this.getExtension()]
         return 60;
@@ -139,16 +132,6 @@ export class File implements pxt.editor.IFile {
     }
 }
 
-interface CachedTranspile {
-    fromLanguage: pxtc.CodeLang;
-    fromText: string;
-
-    toLanguage: pxtc.CodeLang;
-    toText: string;
-}
-
-const MAX_CODE_EQUIVS = 10
-
 export class EditorPackage {
     files: pxt.Map<File> = {};
     header: pxt.workspace.Header;
@@ -157,7 +140,6 @@ export class EditorPackage {
     savingNow = 0;
     private simState: pxt.Map<any>;
     private simStateSaveScheduled = false;
-    protected transpileCache: CachedTranspile[] = [];
 
     id: string;
     outputPkg: EditorPackage;
@@ -206,12 +188,6 @@ export class EditorPackage {
 
     getTopHeader() {
         return this.topPkg.header;
-    }
-
-    getLanguageRestrictions() {
-        const ksPkg = this.topPkg.ksPkg;
-        const cfg = ksPkg && ksPkg.config;
-        return cfg && cfg.languageRestriction;
     }
 
     afterMainLoadAsync() {
@@ -466,36 +442,6 @@ export class EditorPackage {
         if (name.indexOf("pxt_modules/") === 0) name = name.slice(12);
         return this.filterFiles(f => f.getName() == name)[0]
     }
-
-    cacheTranspile(fromLanguage: pxtc.CodeLang, fromText: string, toLanguage: pxtc.CodeLang, toText: string) {
-        this.transpileCache.push({
-            fromLanguage,
-            fromText,
-            toLanguage,
-            toText
-        });
-
-        if (this.transpileCache.length > MAX_CODE_EQUIVS) {
-            this.transpileCache.shift();
-        }
-    }
-
-    getCachedTranspile(fromLanguage: pxtc.CodeLang, fromText: string, toLanguage: pxtc.CodeLang) {
-        for (const ct of this.transpileCache) {
-            if (ct.toLanguage === fromLanguage && ct.fromLanguage === toLanguage && codeIsEqual(fromLanguage, ct.toText, fromText)) {
-                return ct.fromText;
-            }
-            else if (ct.fromLanguage === fromLanguage && ct.toLanguage === toLanguage && codeIsEqual(fromLanguage, ct.fromText, fromText)) {
-                return ct.toText;
-            }
-        }
-
-        return null;
-    }
-}
-
-function codeIsEqual(language: pxtc.CodeLang, a: string, b: string) {
-    return a === b;
 }
 
 class Host
@@ -519,7 +465,7 @@ class Host
     }
 
     getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
-        return pxt.hexloader.getHexInfoAsync(this, extInfo).catch(core.handleNetworkError);
+        return pxt.hex.getHexInfoAsync(this, extInfo).catch(core.handleNetworkError);
     }
 
     cacheStoreAsync(id: string, val: string): Promise<void> {
@@ -755,60 +701,6 @@ data.mountVirtualApi("pkg-git-status", {
         return r;
     }
 })
-
-export function invalidatePullStatus(hd: pxt.workspace.Header) {
-    data.invalidateHeader("pkg-git-pull-status", hd)
-}
-
-data.mountVirtualApi("pkg-git-pull-status", {
-    getAsync: p => {
-        p = data.stripProtocol(p)
-        const f = allEditorPkgs().find(pkg => pkg.header && pkg.header.id == p);
-        const ghid = f.getPkgId() == "this" && f.header && f.header.githubId;
-        if (!ghid) return Promise.resolve(workspace.PullStatus.NoSourceControl)
-        return workspace.pullAsync(f.header, true)
-            .catch(e => workspace.PullStatus.NoSourceControl);
-    },
-    expirationTime: p => 3600 * 1000
-})
-
-data.mountVirtualApi("pkg-git-pr", {
-    getAsync: p => {
-        const missing = <pxt.github.PullRequest>{
-            number: -1
-        };
-        p = data.stripProtocol(p)
-        const f = allEditorPkgs().find(pkg => pkg.header && pkg.header.id == p);
-        const header = f.header;
-        const ghid = f.getPkgId() == "this" && header && header.githubId;
-        if (!ghid) return Promise.resolve(missing);
-        const parsed = pxt.github.parseRepoId(ghid);
-        if (!parsed || !parsed.tag || parsed.tag == "master") return Promise.resolve(missing);
-        return pxt.github.findPRNumberforBranchAsync(parsed.fullName, parsed.tag)
-            .catch(e => missing);
-    },
-    expirationTime: p => 3600 * 1000
-})
-
-export function invalidatePagesStatus(hd: pxt.workspace.Header) {
-    data.invalidateHeader("pkg-git-pages", hd)
-}
-
-data.mountVirtualApi("pkg-git-pages", {
-    getAsync: p => {
-        p = data.stripProtocol(p)
-        const f = allEditorPkgs().find(pkg => pkg.header && pkg.header.id == p);
-        const header = f.header;
-        const ghid = f.getPkgId() == "this" && header && header.githubId;
-        if (!ghid) return Promise.resolve(undefined);
-        const parsed = pxt.github.parseRepoId(ghid);
-        if (!parsed) return Promise.resolve(undefined);
-        return pxt.github.getPagesStatusAsync(parsed.fullName)
-            .catch(e => undefined);
-    },
-    expirationTime: p => 3600 * 1000
-})
-
 
 // pkg-status:<guid>
 data.mountVirtualApi("pkg-status", {

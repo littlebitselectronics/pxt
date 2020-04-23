@@ -2,7 +2,6 @@
 
 # Getting started
 
-### @noDiffs true
 ### Introduction @unplugged
 
 Let's get started!

@@ -1,3 +1,4 @@
+/// <reference path="./testBlocks/basic.ts" />
 
 testNamespace.withCallback(function () {})
 

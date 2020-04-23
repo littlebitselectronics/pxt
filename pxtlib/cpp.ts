@@ -139,7 +139,8 @@ namespace pxt.cpp {
         return null
     }
 
-    let prevExtInfos: Map<pxtc.ExtensionInfo> = {};
+    let prevExtInfo: pxtc.ExtensionInfo;
+    let prevSnapshot: Map<string>;
 
     export class PkgConflictError extends Error {
         pkg0: Package;
@@ -156,9 +157,7 @@ namespace pxt.cpp {
     }
 
     export function getExtensionInfo(mainPkg: MainPackage): pxtc.ExtensionInfo {
-        let pkgSnapshot: Map<string> = {
-            "__appVariant": pxt.appTargetVariant || ""
-        }
+        let pkgSnapshot: Map<string> = {}
         let constsName = "dal.d.ts"
         let sourcePath = "/source/"
 
@@ -168,10 +167,9 @@ namespace pxt.cpp {
             pkg.addSnapshot(pkgSnapshot, [constsName, ".h", ".cpp"])
         }
 
-        const key = JSON.stringify(pkgSnapshot)
-        if (prevExtInfos[key]) {
+        if (prevSnapshot && U.stringMapEq(pkgSnapshot, prevSnapshot)) {
             pxt.debug("Using cached extinfo")
-            return prevExtInfos[key]
+            return prevExtInfo
         }
 
         pxt.debug("Generating new extinfo")
@@ -257,6 +255,9 @@ namespace pxt.cpp {
         if (compile.switches.boxDebug)
             cpp_options["PXT_BOX_DEBUG"] = 1
 
+        if (compile.gc)
+            cpp_options["PXT_GC"] = 1
+
         if (compile.utf8)
             cpp_options["PXT_UTF8"] = 1
 
@@ -268,6 +269,9 @@ namespace pxt.cpp {
 
         if (compile.switches.numFloat)
             cpp_options["PXT_USE_FLOAT"] = 1
+
+        if (compile.vtableShift)
+            cpp_options["PXT_VTABLE_SHIFT"] = compile.vtableShift
 
         if (compile.nativeType == pxtc.NATIVE_TYPE_VM)
             cpp_options["PXT_VM"] = 1
@@ -900,8 +904,9 @@ namespace pxt.cpp {
                             U.userError(lf("C++ file {0} is missing in extension {1}.", fn, pkg.config.name))
                         fileName = fullName
 
+                        // parseCpp() will remove doc comments, to prevent excessive recompilation
+                        pxt.debug("Parse C++: " + fullName)
                         parseCpp(src, isHeader)
-                        src = src.replace(/^\s*/mg, "") // shrink the files
                         res.extensionFiles[sourcePath + fullName] = src
 
                         if (pkg.level == 0)
@@ -1063,9 +1068,8 @@ int main() {
         res.shimsDTS = shimsDTS.finish()
         res.enumsDTS = enumsDTS.finish()
 
-        if (Object.keys(prevExtInfos).length > 10)
-            prevExtInfos = {}
-        prevExtInfos[key] = res
+        prevSnapshot = pkgSnapshot
+        prevExtInfo = res
 
         return res;
     }
@@ -1136,14 +1140,14 @@ int main() {
         let buf: number[];
         let ptr = 0;
         hexfile.split(/\r?\n/).forEach(ln => {
-            let m = /^:10....0[0E]41140E2FB82FA2BB(....)(....)(....)(....)(..)/.exec(ln)
+            let m = /^:10....0041140E2FB82FA2BB(....)(....)(....)(....)(..)/.exec(ln)
             if (m) {
                 metaLen = parseInt(swapBytes(m[1]), 16)
                 textLen = parseInt(swapBytes(m[2]), 16)
                 toGo = metaLen + textLen
                 buf = <any>new Uint8Array(toGo)
             } else if (toGo > 0) {
-                m = /^:10....0[0E](.*)(..)$/.exec(ln)
+                m = /^:10....00(.*)(..)$/.exec(ln)
                 if (!m) return
                 let k = m[1]
                 while (toGo > 0 && k.length > 0) {
@@ -1248,10 +1252,9 @@ int main() {
     }
 }
 
-namespace pxt.hexloader {
+namespace pxt.hex {
     const downloadCache: Map<Promise<pxtc.HexInfo>> = {};
     let cdnUrlPromise: Promise<string>;
-    let hexInfoMemCache: pxt.Map<pxtc.HexInfo> = {}
 
     export let showLoading: (msg: string) => void = (msg) => { };
     export let hideLoading: () => void = () => { };
@@ -1418,9 +1421,8 @@ namespace pxt.hexloader {
         if (!extInfo.sha)
             return Promise.resolve<any>(null)
 
-        const cached = hexInfoMemCache[extInfo.sha]
-        if (cached)
-            return Promise.resolve(cached)
+        if (pxtc.hex.isSetupFor(extInfo))
+            return Promise.resolve(pxtc.hex.currentHexInfo)
 
         pxt.debug("get hex info: " + extInfo.sha)
 
@@ -1454,14 +1456,6 @@ namespace pxt.hexloader {
                             return Promise.resolve(null);
                         })
                 }
-            })
-            .then(res => {
-                if (res) {
-                    if (Object.keys(hexInfoMemCache).length > 20)
-                        hexInfoMemCache = {}
-                    hexInfoMemCache[extInfo.sha] = res
-                }
-                return res
             })
     }
 

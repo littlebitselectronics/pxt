@@ -1,3 +1,5 @@
+/// <reference path="./testBlocks/mb.ts" />
+
 class Foo {
     x: number;
     constructor() {

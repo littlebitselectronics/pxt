@@ -9,14 +9,14 @@ namespace pxtblockly {
             this.initVariables();
         }
 
-        onItemSelected(menu: Blockly.Menu, menuItem: Blockly.MenuItem) {
+        onItemSelected(menu: goog.ui.Menu, menuItem: goog.ui.MenuItem) {
             const value = menuItem.getValue();
             if (value === "CREATE") {
                 promptAndCreateEnum(this.sourceBlock_.workspace, this.opts, lf("New {0}:", this.opts.memberName),
                     newName => newName && this.setValue(newName));
             }
             else {
-                super.onItemSelected_(menu, menuItem);
+                super.onItemSelected(menu, menuItem);
             }
         }
 

@@ -24,7 +24,6 @@ namespace pxt.blocks {
         useViewWidth?: boolean;
         splitSvg?: boolean;
         forceCompilation?: boolean;
-        generateSourceMap?: boolean;
     }
 
     export function initRenderingWorkspace() {
@@ -37,14 +36,11 @@ namespace pxt.blocks {
             blocklyDiv.style.height = "1px";
             document.body.appendChild(blocklyDiv);
             workspace = Blockly.inject(blocklyDiv, {
-                move: {
-                    scrollbars: false
-                },
+                scrollbars: false,
                 readOnly: true,
-                sounds: false,
+                sound: false,
                 media: pxt.webConfig.commitCdnUrl + "blockly/media/",
-                rtl: Util.isUserLanguageRtl(),
-                renderer: "pxt"
+                rtl: Util.isUserLanguageRtl()
             }) as Blockly.WorkspaceSvg;
         }
 
@@ -74,7 +70,7 @@ namespace pxt.blocks {
                 break;
         }
 
-        let metrics = workspace.getMetrics() as Blockly.Metrics;
+        let metrics = workspace.getMetrics();
 
         const svg = blocklyDiv.querySelectorAll('svg')[0].cloneNode(true) as SVGSVGElement;
         pxt.blocks.layout.cleanUpBlocklySvg(svg);

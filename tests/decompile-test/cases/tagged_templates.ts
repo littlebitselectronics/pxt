@@ -1,3 +1,4 @@
+/// <reference path="./testBlocks/templateStrings.ts" />
 
 
 let template_test = template.create(img`0123`)

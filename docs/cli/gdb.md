@@ -127,6 +127,11 @@ $_TARGETNAME configure -event gdb-attach {
     echo "Halting target"
     halt
 }
+
+$_TARGETNAME configure -event gdb-detach {
+    echo "Resetting target"
+    reset
+}
 ```
 
 ## See Also

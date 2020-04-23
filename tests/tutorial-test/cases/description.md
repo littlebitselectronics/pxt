@@ -1,6 +1,5 @@
 # Description
 
-### @noDiffs true
 ### @description Tutorial descriptions are not displayed
 
 ## Step 1

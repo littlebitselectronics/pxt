@@ -16,8 +16,6 @@
         "sourceMap": false
     },
     "files": [
-        "pydecompilerunner.ts",
-        "../common/testUtils.ts",
-        "../common/testHost.ts"
+        "pydecompilerunner.ts"
     ]
 }

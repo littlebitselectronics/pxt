@@ -410,13 +410,12 @@ namespace ts.pxtc.ir {
     }
 
     export interface ProcId {
-        proc?: Procedure;
-        virtualIndex?: number;
-        ifaceIndex?: number;
+        proc: Procedure;
+        virtualIndex: number;
+        ifaceIndex: number;
+        mapMethod?: string;
         classInfo?: ClassInfo;
-        isSet?: boolean;
-        isThis?: boolean; // it's a call of the form this.foo(...) - no need to check subtyping
-        noArgs?: boolean; // this property access, with no arguments, except for 'this', passed
+        isThis?: boolean;
     }
 
     // estimated cost in bytes of Thumb code to execute given expression
@@ -529,10 +528,6 @@ namespace ts.pxtc.ir {
             this.locals = []
             this.captured = []
             this.args = []
-        }
-
-        isGetter() {
-            return this.action && this.action.kind == ts.SyntaxKind.GetAccessor
         }
 
         vtLabel() {

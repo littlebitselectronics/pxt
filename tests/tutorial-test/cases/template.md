@@ -1,6 +1,5 @@
 # Template blocks
 
-### @noDiffs true
 ## Introduction @unplugged
 
 Let's get started!

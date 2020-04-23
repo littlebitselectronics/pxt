@@ -2,20 +2,12 @@
 
 <body>
     <pre id="mycode">
-    <code>basic.showString("hello!")</code>
+    basic.showString("hello!")
     </pre>
     <pre id="mycode2">
             basic.showIcon(IconNames.Heart)                    
             </pre>
-            <pre id="mycode3">
-                <code>
-                    &lt;xml xmlns="http://www.w3.org/1999/xhtml"&gt;
-                        &lt;block type="device_forever"&gt;&lt;/block&gt;
-                      &lt;/xml&gt;    
-                </code>
-                </pre>
-            
-            <div id="status"></div>
+    <div id="status"></div>
     <div id="blocks"></div>
 
     <script>
@@ -46,9 +38,8 @@
 
             switch (msg.type) {
                 case "renderready":
-                 //   makeCodeRenderPre(document.getElementById("mycode"))
-                   // makeCodeRenderPre(document.getElementById("mycode2"))
-                    makeCodeRenderPre(document.getElementById("mycode3"))
+                    makeCodeRenderPre(document.getElementById("mycode"))
+                    makeCodeRenderPre(document.getElementById("mycode2"))
                     break;
                 case "renderblocks":
                     console.log(msg);

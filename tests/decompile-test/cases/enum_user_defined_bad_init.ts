@@ -1,3 +1,4 @@
+/// <reference path="./testBlocks/enums.ts" />
 
 enum PlainOldEnum {
     G = 9 * 9,

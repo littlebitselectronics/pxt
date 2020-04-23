@@ -4,10 +4,7 @@
 
 ## ~ hint
 
-**Update**: Read part 3 at [MakeCode with GitHub](/blog/makecode-with-github).
-
-**Update**: Read part 2 at [GitHub Extensions Reloaded](/blog/github-extensions-episode-2).
-
+**Update**: Read part 2 at [GitHub Extensions Reloaded](/blog/github-extensions-reloaded).
 **Update**: This feature is now documented in [GitHub extension authoring](/extensions/github-authoring).
 
 ## ~

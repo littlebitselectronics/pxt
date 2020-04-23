@@ -1,8 +1,5 @@
+/// <reference path="../../built/typescriptServices.d.ts"/>
 /// <reference path="../../localtypings/pxtarget.d.ts"/>
-// TODO: enable reference so we don't need to use: (pxt as any).py
-//      the issue is that this creates a circular dependency. This
-//      is easily handled if we used proper TS modules.
-//// <reference path="../../built/pxtpy.d.ts"/>
 
 // Enforce order:
 /// <reference path="thumb.ts"/>
@@ -88,12 +85,12 @@ namespace ts.pxtc {
         })
     }
 
-    export function py2tsIfNecessary(opts: CompileOptions): transpile.TranspileResult | undefined {
-        if (opts.target.preferredEditor == pxt.PYTHON_PROJECT_NAME) {
-            let res = pxtc.transpile.pyToTs(opts)
-            return res
+    export function runConversions(opts: CompileOptions) {
+        let diags: KsDiagnostic[] = []
+        for (let pass of pxt.conversionPasses) {
+            U.pushRange(diags, pass(opts))
         }
-        return undefined
+        return diags
     }
 
     function mkCompileResult(): CompileResult {
@@ -111,17 +108,12 @@ namespace ts.pxtc {
             res.outfiles[f] = opts.fileSystem[f]
     }
 
-    export function runConversionsAndStoreResults(opts: CompileOptions, res?: CompileResult): CompileResult {
+    export function runConversionsAndStoreResults(opts: CompileOptions, res?: CompileResult) {
         const startTime = U.cpuUs()
-        if (!res) {
-            res = mkCompileResult();
-        }
-        const convRes = py2tsIfNecessary(opts)
-        if (convRes) {
-            res = { ...res, diagnostics: convRes.diagnostics, sourceMap: convRes.sourceMap, globalNames: convRes.globalNames }
-        }
-
+        if (!res) res = mkCompileResult()
+        const convDiag = runConversions(opts)
         storeGeneratedFiles(opts, res)
+        res.diagnostics = convDiag
 
         if (!opts.sourceFiles)
             opts.sourceFiles = Object.keys(opts.fileSystem)
@@ -202,27 +194,7 @@ namespace ts.pxtc {
         return U.startsWith(filename, "pxt_modules/")
     }
 
-    export interface CompilerHooks {
-        init?(opts: CompileOptions, service?: LanguageService): void;
-        preBinary?(program: Program, opts: CompileOptions, res: CompileResult): void;
-        postBinary?(program: Program, opts: CompileOptions, res: CompileResult): void;
-    }
-    export let compilerHooks: CompilerHooks
-
     export function compile(opts: CompileOptions, service?: LanguageService) {
-        if (!compilerHooks) {
-            // run the extension at most once
-            compilerHooks = {}
-
-            // The extension JavaScript code comes from target.json. It is generated from compiler/*.ts in target by 'pxt buildtarget'
-            if (opts.target.compilerExtension)
-                // tslint:disable-next-line
-                eval(opts.target.compilerExtension)
-        }
-
-        if (compilerHooks.init)
-            compilerHooks.init(opts, service)
-
         let startTime = U.cpuUs()
         let res = mkCompileResult()
 
@@ -294,19 +266,19 @@ namespace ts.pxtc {
         return res
     }
 
-    export function decompile(program: Program, opts: CompileOptions, fileName: string, includeGreyBlockMessages = false) {
+    export function decompile(program: Program, opts: CompileOptions, fileName: string, includeGreyBlockMessages = false, generatedVarDeclarations?: pxt.Map<pxt.blocks.VarDeclaration>) {
         let file = program.getSourceFile(fileName);
         annotate(program, fileName, target || (pxt.appTarget && pxt.appTarget.compile));
         const apis = getApiInfo(program, opts.jres);
         const blocksInfo = pxtc.getBlocksInfo(apis, opts.bannedCategories);
         const decompileOpts: decompiler.DecompileBlocksOptions = {
-            snippetMode: opts.snippetMode || false,
+            snippetMode: false,
             alwaysEmitOnStart: opts.alwaysDecompileOnStart,
             includeGreyBlockMessages,
-            generateSourceMap: !!opts.ast,
-            allowedArgumentTypes: opts.allowedArgumentTypes || ["number", "boolean", "string"]
+            allowedArgumentTypes: opts.allowedArgumentTypes || ["number", "boolean", "string"],
+            generatedVarDeclarations: generatedVarDeclarations
         };
-        const [renameMap, _] = pxtc.decompiler.buildRenameMap(program, file)
+        let [renameMap, _] = pxtc.decompiler.buildRenameMap(program, file)
         const bresp = pxtc.decompiler.decompileToBlocks(blocksInfo, file, decompileOpts, renameMap);
         return bresp;
     }

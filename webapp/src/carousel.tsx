@@ -414,7 +414,7 @@ function getX(event: MouseEvent | TouchEvent | PointerEvent) {
 
 function getY(event: MouseEvent | TouchEvent | PointerEvent) {
     if ("screenY" in event) {
-        return (event as MouseEvent).screenY;
+        return (event as MouseEvent).screenX;
     }
     else {
         return (event as TouchEvent).changedTouches[0].screenY

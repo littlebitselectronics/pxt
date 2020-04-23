@@ -11,7 +11,6 @@ declare namespace pxt.electron {
     export const enum UpdateStatus {
         UpdatingCritical = "updating-critical",
         BannedWithoutUpdate = "banned-without-update",
-        UpdateAvailable = "update-available",
         Ok = "ok"
     }
 

@@ -118,7 +118,7 @@ namespace pxtblockly {
             } else {
                 if (!this.fieldGroup_) {
                     // Build the DOM.
-                    this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null) as SVGGElement;
+                    this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null);
                 }
                 if (!this.visible_) {
                     (this.fieldGroup_ as any).style.display = 'none';
@@ -303,7 +303,7 @@ namespace pxtblockly {
 
         // The height of the preview on the block itself
         protected getPreviewHeight(): number {
-            return this.constants_.FIELD_BORDER_RECT_HEIGHT;
+            return Blockly.BlockSvg.FIELD_HEIGHT;
         }
 
         protected getDropdownBackgroundColour() {
@@ -311,7 +311,7 @@ namespace pxtblockly {
         }
 
         protected getDropdownBorderColour() {
-            return (this.sourceBlock_.parentBlock_ as Blockly.BlockSvg).getColourTertiary();
+            return this.sourceBlock_.parentBlock_.getColourTertiary();
         }
 
         private updateFieldLabel(): void {

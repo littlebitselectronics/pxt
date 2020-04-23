@@ -4,7 +4,6 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 
 import { ImageFieldEditor } from "./components/ImageFieldEditor";
-import { TilemapFieldEditor } from "./components/TilemapFieldEditor";
 
 export interface EditorBounds {
     top: number;
@@ -13,9 +12,9 @@ export interface EditorBounds {
     height: number;
 }
 
-export interface FieldEditorComponent<U> extends React.Component {
-    init(value: U, close: () => void, options?: any): void;
-    getValue(): U;
+export interface FieldEditorComponent extends React.Component {
+    init(value: string, close: () => void, options?: any): void;
+    getValue(): string;
 
     getPersistentData(): any;
     restorePersistentData(value: any): void;
@@ -23,14 +22,14 @@ export interface FieldEditorComponent<U> extends React.Component {
 }
 
 let cachedBounds: EditorBounds;
-let current: FieldEditorView<any>;
+let current: FieldEditorView;
 
-export class FieldEditorView<U> implements pxt.react.FieldEditorView<U> {
+export class FieldEditorView implements pxt.react.FieldEditorView {
     protected resizeFrameRef: number;
     protected visible: boolean;
     protected editorBounds: EditorBounds;
     protected contentBounds: EditorBounds;
-    protected componentRef: FieldEditorComponent<U>;
+    protected componentRef: FieldEditorComponent;
     protected overlayDiv: HTMLDivElement;
     protected persistentData: any;
 
@@ -43,7 +42,7 @@ export class FieldEditorView<U> implements pxt.react.FieldEditorView<U> {
         ReactDOM.render(element, this.contentDiv);
     }
 
-    setRef(ref: FieldEditorComponent<U>) {
+    setRef(ref: FieldEditorComponent) {
         this.componentRef = ref;
 
         if (ref && this.persistentData) {
@@ -123,8 +122,8 @@ export class FieldEditorView<U> implements pxt.react.FieldEditorView<U> {
         this.resizeFrameRef = undefined;
         const bounds = this.editorBounds;
 
-        let horizontalPadding = 25;
-        let verticalPadding = 25;
+        let horizontalPadding = 20;
+        let verticalPadding = 20;
 
 
         if (bounds.width - (horizontalPadding * 2) < 500) {
@@ -176,10 +175,10 @@ export function setEditorBounds(editorBounds: EditorBounds) {
 }
 
 export function init() {
-    pxt.react.getFieldEditorView = function<U>(fieldEditorId: string, value: U, options: any) {
+    pxt.react.getFieldEditorView = (fieldEditorId: string, value: string, options: any) => {
         if (current) current.dispose();
 
-        const refHandler = (e: FieldEditorComponent<any>) => {
+        const refHandler = (e: FieldEditorComponent) => {
             if (!e) return;
 
             if (current) {
@@ -196,10 +195,6 @@ export function init() {
                 break;
             case "animation-editor":
                 current.injectElement(<ImageFieldEditor ref={ refHandler } singleFrame={false} />);
-                break;
-
-            case "tilemap-editor":
-                current.injectElement(<TilemapFieldEditor ref={ refHandler } />);
                 break;
         }
 
