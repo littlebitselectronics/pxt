@@ -182,6 +182,9 @@ namespace pxt.editor {
         action: "renderblocks";
         // typescript code to render
         ts: string;
+        // rendering options
+        snippetMode?: boolean;
+        layout?: pxt.blocks.BlockLayout;
     }
 
     export interface EditorMessageRenderBlocksResponse {
@@ -400,8 +403,7 @@ namespace pxt.editor {
                                         .then(() => projectView.printCode());
                                 }
                                 case "pair": {
-                                    return Promise.resolve()
-                                        .then(() => projectView.pair());
+                                    return projectView.pairAsync();
                                 }
                                 case "info": {
                                     return Promise.resolve()
