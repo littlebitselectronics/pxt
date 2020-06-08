@@ -725,8 +725,10 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
             onClick={onClick} onContextMenu={onClick} onKeyDown={onKeyDown ? onKeyDown : sui.fireClickOnEnter}>
             <span className="blocklyTreeIcon" role="presentation"></span>
             {iconImageStyle}
-            <span style={{ display: 'inline-block' }} className={`blocklyTreeIcon ${iconClass}`} role="presentation">{iconContent}</span>
-            <span className="blocklyTreeLabel">{rowTitle}</span>
+            <span style={{ display: 'inline-block' }} className={`blocklyTreeIcon ${iconClass}`} role="presentation">
+                {/* {iconContent} */}
+                <span className="blocklyTreeLabel">{rowTitle}</span>
+            </span>
         </div>
     }
 }
