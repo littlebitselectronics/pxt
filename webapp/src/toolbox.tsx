@@ -19,6 +19,29 @@ export const enum CategoryNameID {
     Extensions = "addpackage"
 }
 
+const backgroundColors: { [key: string]: any } = {
+    display: '#B218D9',
+    loops: '6A6A6A',
+    logic: '#3300FF',
+    Math: '#93CC39',
+    text: '#93D4E5',
+    more: '93D4E5',
+    timing: '#FDA600',
+    rgbLed: '#bbb6b6',
+    debug: '#006f91',
+    sound: '#D83B01',
+    signal: '#47C1EC',
+    matrix: '#6A6A6A',
+    bits: '#0038AF',
+    accelerometer: '#47C1EC',
+    variables: '#FF8A00',
+    input: '#EE2E9D',
+    output: '#8FCD00',
+    functions: '#0000AF',
+    arrays: '#D83B01',
+    console: '#006385'
+}
+
 // this is a supertype of pxtc.SymbolInfo (see partitionBlocks)
 export interface BlockDefinition {
     qName?: string;
@@ -509,7 +532,18 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
     handleClick(e: React.MouseEvent<any>) {
         const { treeRow, onCategoryClick, index } = this.props;
         if (onCategoryClick) onCategoryClick(treeRow, index);
-
+        const allBackgrounds: HTMLCollectionOf<Element> = document.getElementsByClassName('blocklyFlyout')
+        const nameid:string = treeRow.nameid;
+        let selected: HTMLElement;
+        for (let index = 0; index < allBackgrounds.length; index++) {
+            const element: HTMLElement = (allBackgrounds[index] as HTMLElement);
+            if(element.style.display !== 'none') {
+                selected = element;
+                break;
+            }
+        }
+        const background = (selected.firstChild as HTMLElement);
+        background.style.fill = backgroundColors[nameid];
         e.preventDefault();
         e.stopPropagation();
     }
