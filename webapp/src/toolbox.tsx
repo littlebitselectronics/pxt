@@ -723,7 +723,6 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
             aria-label={lf("Toggle category {0}", rowTitle)} aria-expanded={selected}
             onMouseEnter={this.onmouseenter} onMouseLeave={this.onmouseleave}
             onClick={onClick} onContextMenu={onClick} onKeyDown={onKeyDown ? onKeyDown : sui.fireClickOnEnter}>
-            <span className="blocklyTreeIcon" role="presentation"></span>
             {iconImageStyle}
             <span style={{ display: 'inline-block' }} className={`blocklyTreeIcon ${iconClass}`} role="presentation">
                 {/* {iconContent} */}
