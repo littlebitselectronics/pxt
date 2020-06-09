@@ -509,7 +509,18 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
     handleClick(e: React.MouseEvent<any>) {
         const { treeRow, onCategoryClick, index } = this.props;
         if (onCategoryClick) onCategoryClick(treeRow, index);
-
+        //LBOS changes to allow for dynamic color change of flyout
+        const allBackgrounds: HTMLCollectionOf<Element> = document.getElementsByClassName('blocklyFlyout')
+        let selected: HTMLElement;
+        for (let index = 0; index < allBackgrounds.length; index++) {
+            const element: HTMLElement = (allBackgrounds[index] as HTMLElement);
+            if(element.style.display !== 'none') {
+                selected = element;
+                break;
+            }
+        }
+        const background = (selected.firstChild as HTMLElement);
+        background.style.fill = treeRow.color;
         e.preventDefault();
         e.stopPropagation();
     }
@@ -658,7 +669,7 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
 
     renderCore() {
         const { selected, onClick, onKeyDown, isRtl } = this.props;
-        const { nameid, subns, name, icon } = this.props.treeRow;
+        const { nameid, subns, name, icon, color } = this.props.treeRow;
         const appTheme = pxt.appTarget.appTheme;
         const metaColor = this.getMetaColor();
 
@@ -693,7 +704,10 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
             if (appTheme.invertedToolbox) {
                 treeRowStyle.backgroundColor = `${pxt.toolbox.fadeColor(metaColor, invertedMultipler, false)}`;
             } else {
-                treeRowStyle.backgroundColor = (metaColor || '#ddd');
+                //LBOS changes to allow dynamic background color for selection
+                const rgbArray = goog.color.hexToRgb(color);
+                const rgba: string = `rgba(${rgbArray.toString()},0.4)`;
+                treeRowStyle.backgroundColor = rgba;
             }
             treeRowStyle.color = '#fff';
         }
@@ -723,10 +737,11 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
             aria-label={lf("Toggle category {0}", rowTitle)} aria-expanded={selected}
             onMouseEnter={this.onmouseenter} onMouseLeave={this.onmouseleave}
             onClick={onClick} onContextMenu={onClick} onKeyDown={onKeyDown ? onKeyDown : sui.fireClickOnEnter}>
-            <span className="blocklyTreeIcon" role="presentation"></span>
             {iconImageStyle}
-            <span style={{ display: 'inline-block' }} className={`blocklyTreeIcon ${iconClass}`} role="presentation">{iconContent}</span>
-            <span className="blocklyTreeLabel">{rowTitle}</span>
+            <span style={{ display: 'inline-block' }} className={`blocklyTreeIcon ${iconClass}`} role="presentation">
+                {/* {iconContent} */}
+                <span className="blocklyTreeLabel">{rowTitle}</span>
+            </span>
         </div>
     }
 }
