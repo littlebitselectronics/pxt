@@ -21,7 +21,7 @@ export const enum CategoryNameID {
 
 const backgroundColors: { [key: string]: any } = {
     display: '#B218D9',
-    loops: '6A6A6A',
+    loops: '#6A6A6A',
     logic: '#3300FF',
     Math: '#93CC39',
     text: '#93D4E5',
