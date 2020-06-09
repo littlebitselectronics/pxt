@@ -248,9 +248,9 @@ default semantic
    Blockly
 --------------------*/
 
-@blocklyRowWidthWide: 133px;
-@blocklyRowWidthComputer: 133px;
-@blocklyRowWidthTablet: 133px;
+@blocklyRowWidthWide: 200px;
+@blocklyRowWidthComputer: 180px;
+@blocklyRowWidthTablet: 150px;
 @blocklyRowWidthMobile: 50px;
 
 @blocklyRowHeightWide: 40px;
