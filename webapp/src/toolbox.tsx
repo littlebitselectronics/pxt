@@ -532,6 +532,7 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
     handleClick(e: React.MouseEvent<any>) {
         const { treeRow, onCategoryClick, index } = this.props;
         if (onCategoryClick) onCategoryClick(treeRow, index);
+        //LBOS changes to allow for dynamic color change of flyout
         const allBackgrounds: HTMLCollectionOf<Element> = document.getElementsByClassName('blocklyFlyout')
         const nameid:string = treeRow.nameid;
         let selected: HTMLElement;
@@ -727,7 +728,10 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
             if (appTheme.invertedToolbox) {
                 treeRowStyle.backgroundColor = `${pxt.toolbox.fadeColor(metaColor, invertedMultipler, false)}`;
             } else {
-                treeRowStyle.backgroundColor = (metaColor || '#ddd');
+                //LBOS changes to allow dynamic background color for selection
+                const rgbArray = goog.color.hexToRgb(backgroundColors[nameid]);
+                const rgba: string = `rgba(${rgbArray.toString()},0.4)`;
+                treeRowStyle.backgroundColor = rgba;
             }
             treeRowStyle.color = '#fff';
         }
