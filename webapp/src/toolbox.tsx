@@ -19,6 +19,29 @@ export const enum CategoryNameID {
     Extensions = "addpackage"
 }
 
+const backgroundColors: { [key: string]: any } = {
+    display: '#d5a3e2',
+    loops: '#c3c3c3',
+    logic: '#ad99ff',
+    Math: '#d4ebb0',
+    text: '#c1dee5',
+    more: '#c1dee55',
+    timing: '#f7cba2',
+    rgbLed: '#bbb6b6',
+    debug: '#006f91',
+    sound: '#efb199',
+    signal: '#47C1EC',
+    matrix: '#6A6A6A',
+    bits: '#0038AF',
+    accelerometer: '#47C1EC',
+    variables: '#ffd099',
+    input: '#e7a1c6',
+    output: '#c9df9b',
+    functions: '#99add9',
+    arrays: '#D83B01',
+    console: '#006385'
+}
+
 // this is a supertype of pxtc.SymbolInfo (see partitionBlocks)
 export interface BlockDefinition {
     qName?: string;
@@ -511,6 +534,7 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
         if (onCategoryClick) onCategoryClick(treeRow, index);
         //LBOS changes to allow for dynamic color change of flyout
         const allBackgrounds: HTMLCollectionOf<Element> = document.getElementsByClassName('blocklyFlyout')
+        const nameid:string = treeRow.nameid;
         let selected: HTMLElement;
         for (let index = 0; index < allBackgrounds.length; index++) {
             const element: HTMLElement = (allBackgrounds[index] as HTMLElement);
@@ -520,7 +544,7 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
             }
         }
         const background = (selected.firstChild as HTMLElement);
-        background.style.fill = treeRow.color;
+        background.style.fill = backgroundColors[nameid];
         e.preventDefault();
         e.stopPropagation();
     }
@@ -669,7 +693,7 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
 
     renderCore() {
         const { selected, onClick, onKeyDown, isRtl } = this.props;
-        const { nameid, subns, name, icon, color } = this.props.treeRow;
+        const { nameid, subns, name, icon } = this.props.treeRow;
         const appTheme = pxt.appTarget.appTheme;
         const metaColor = this.getMetaColor();
 
@@ -705,9 +729,7 @@ export class TreeRow extends data.Component<TreeRowProps, {}> {
                 treeRowStyle.backgroundColor = `${pxt.toolbox.fadeColor(metaColor, invertedMultipler, false)}`;
             } else {
                 //LBOS changes to allow dynamic background color for selection
-                const rgbArray = goog.color.hexToRgb(color);
-                const rgba: string = `rgba(${rgbArray.toString()},0.4)`;
-                treeRowStyle.backgroundColor = rgba;
+                treeRowStyle.backgroundColor = backgroundColors[nameid];
             }
             treeRowStyle.color = '#fff';
         }
