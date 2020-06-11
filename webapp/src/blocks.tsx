@@ -41,7 +41,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         let map: pxt.Map<number> = {};
         if (!breakpoints || !this.compilationResult) return;
         breakpoints.forEach(breakpoint => {
-            let blockId = pxt.blocks.findBlockId(this.compilationResult.sourceMap, { start: breakpoint.line, length: breakpoint.endLine - breakpoint.line });
+            let blockId = pxt.blocks.findBlockIdByLine(this.compilationResult.sourceMap, { start: breakpoint.line, length: breakpoint.endLine - breakpoint.line });
             if (blockId) map[blockId] = breakpoint.id;
         });
         this.breakpointsByBlock = map;
@@ -80,6 +80,16 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         simulator.driver.setBreakpoints([]);
     }
 
+    handleKeyDown = (e: any) => {
+        if (this.parent.state?.accessibleBlocks) {
+            let charCode = (typeof e.which == "number") ? e.which : e.keyCode
+            if (charCode === 84 /* T Key */) { // SHAKAO check if blocks accessibility on
+                this.focusToolbox();
+                e.stopPropagation();
+            }
+        }
+    }
+
     setVisible(v: boolean) {
         super.setVisible(v);
         this.isVisible = v;
@@ -91,8 +101,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         }
         else {
             pxt.Util.toArray(document.querySelectorAll(classes)).forEach((el: HTMLElement) => el.style.display = 'none');
-            if (this.editor)
-                Blockly.hideChaff();
+            if (this.editor) Blockly.hideChaff();
+            if (this.toolbox) this.toolbox.clearExpandedItem();
         }
     }
 
@@ -113,15 +123,11 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         }
     }
 
-    updateBlocksInfo(bi: pxtc.BlocksInfo) {
-        this.blockInfo = bi;
-        this.refreshToolbox();
-    }
-
     domUpdate() {
         if (this.delayLoadXml) {
             if (this.loadingXml) return
             pxt.debug(`loading blockly`)
+            pxt.perf.measureStart("domUpdate loadBlockly")
             this.loadingXml = true
 
             const loadingDimmer = document.createElement("div");
@@ -158,6 +164,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                         // It's possible Blockly reloads and the loading dimmer is no longer a child of the editorDiv
                         editorDiv.removeChild(loadingDimmer);
                     } catch { }
+                    pxt.perf.measureEnd("domUpdate loadBlockly")
                 });
 
             this.loadingXmlPromise.done();
@@ -191,7 +198,10 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     private serializeBlocks(normalize?: boolean): string {
         // store ids when using github
-        let xml = pxt.blocks.saveWorkspaceXml(this.editor, !normalize && !!this.parent.state.header.githubId);
+        let xml = pxt.blocks.saveWorkspaceXml(this.editor,
+            !normalize && this.parent.state
+            && this.parent.state.header
+            && !!this.parent.state.header.githubId);
         // strip out id, x, y attributes
         if (normalize) xml = xml.replace(/(x|y|id)="[^"]*"/g, '')
         pxt.debug(xml)
@@ -215,6 +225,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             this.initLayout();
             this.editor.clearUndo();
             this.reportDeprecatedBlocks();
+            this.updateGrayBlocks();
 
             this.typeScriptSaveable = true;
         } catch (e) {
@@ -248,17 +259,21 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
             needsLayout = needsLayout || (tpX == 10 && tpY == 10);
         });
+        let blockPositions: { left: number, top: number }[] = [];
         (this.editor.getTopBlocks(false) as Blockly.BlockSvg[]).forEach(b => {
-            const tpX = b.getBoundingRectangle().left;
-            const tpY = b.getBoundingRectangle().top;
-            if (minX === undefined || tpX < minX) {
-                minX = tpX;
+            const bounds = b.getBoundingRectangle()
+            if (minX === undefined || bounds.left < minX) {
+                minX = bounds.left;
             }
-            if (minY === undefined || tpY < minY) {
-                minY = tpY;
+            if (minY === undefined || bounds.top < minY) {
+                minY = bounds.top;
             }
 
-            needsLayout = needsLayout || (b.type != ts.pxtc.ON_START_TYPE && tpX == 10 && tpY == 10);
+            const isOverlapping = !!blockPositions.find(b => b.left === bounds.left && b.top === bounds.top)
+
+            needsLayout = needsLayout || isOverlapping;
+
+            blockPositions.push(bounds)
         });
 
         if (needsLayout && !flyoutOnly) {
@@ -338,7 +353,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 header: message,
                 initialValue: defaultValue,
                 agreeLbl: lf("Ok"),
-                disagreeLbl: lf("Cancel"),
+                hideCancel: true,
+                hasCloseIcon: true,
                 size: "tiny"
             }).then(value => {
                 callback(value);
@@ -387,6 +403,27 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         };
     }
 
+    private initAccessibleBlocks() {
+        const enabled = pxt.appTarget.appTheme?.accessibleBlocks;
+        // Append listener to open toolbox on 'T' key if accessible blocks is enabled
+        if (enabled) {
+            document.querySelector("#blocksEditor").addEventListener("keydown", this.handleKeyDown)
+        }
+
+        const self = this;
+        const onBlocklyAction = Blockly.navigation.onBlocklyAction;
+        Blockly.navigation.onBlocklyAction = function (action) {
+            if (pxt.appTarget.appTheme?.accessibleBlocks) {
+                if (!self.editor.keyboardAccessibilityMode &&
+                    (action as any).name === Blockly.navigation.actionNames.TOGGLE_KEYBOARD_NAV) {
+                    self.parent.setState({ accessibleBlocks: true });
+                }
+                return onBlocklyAction(action);
+            }
+            return false;
+        };
+    }
+
     private reportDeprecatedBlocks() {
         const deprecatedMap: pxt.Map<number> = {};
         let deprecatedBlocksFound = false;
@@ -427,6 +464,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     private prepareBlockly(forceHasCategories?: boolean) {
+        pxt.perf.measureStart("prepareBlockly")
         let blocklyDiv = document.getElementById('blocksEditor');
         pxsim.U.clear(blocklyDiv);
         this.editor = Blockly.inject(blocklyDiv, this.getBlocklyOptions(forceHasCategories)) as Blockly.WorkspaceSvg;
@@ -450,10 +488,14 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     // Need to bump suffix in flyout
                     this.clearFlyoutCaches();
                 }
+                if (blockId === pxtc.TS_STATEMENT_TYPE || blockId === pxtc.TS_OUTPUT_TYPE) {
+                    this.updateGrayBlocks();
+                }
                 pxt.tickEvent("blocks.create", { "block": blockId });
                 if (ev.xml.tagName == 'SHADOW')
                     this.cleanUpShadowBlocks();
-                this.parent.setState({ hideEditorFloats: false });
+                if (!this.parent.state.tutorialOptions || !this.parent.state.tutorialOptions.metadata || !this.parent.state.tutorialOptions.metadata.flyoutOnly)
+                    this.parent.setState({ hideEditorFloats: false });
                 workspace.fireEvent({ type: 'create', editor: 'blocks', blockId } as pxt.editor.events.CreateEvent);
             }
             else if (ev.type == "var_create" || ev.type == "var_rename" || ev.type == "delete") {
@@ -506,7 +548,10 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.initPrompts();
         this.initBlocklyToolbox();
         this.initWorkspaceSounds();
+        this.initAccessibleBlocks();
         this.resize();
+
+        pxt.perf.measureEnd("prepareBlockly")
     }
 
     resize(e?: Event) {
@@ -537,25 +582,20 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     protected resizeFieldEditorView() {
-        const blocklyDiv = this.getBlocksEditorDiv();
-        if (!blocklyDiv) return;
-
-        const blocklyToolboxDiv = this.getBlocklyToolboxDiv();
-        if (!blocklyToolboxDiv) return;
-
-        const workspaceRect = blocklyDiv.getBoundingClientRect();
-        const toolboxRect = blocklyToolboxDiv.getBoundingClientRect();
-
+        if (!window) return;
+        // Full-screen editor
         blocklyFieldView.setEditorBounds({
-            top: workspaceRect.top,
-            left: toolboxRect.right,
-            width: workspaceRect.width - toolboxRect.width,
-            height: workspaceRect.height
+            top: 0,
+            left: 0,
+            width: window.innerWidth,
+            height: window.innerHeight
         });
     }
 
     hasUndo() {
-        return this.editor ? this.editor.undoStack_.length != 0 : false;
+        // undo is true if undoStack has items, or if both undo and redo are empty (first project load)
+        return this.editor ? this.editor.undoStack_.length != 0
+            || (this.editor.undoStack_.length == 0 && this.editor.redoStack_.length == 0) : false;
     }
 
     undo() {
@@ -635,6 +675,20 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.debuggerToolbox = c;
     }
 
+    public moveFocusToFlyout() {
+        const flyout = this.editor.toolbox_.getFlyout();
+        if (flyout && this.parent.state?.accessibleBlocks) {
+            (Blockly.navigation as any).focusFlyout_();
+            flyout.svgGroup_.focus();
+        }
+    }
+
+    focusToolbox() {
+        if (this.toolbox) {
+            this.toolbox.focus();
+        }
+    }
+
     renderToolbox(immediate?: boolean) {
         if (pxt.shell.isReadOnly()) return;
         const blocklyToolboxDiv = this.getBlocklyToolboxDiv();
@@ -652,6 +706,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         const container = document.getElementById('debuggerToolbox');
         if (!container) return;
 
+        pxt.perf.measureStart("updateToolbox")
         const debugging = !!this.parent.state.debugging;
         let debuggerToolbox = debugging ? <DebuggerToolbox ref={this.handleDebuggerToolboxRef} parent={this.parent} apis={this.blockInfo.apis.byQName} /> : <div />;
 
@@ -662,6 +717,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             this.toolbox.show();
         }
         ReactDOM.render(debuggerToolbox, container);
+        pxt.perf.measureEnd("updateToolbox")
     }
 
     showPackageDialog() {
@@ -705,9 +761,9 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     // TODO: remove this, we won't use it anymore
     insertBreakpoint() {
         if (!this.editor) return;
-        const b = this.editor.newBlock(pxtc.TS_DEBUGGER_TYPE);
+        const b = this.editor.newBlock(pxtc.TS_DEBUGGER_TYPE) as Blockly.BlockSvg;
         // move block roughly to the center of the screen
-        const m = this.editor.getMetrics();
+        const m = this.editor.getMetrics() as Blockly.Metrics;
         b.moveBy(m.viewWidth / 2, m.viewHeight / 3);
         b.initSvg();
         b.render();
@@ -715,7 +771,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     private _loadBlocklyPromise: Promise<void>;
     loadBlocklyAsync() {
-        if (!this._loadBlocklyPromise)
+        if (!this._loadBlocklyPromise) {
+            pxt.perf.measureStart("loadBlockly")
             this._loadBlocklyPromise = pxt.BrowserUtils.loadBlocklyAsync()
                 .then(() => {
                     // Initialize the "Make a function" button
@@ -749,6 +806,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     this.prepareBlockly();
                 })
                 .then(() => pxt.editor.initEditorExtensionsAsync())
+                .then(() => pxt.perf.measureEnd("loadBlockly"))
+        }
         return this._loadBlocklyPromise;
     }
 
@@ -766,7 +825,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 this.typeScriptSaveable = false;
                 this.setDiagnostics(file)
                 this.delayLoadXml = file.content;
-                pxt.blocks.clearWithoutEvents(this.editor);
+                // serial editor is more like an overlay than a custom editor, so preserve blocks undo stack
+                if (!this.parent.shouldPreserveUndoStack()) pxt.blocks.clearWithoutEvents(this.editor);
                 this.closeFlyout();
 
                 this.filterToolbox();
@@ -812,7 +872,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             b.setWarningText(null);
             b.setHighlightWarning(false);
         });
-        let tsfile = file.epkg.files[file.getVirtualFileName(pxt.JAVASCRIPT_PROJECT_NAME)];
+        let tsfile = file && file.epkg && file.epkg.files[file.getVirtualFileName(pxt.JAVASCRIPT_PROJECT_NAME)];
         if (!tsfile || !tsfile.diagnostics) return;
 
         // only show errors
@@ -820,7 +880,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         let sourceMap = this.compilationResult.sourceMap;
 
         diags.filter(diag => diag.category == ts.pxtc.DiagnosticCategory.Error).forEach(diag => {
-            let bid = pxt.blocks.findBlockId(sourceMap, { start: diag.line, length: 0 });
+            let bid = pxt.blocks.findBlockIdByLine(sourceMap, { start: diag.line, length: 0 });
             if (bid) {
                 let b = this.editor.getBlockById(bid) as Blockly.BlockSvg;
                 if (b) {
@@ -847,7 +907,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             return false;
         this.updateDebuggerVariables(brk);
         if (stmt) {
-            let bid = pxt.blocks.findBlockId(this.compilationResult.sourceMap, { start: stmt.line, length: stmt.endLine - stmt.line });
+            let bid = pxt.blocks.findBlockIdByLine(this.compilationResult.sourceMap, { start: stmt.line, length: stmt.endLine - stmt.line });
             if (bid) {
                 this.editor.highlightBlock(bid);
                 if (brk) {
@@ -859,7 +919,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     const p = b.getRelativeToSurfaceXY();
                     const c = b.getHeightWidth();
                     const s = this.editor.scale;
-                    const m = this.editor.getMetrics();
+                    const m = this.editor.getMetrics() as Blockly.Metrics;
                     // don't center if block is still on the screen
                     const marginx = 4;
                     const marginy = 4;
@@ -919,6 +979,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             (blocklyOptions.hasCategories != undefined ? blocklyOptions.hasCategories :
                 this.showCategories);
         blocklyOptions.hasCategories = hasCategories;
+        blocklyOptions.renderer = "pxt";
         if (!hasCategories) this.showCategories = false;
         // If we're using categories, show the category toolbox, otherwise show the flyout toolbox
         const toolbox = hasCategories ?
@@ -929,28 +990,28 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         return blocklyOptions;
     }
 
-    private blocklyOptionsCache: Blockly.WorkspaceOptions;
+    private blocklyOptionsCache: Blockly.BlocklyOptions;
     private getDefaultOptions() {
         if (this.blocklyOptionsCache) return this.blocklyOptionsCache;
         const readOnly = pxt.shell.isReadOnly();
-        const blocklyOptions: Blockly.WorkspaceOptions = {
-            scrollbars: true,
+        const theme = pxt.appTarget.appTheme;
+        const blocklyOptions: Blockly.BlocklyOptions = {
             media: pxt.webConfig.commitCdnUrl + "blockly/media/",
-            sound: true,
+            sounds: true,
             trashcan: false,
-            collapse: false,
+            collapse: !!theme.blocksCollapsing,
             comments: true,
             disable: false,
             readOnly: readOnly,
             toolboxOptions: {
-                colour: pxt.appTarget.appTheme.coloredToolbox,
-                inverted: pxt.appTarget.appTheme.invertedToolbox
+                colour: theme.coloredToolbox,
+                inverted: theme.invertedToolbox
             },
             move: {
+                scrollbars: true,
                 wheel: true
             },
             zoom: {
-                enabled: false,
                 controls: false,
                 maxScale: 2.5,
                 minScale: .2,
@@ -965,6 +1026,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     private refreshToolbox() {
         if (!this.blockInfo) return;
+        pxt.perf.measureStart("refreshToolbox")
         // no toolbox when readonly
         if (pxt.shell.isReadOnly()) return;
 
@@ -1009,6 +1071,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 this.renderToolbox(true);
             }
         }
+        pxt.perf.measureEnd("refreshToolbox")
     }
 
     filterToolbox(showCategories?: boolean) {
@@ -1072,7 +1135,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     public hideFlyout() {
         if (this.editor.toolbox_) {
-            this.editor.toolbox_.flyout_.hide();
+            this.editor.toolbox_.getFlyout().hide();
         }
         if (this.toolbox) this.toolbox.clear();
     }
@@ -1081,7 +1144,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     ////////////         Toolbox methods          /////////////
     ///////////////////////////////////////////////////////////
 
-    protected clearCaches() {
+    clearCaches() {
         super.clearCaches();
         this.clearFlyoutCaches();
         snippets.clearBuiltinBlockCache();
@@ -1374,7 +1437,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         old.setVisible(false)
 
         // set the "current" flyout
-        this.editor.toolbox_.flyout_ = nw;
+        this.editor.toolbox_.setFlyout(nw);
 
         // show the new flyout
         nw.setVisible(true)
@@ -1392,7 +1455,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     private showFlyoutInternal_(xmlList: Element[], flyoutName: string = "default") {
         if ((!this.parent.state.editorState || this.parent.state.editorState.hasCategories !== false)
             && this.editor.toolbox_) {
-            const oldFlyout = this.editor.toolbox_.flyout_ as Blockly.VerticalFlyout;
+            const oldFlyout = this.editor.toolbox_.getFlyout() as Blockly.VerticalFlyout;
 
             // determine if the cached flyout exists and isn't stale
             const hasCachedFlyout = flyoutName in this.flyouts
@@ -1428,6 +1491,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             }
 
             newFlyout.scrollToStart();
+            if (this.parent.state?.accessibleBlocks) newFlyout.svgGroup_.focus();
         } else if ((this.editor as any).flyout_) {
             (this.editor as any).flyout_.show(xmlList);
             (this.editor as any).flyout_.scrollToStart();
@@ -1461,6 +1525,17 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.parent.forceUpdate();
     }
 
+    protected updateGrayBlocks() {
+        if (this.editor) {
+            const pythonEnabled = pxt.Util.isPyLangPref();
+            this.editor.getAllBlocks(false).forEach(b => {
+                if (b.type === pxtc.TS_STATEMENT_TYPE || b.type === pxtc.TS_OUTPUT_TYPE) {
+                    (b as pxt.blocks.GrayBlock).setPythonEnabled(pythonEnabled);
+                }
+            })
+        }
+    }
+
     ///////////////////////////////////////////////////////////
     ////////////          Block methods           /////////////
     ///////////////////////////////////////////////////////////
@@ -1474,6 +1549,10 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             return undefined;
         }
         if (block.builtinBlock) {
+            // function_return is conditionally added to the toolbox, so it needs a special case
+            if (block.attributes.blockId === "function_return") {
+                return [pxt.blocks.mkReturnStatementBlock()];
+            }
             // Find the block XML for this built in block.
             const builtin = snippets.allBuiltinBlocks()[block.attributes.blockId];
             if (builtin && builtin.blockXml && block.builtinField && block.builtinField.length == 2) {
@@ -1615,7 +1694,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         const debugging = !!this.parent.state.debugging;
         const blocks = this.editor.getAllBlocks();
         blocks.forEach(block => {
-            if (block.nextConnection && block.previousConnection) {
+            if (block.previousConnection) {
                 block.enableBreakpoint(debugging);
             }
         });

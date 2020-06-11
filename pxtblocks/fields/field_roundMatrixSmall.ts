@@ -32,6 +32,7 @@ namespace pxtblockly {
       private undoStack: pxtmatrix.CanvasState[];
       private redoStack: pxtmatrix.CanvasState[];
       private colors: string[];
+      private text_: string;
 
       constructor(text: string, params: any, validator?: Function) {
           super(text, validator);
@@ -55,7 +56,7 @@ namespace pxtblockly {
               return;
           }
           // Build the DOM.
-          this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null);
+          this.fieldGroup_ = Blockly.utils.dom.createSvgElement('g', {}, null) as SVGGElement;
           if (!this.visible_) {
               (this.fieldGroup_ as any).style.display = 'none';
           }

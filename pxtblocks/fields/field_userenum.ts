@@ -9,14 +9,14 @@ namespace pxtblockly {
             this.initVariables();
         }
 
-        onItemSelected(menu: goog.ui.Menu, menuItem: goog.ui.MenuItem) {
+        onItemSelected(menu: Blockly.Menu, menuItem: Blockly.MenuItem) {
             const value = menuItem.getValue();
             if (value === "CREATE") {
                 promptAndCreateEnum(this.sourceBlock_.workspace, this.opts, lf("New {0}:", this.opts.memberName),
                     newName => newName && this.setValue(newName));
             }
             else {
-                super.onItemSelected(menu, menuItem);
+                super.onItemSelected_(menu, menuItem);
             }
         }
 
@@ -26,7 +26,7 @@ namespace pxtblockly {
                 if (this.sourceBlock_.isInFlyout) {
                     // Can't create variables from within the flyout, so we just have to fake it
                     // by setting the text instead of the value
-                    this.setText(this.opts.initialMembers[0]);
+                    this.setValue(this.opts.initialMembers[0]);
                 }
                 else {
                     const ws = this.sourceBlock_.workspace;

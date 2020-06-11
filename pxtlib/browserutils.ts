@@ -126,12 +126,12 @@ namespace pxt.BrowserUtils {
         return isPxtElectron() || isIpcRenderer();
     }
 
-    export function isLocalHost(): boolean {
+    export function isLocalHost(ignoreFlags?: boolean): boolean {
         try {
             return typeof window !== "undefined"
                 && /^http:\/\/(localhost|127\.0\.0\.1):\d+\//.test(window.location.href)
-                && !/nolocalhost=1/.test(window.location.href)
-                && !(pxt.webConfig && pxt.webConfig.isStatic);
+                && (ignoreFlags || !/nolocalhost=1/.test(window.location.href))
+                && !(pxt?.webConfig?.isStatic);
         } catch (e) { return false; }
     }
 
@@ -209,6 +209,7 @@ namespace pxt.BrowserUtils {
 
     let hasLoggedBrowser = false
 
+    // Note that IE11 is no longer supported in any target. Redirect handled in docfiles/pxtweb/browserRedirect.ts
     export function isBrowserSupported(): boolean {
         if (!navigator) {
             return true; //All browsers define this, but we can't make any predictions if it isn't defined, so assume the best
@@ -218,8 +219,10 @@ namespace pxt.BrowserUtils {
         if (/bot|crawler|spider|crawling/i.test(navigator.userAgent))
             return true;
 
-        //Check target theme to see if this browser is supported
-        if (pxt.appTarget.unsupportedBrowsers && pxt.appTarget.unsupportedBrowsers.some(b => b.id == browser())) {
+        // Check target theme to see if this browser is supported
+        const unsupportedBrowsers = pxt.appTarget?.unsupportedBrowsers
+            || (window as any).pxtTargetBundle?.unsupportedBrowsers as BrowserOptions[];
+        if (unsupportedBrowsers?.some(b => b.id == browser())) {
             return false
         }
 
@@ -232,8 +235,7 @@ namespace pxt.BrowserUtils {
         const isRecentEdge = isEdge();
         const isRecentSafari = isSafari() && v >= 9;
         const isRecentOpera = (isOpera() && isChrome()) && v >= 21;
-        const isRecentIE = isIE() && v >= 11;
-        const isModernBrowser = isRecentChrome || isRecentFirefox || isRecentEdge || isRecentSafari || isRecentOpera || isRecentIE
+        const isModernBrowser = isRecentChrome || isRecentFirefox || isRecentEdge || isRecentSafari || isRecentOpera
 
         //In the future this should check for the availability of features, such
         //as web workers
@@ -260,10 +262,13 @@ namespace pxt.BrowserUtils {
     export function devicePixelRatio(): number {
         if (typeof window === "undefined" || !window.screen) return 1;
 
-        if (window.screen.systemXDPI !== undefined
-            && window.screen.logicalXDPI !== undefined
-            && window.screen.systemXDPI > window.screen.logicalXDPI) {
-            return window.screen.systemXDPI / window.screen.logicalXDPI;
+        // these are IE specific
+        const sysXDPI = (window.screen as any).systemXDPI
+        const logicalXDPI = (window.screen as any).logicalXDPI
+        if (sysXDPI !== undefined
+            && logicalXDPI !== undefined
+            && sysXDPI > logicalXDPI) {
+            return sysXDPI / logicalXDPI;
         }
         else if (window && window.devicePixelRatio !== undefined) {
             return window.devicePixelRatio;
@@ -370,7 +375,7 @@ namespace pxt.BrowserUtils {
     }
 
     export function loadImageAsync(data: string): Promise<HTMLImageElement> {
-        const img = document.createElement("img") as HTMLImageElement;
+        const img = document.createElement("img")
         return new Promise<HTMLImageElement>((resolve, reject) => {
             img.onload = () => resolve(img);
             img.onerror = () => resolve(undefined);
@@ -659,16 +664,16 @@ namespace pxt.BrowserUtils {
         getAsync(lang: string, filename: string, branch: string): Promise<ITranslationDbEntry> {
             return Promise.resolve(this.get(lang, filename, branch));
         }
-        set(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string) {
+        set(lang: string, filename: string, branch: string, etag: string, time: number, strings?: pxt.Map<string>, md?: string) {
             this.translations[this.key(lang, filename, branch)] = {
                 etag,
-                time: Date.now() + 24 * 60 * 60 * 1000, // in-memory expiration is 24h
+                time,
                 strings,
                 md
             }
         }
         setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
-            this.set(lang, filename, branch, etag, strings);
+            this.set(lang, filename, branch, etag, Util.now(), strings);
             return Promise.resolve();
         }
         clearAsync() {
@@ -813,7 +818,7 @@ namespace pxt.BrowserUtils {
                     const db = r.result as IDBDatabase;
                     db.createObjectStore(IndexedDbTranslationDb.TABLE, { keyPath: IndexedDbTranslationDb.KEYPATH });
                 }, () => {
-                    // quota exceeeded, nuke db
+                    // quota exceeeded, delete db
                     clearTranslationDbAsync().catch(e => { });
                 });
                 return idbWrapper.openAsync()
@@ -843,7 +848,7 @@ namespace pxt.BrowserUtils {
                 .then((res) => {
                     if (res) {
                         // store in-memory so that we don't try to download again
-                        this.mem.set(lang, filename, branch, res.etag, res.strings);
+                        this.mem.set(lang, filename, branch, res.etag, res.time, res.strings);
                         return Promise.resolve(res);
                     }
                     return Promise.resolve(undefined);
@@ -855,14 +860,17 @@ namespace pxt.BrowserUtils {
         setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
             lang = (lang || "en-US").toLowerCase(); // normalize locale
             const id = this.mem.key(lang, filename, branch);
-            this.mem.set(lang, filename, branch, etag, strings, md);
+            let time = Util.now();
+            this.mem.set(lang, filename, branch, etag, time, strings, md);
 
-            if (strings)
+            if (strings) {
                 Object.keys(strings).filter(k => !strings[k]).forEach(k => delete strings[k]);
+            }
+
             const entry: ITranslationDbEntry = {
                 id,
                 etag,
-                time: Date.now(),
+                time,
                 strings,
                 md
             }
@@ -951,6 +959,42 @@ namespace pxt.BrowserUtils {
         }
     })();
 
+    export function getPageX(event: any) {
+        if ("pageX" in event) {
+            return (event as MouseEvent).pageX;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].pageX;
+        }
+    }
+
+    export function getPageY(event: any) {
+        if ("pageY" in event) {
+            return (event as MouseEvent).pageY;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].pageY;
+        }
+    }
+
+    export function getClientX(event: any) {
+        if ("clientX" in event) {
+            return (event as MouseEvent).clientX;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].clientX;
+        }
+    }
+
+    export function getClientY(event: any) {
+        if ("clientY" in event) {
+            return (event as MouseEvent).clientY;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].clientY;
+        }
+    }
+
     export function popupWindow(url: string, title: string, popUpWidth: number, popUpHeight: number) {
         try {
             const winLeft = window.screenLeft ? window.screenLeft : window.screenX;
@@ -975,9 +1019,7 @@ namespace pxt.BrowserUtils {
 
     // Keep these helpers unified with pxtsim/runtime.ts
     export function containsClass(el: SVGElement | HTMLElement, classes: string) {
-        return classes
-            .split(/\s+/)
-            .every(cls => containsSingleClass(el, cls));
+        return splitClasses(classes).every(cls => containsSingleClass(el, cls));
 
         function containsSingleClass(el: SVGElement | HTMLElement, cls: string) {
             if (el.classList) {
@@ -990,9 +1032,7 @@ namespace pxt.BrowserUtils {
     }
 
     export function addClass(el: SVGElement | HTMLElement, classes: string) {
-        classes
-            .split(/\s+/)
-            .forEach(cls => addSingleClass(el, cls));
+        splitClasses(classes).forEach(cls => addSingleClass(el, cls));
 
         function addSingleClass(el: SVGElement | HTMLElement, cls: string) {
             if (el.classList) {
@@ -1007,9 +1047,7 @@ namespace pxt.BrowserUtils {
     }
 
     export function removeClass(el: SVGElement | HTMLElement, classes: string) {
-        classes
-            .split(/\s+/)
-            .forEach(cls => removeSingleClass(el, cls));
+        splitClasses(classes).forEach(cls => removeSingleClass(el, cls));
 
         function removeSingleClass(el: SVGElement | HTMLElement, cls: string) {
             if (el.classList) {
@@ -1020,6 +1058,29 @@ namespace pxt.BrowserUtils {
                     .filter(c => c != cls)
                     .join(" ");
             }
+        }
+    }
+
+    function splitClasses(classes: string) {
+        return classes.split(/\s+/).filter(s => !!s);
+    }
+
+    export function getCookieLang() {
+        const cookiePropRegex = new RegExp(`${pxt.Util.escapeForRegex(pxt.Util.pxtLangCookieId)}=(.*?)(?:;|$)`)
+        const cookieValue = cookiePropRegex.exec(document.cookie);
+        return cookieValue && cookieValue[1] || null;
+    }
+
+    export function setCookieLang(langId: string, docs = false) {
+        if (!pxt.Util.allLanguages[langId]) {
+            return;
+        }
+
+        if (langId !== getCookieLang()) {
+            pxt.tickEvent(`menu.lang.setcookielang`, { lang: langId, docs: `${docs}` });
+            const expiration = new Date();
+            expiration.setTime(expiration.getTime() + (pxt.Util.langCookieExpirationDays * 24 * 60 * 60 * 1000));
+            document.cookie = `${pxt.Util.pxtLangCookieId}=${langId}; expires=${expiration.toUTCString()}; path=/`;
         }
     }
 }

@@ -29,6 +29,7 @@ export function isLoading() {
 
 export function hideLoading(id: string) {
     pxt.debug("hideloading: " + id);
+    pxt.perf.recordMilestone(`loading done #${id}`)
     if (loadingQueueMsg[id] != undefined) {
         // loading exists, remove from queue
         const index = loadingQueue.indexOf(id);
@@ -62,6 +63,7 @@ export function killLoadingQueue() {
 export function showLoading(id: string, msg: string) {
     pxt.debug("showloading: " + id);
     if (loadingQueueMsg[id]) return; // already loading?
+    pxt.perf.recordMilestone(`loading started #${id}`)
     initializeDimmer();
     loadingDimmer.show(lf("Please wait"));
     loadingQueue.push(id);
@@ -167,6 +169,7 @@ export interface DialogOptions {
 }
 
 export function dialogAsync(options: DialogOptions): Promise<void> {
+    if (!options.buttons) options.buttons = [];
     if (!options.type) options.type = 'dialog';
     if (!options.hideCancel) {
         if (!options.buttons) options.buttons = [];
@@ -177,9 +180,9 @@ export function dialogAsync(options: DialogOptions): Promise<void> {
         })
     }
     if (options.helpUrl) {
-        options.buttons.push({
-            label: lf("Help"),
-            className: "help",
+        options.buttons.unshift({
+            className: "circular help",
+            title: lf("Help"),
             icon: "help",
             url: options.helpUrl
         })
@@ -189,6 +192,10 @@ export function dialogAsync(options: DialogOptions): Promise<void> {
 
 export function hideDialog() {
     coretsx.hideDialog();
+}
+
+export function forceUpdate() {
+    coretsx.forceUpdate();
 }
 
 export function confirmAsync(options: ConfirmOptions): Promise<number> {

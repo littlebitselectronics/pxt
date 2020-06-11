@@ -216,9 +216,9 @@ function setupSemantic() {
 }
 
 function setupBlocklyAsync() {
-    let promise = Promise.resolve();
+    var promise = Promise.resolve();
     if (pxt.appTarget.appTheme && pxt.appTarget.appTheme.extendFieldEditors) {
-        let opts = {};
+        var opts = {};
         promise = promise.then(function () {
             return pxt.BrowserUtils.loadScriptAsync("fieldeditors.js")
         }).then(function () {
@@ -235,7 +235,7 @@ function setupBlocklyAsync() {
     if (pxt.appTarget.versions &&
         pxt.semver.strcmp(pxt.appTarget.versions.pxt, "3.9.0") < 0 &&
         pxt.appTarget.appTheme && pxt.appTarget.appTheme.extendEditor) {
-        let opts = {};
+        var opts = {};
         promise = promise.then(function () {
             return pxt.BrowserUtils.loadScriptAsync(pxt.webConfig.commitCdnUrl + "editor.js")
         }).then(function () {
@@ -257,30 +257,165 @@ function renderSnippets() {
     ksRunnerReady(function () {
         setupBlocklyAsync()
             .then(function () {
-                return pxt.runner.renderAsync({
-                    snippetClass: 'lang-blocks',
-                    signatureClass: 'lang-sig',
-                    blocksClass: 'lang-block',
-                    staticPythonClass: 'lang-spy',
-                    shuffleClass: 'lang-shuffle',
-                    simulatorClass: 'lang-sim',
-                    linksClass: 'lang-cards',
-                    namespacesClass: 'lang-namespaces',
-                    codeCardClass: 'lang-codecard',
-                    packageClass: 'lang-package',
-                    projectClass: 'lang-project',
-                    snippetReplaceParent: true,
-                    simulator: true,
-                    showEdit: true,
-                    hex: true,
-                    hexName: path
-                });
+                const options = pxt.runner.defaultClientRenderOptions();
+                options.snippetReplaceParent = true;
+                options.simulator = true;
+                options.showEdit = true;
+                options.hex = true;
+                options.hexName = path;
+                return pxt.runner.renderAsync(options);
             }).done();
     });
+}
+
+function languageOption(code) {
+    var locale = pxt.Util.allLanguages[code];
+
+    var headerEl = document.createElement('div');
+    headerEl.className = 'header';
+    headerEl.textContent = locale.localizedName;
+
+    var descriptionEl = document.createElement('div');
+    descriptionEl.className = 'description tall';
+    descriptionEl.textContent = locale.englishName;
+
+    var contentEl = document.createElement('div');
+    contentEl.className = 'content';
+    contentEl.appendChild(headerEl);
+    contentEl.appendChild(descriptionEl);
+
+    var cardEl = document.createElement('div');
+    cardEl.className = 'ui card link card-selected langoption';
+    cardEl.dataset.lang = code;
+    cardEl.setAttribute('role', 'option');
+    cardEl.setAttribute('aria-label', locale.englishName);
+    cardEl.setAttribute('tabindex', '0');
+    cardEl.appendChild(contentEl);
+
+    return cardEl;
+}
+
+function setupLangPicker() {
+    if (typeof ksRunnerReady === "undefined") {
+        // probably in pxt docs
+        removeLangPicker();
+        return;
+    }
+
+    ksRunnerReady(function () {
+        buildLangPicker();
+    });
+}
+
+function buildLangPicker() {
+    var appTheme = pxt && pxt.appTarget && pxt.appTarget.appTheme;
+
+    if (appTheme && appTheme.availableLocales && appTheme.selectLanguage) {
+        var modalContainer = document.querySelector("#langmodal");
+        var initialLang = pxt && pxt.Util.normalizeLanguageCode(pxt.BrowserUtils.getCookieLang())[0];
+        var localesContainer = document.querySelector("#availablelocales");
+        appTheme.availableLocales.forEach(function(locale) {
+            var card = languageOption(locale);
+            localesContainer.appendChild(card);
+        });
+
+        /**
+         * In addition to normal focus trap, need to explicitly hide these
+         * elements when the modal is open so screen readers do not allow user
+         * to escape modal while in scan mode.
+         *
+         * Ideally, aria-modal && role="dialog" should make the screen reader
+         * handle this (https://www.w3.org/TR/wai-aria-1.1/#aria-modal)
+         * but none seem to :)
+         **/
+        var identifiersToHide = [
+            "#docs",
+            "#top-bar",
+            "#side-menu"
+        ];
+
+        modalContainer.className += `  ${appTheme.availableLocales.length > 4 ? "large" : "small"}`;
+
+        $(modalContainer).modal({
+            onShow: function() {
+                for (var id of identifiersToHide) {
+                    var divToHide = document.querySelector(id);
+                    if (divToHide)
+                        divToHide.setAttribute("aria-hidden", "true");
+                }
+
+                $(document).off("focusin.focusJail");
+                $(document).on("focusin.focusJail", function(event) {
+                    if (event.target !== modalContainer && !$.contains(modalContainer, event.target)) {
+                        modalContainer.focus();
+                    }
+                });
+            },
+            onHide: function() {
+                for (var id of identifiersToHide) {
+                    var divToHide = document.querySelector(id);
+                    if (divToHide)
+                        divToHide.removeAttribute("aria-hidden");
+                }
+
+                $(document).off("focusin.focusJail");
+            }
+        });
+
+        var langPicker = document.querySelector("#langpicker");
+        langPicker.onclick = function() {
+            $(modalContainer).modal('show');
+        }
+        langPicker.onkeydown = handleEnterKey;
+
+        var closeIcon = modalContainer.querySelector(".closeIcon");
+        closeIcon.onclick = function() {
+            $(modalContainer).modal('hide');
+        }
+        closeIcon.onkeydown = handleEnterKey;
+
+        var buttons = modalContainer.querySelectorAll(".ui.button");
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].onkeydown = handleEnterKey;
+        }
+
+        var langOptions = modalContainer.querySelectorAll(".langoption");
+
+        for (var i = 0; i < langOptions.length; i++) {
+            var currentOption = langOptions[i];
+
+            currentOption.onclick =  function(e) {
+                var langId = e.currentTarget.dataset.lang;
+                if (!pxt.Util.allLanguages[langId]) {
+                    return;
+                }
+                pxt.BrowserUtils.setCookieLang(langId, /** docs **/ true);
+                if (langId !== initialLang) {
+                    pxt.tickEvent("menu.lang.changelang", { lang: langId, docs: "true" });
+                    // In react app before reload we are using pxt.winrt.releaseAllDevicesAsync()
+                    // In docs we currently don't have access to pxt.winrt
+                    location.reload();
+                } else {
+                    pxt.tickEvent(`menu.lang.samelang`, { lang: langId, docs: "true" });
+                    $('.ui.modal').modal('hide');
+                }
+            }
+            currentOption.onkeydown = handleEnterKey;
+        }
+    } else {
+        // remove the locale picker and modal if unavailable in this editor
+        removeLangPicker();
+    }
+}
+
+function removeLangPicker() {
+    document.querySelector("#langpicker").remove();
+    document.querySelector("#langmodal").remove();
 }
 
 $(document).ready(function () {
     setupSidebar();
     setupSemantic();
     renderSnippets();
+    setupLangPicker();
 });
