@@ -1383,7 +1383,9 @@ namespace pxt.blocks {
                 r = compilePauseUntilBlock(e, b, comments);
                 break;
             case pxtc.TS_DEBUGGER_TYPE:
-                r = compileDebuggeStatementBlock(e, b);
+                // littleBits note: commenting out code here so that debugger statements are not added to compiled blockly code.
+                // follow up with microsoft to find out if there's a configuration option or something that could turn this off "correctly."
+                // r = compileDebuggeStatementBlock(e, b);
                 break;
             case pxtc.TS_BREAK_TYPE:
                 r = compileBreakStatementBlock(e, b);
