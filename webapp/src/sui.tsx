@@ -292,7 +292,9 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             if (activeChild) {
                 activeChild.click();
             } else {
-                this.toggle(true);
+                if (!this.props.onClick || this.props.onClick()) {
+                    this.toggle(true);
+                }
             }
         } else if (activeElementIndex === children.length - 1 && !e.shiftKey && charCode === core.TAB_KEY) {
             if (activeChild) {
@@ -310,13 +312,13 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         const aria = {
             'role': role || 'combobox',
             'aria-disabled': disabled,
-            'aria-haspopup': !!disabled,
+            'aria-haspopup': !disabled,
             'aria-expanded': open
         }
         const menuAria = {
             'role': 'menu',
             'aria-label': lf("Dropdown menu {0}", title),
-            'aria-hidden': !!open
+            'aria-hidden': !open
         }
         const classes = cx([
             'ui',
