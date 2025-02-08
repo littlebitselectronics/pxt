@@ -2,6 +2,7 @@ namespace _py {
     export const ATTRIBUTE_ERROR: string = "AttributeError";
     export const INDEX_ERROR: string = "IndexError";
     export const VALUE_ERROR: string = "ValueError";
+    export const TYPE_ERROR: string = "TypeError";
 
     export function py_string_capitalize(str: string): string {
         nullCheck(str);
@@ -113,16 +114,6 @@ namespace _py {
         return str;
     }
 
-    export function py_string_lstrip(str: string, chars?: string): string {
-        nullCheck(str);
-        return str;
-    }
-
-    export function py_string_replace(str: string, oldString: string, newString: string, count?: number): string {
-        nullCheck(str);
-        return str;
-    }
-
     export function py_string_rfind(str: string, sub: string, start?: number, end?: number): number {
         nullCheck(str);
         return 0;
@@ -138,19 +129,158 @@ namespace _py {
         return str;
     }
 
-    export function py_string_rsplit(str: string, sep?: string, maxSplit?: number): string[] {
+    export function py_string_rsplit(str: string, sep?: string, maxsplit?: number): string[] {
         nullCheck(str);
-        return [];
-    }
 
-    export function py_string_rstrip(str: string, chars?: string): string {
-        nullCheck(str);
-        return str;
+        if (sep === "") {
+            throw VALUE_ERROR;
+        }
+
+        if (maxsplit === 0) return [str]
+        if (!maxsplit || maxsplit < 0) maxsplit = str.length;
+
+        const out: string[] = [];
+
+        let currentChar: string;
+        let splitEnd: number;
+        let previousSplit = str.length;
+
+        if (!sep) {
+            for (let i = str.length - 1; i >= 0; i--) {
+                currentChar = str.charAt(i);
+                if (isWhitespace(currentChar)) {
+                    if (splitEnd === undefined) splitEnd = i;
+                }
+                else if (splitEnd !== undefined) {
+                    if (previousSplit !== splitEnd + 1) out.push(str.substr(splitEnd + 1, previousSplit - (splitEnd + 1)));
+                    previousSplit = i + 1;
+                    splitEnd = undefined;
+
+                }
+
+                if (out.length === maxsplit) break;
+            }
+
+            if (out.length < maxsplit + 1) {
+                if (splitEnd !== undefined) {
+                    if (previousSplit !== splitEnd + 1)
+                        out.push(str.substr(splitEnd + 1, previousSplit - (splitEnd + 1)));
+                }
+                else {
+                    out.push(str.substr(0, previousSplit))
+                }
+            }
+        }
+        else {
+            let separatorIndex = 0;
+            for (let i = str.length; i >= 0; i--) {
+                currentChar = str.charAt(i);
+                if (currentChar === sep.charAt(sep.length - separatorIndex - 1)) {
+                    separatorIndex++;
+                    if (splitEnd === undefined) splitEnd = i;
+                }
+                else {
+                    separatorIndex = 0;
+                    splitEnd = undefined;
+                }
+
+                if (separatorIndex === sep.length) {
+                    out.push(str.substr(splitEnd + 1, previousSplit - (splitEnd + 1)));
+                    previousSplit = i;
+                    separatorIndex = 0;
+                    splitEnd = undefined;
+                }
+
+                if (out.length === maxsplit) break;
+            }
+
+            if (out.length < maxsplit + 1) {
+                out.push(str.substr(0, previousSplit))
+            }
+        }
+
+        out.reverse();
+        return out;
     }
 
     export function py_string_split(str: string, sep?: string, maxsplit?: number): string[] {
         nullCheck(str);
-        return [];
+
+        if (sep === "") {
+            throw VALUE_ERROR;
+        }
+
+        if (maxsplit === 0) return [str]
+        if (!maxsplit || maxsplit < 0) maxsplit = str.length;
+
+        const out: string[] = [];
+
+        let currentChar: string;
+        let splitStart: number;
+        let previousSplit = 0;
+
+        if (!sep) {
+            for (let i = 0; i < str.length; i++) {
+                currentChar = str.charAt(i);
+                if (isWhitespace(currentChar)) {
+                    if (splitStart === undefined) splitStart = i;
+                }
+                else if (splitStart !== undefined) {
+                    if (previousSplit !== splitStart) out.push(str.substr(previousSplit, splitStart - previousSplit));
+                    previousSplit = i;
+                    splitStart = undefined;
+
+                }
+
+                if (out.length === maxsplit) break;
+            }
+
+            if (out.length < maxsplit + 1) {
+                if (splitStart !== undefined) {
+                    if (previousSplit !== splitStart)
+                        out.push(str.substr(previousSplit, splitStart - previousSplit));
+                }
+                else {
+                    out.push(str.substr(previousSplit))
+                }
+            }
+        }
+        else {
+            let separatorIndex = 0;
+            for (let i = 0; i < str.length; i++) {
+                currentChar = str.charAt(i);
+                if (currentChar === sep.charAt(separatorIndex)) {
+                    separatorIndex++;
+                    if (splitStart === undefined) splitStart = i;
+                }
+                else {
+                    separatorIndex = 0;
+                    splitStart = undefined;
+                }
+
+                if (separatorIndex === sep.length) {
+                    out.push(str.substr(previousSplit, splitStart - previousSplit));
+                    previousSplit = i + 1;
+                    separatorIndex = 0;
+                    splitStart = undefined;
+                }
+
+                if (out.length === maxsplit) break;
+            }
+
+            if (out.length < maxsplit + 1) {
+                out.push(str.substr(previousSplit))
+            }
+        }
+
+        return out;
+    }
+
+
+    function isWhitespace(char: string) {
+        // TODO Figure out everything python considers whitespace.
+        // the \s character class in JS regexes also includes these: \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff
+        return char === " " || char === "\t" || char === "\n" || char === "\v" || char === "\r" || char === "\f";
     }
 
     export function py_string_splitlines(str: string, keepends?: boolean): string[] {
@@ -163,9 +293,42 @@ namespace _py {
         return false;
     }
 
-    export function py_string_strip(str: string, chars?: string): string {
+    export function py_string_rstrip(str: string, chars?: string): string {
         nullCheck(str);
-        return str;
+
+        for (let i = str.length - 1; i >= 0; i--) {
+            if (chars != undefined) {
+                if (chars.indexOf(str.charAt(i)) === -1) {
+                    return str.substr(0, i + 1);
+                }
+            }
+            else if (!isWhitespace(str.charAt(i))) {
+                return str.substr(0, i + 1);
+            }
+        }
+
+        return "";
+    }
+
+    export function py_string_lstrip(str: string, chars?: string): string {
+        nullCheck(str);
+
+        for (let i = 0; i < str.length; i++) {
+            if (chars != undefined) {
+                if (chars.indexOf(str.charAt(i)) === -1) {
+                    return str.substr(i);
+                }
+            }
+            else if (!isWhitespace(str.charAt(i))) {
+                return str.substr(i);
+            }
+        }
+
+        return "";
+    }
+
+    export function py_string_strip(str: string, chars?: string): string {
+        return py_string_rstrip(py_string_lstrip(str, chars), chars);
     }
 
     export function py_string_swapcase(str: string): string {
@@ -198,7 +361,7 @@ namespace _py {
         if (index == undefined) {
             return arr.pop();
         }
-        else if (index > 0 && index < arr.length) {
+        else if (index >= 0 && index < arr.length) {
             return arr.removeAt(index | 0);
         }
 
@@ -259,5 +422,86 @@ namespace _py {
             while (index < 0) index += arr.length;
         }
         return index;
+    }
+
+    /**
+     * Returns a sequence of numbers up to but not including the limit
+     * @param first The value to end the sequence before. This value will not show up in the result.
+     *      If more than one argument is passed, this argument is instead used for the first value in the range
+     * @param stop  The value to end the sequence before. This value will not show up in the result
+     * @param step  The value to increase or decrease by for each step in the range. Must be a nonzero integer
+     */
+    export function range(first: number, stop?: number, step?: number) {
+        if (step === undefined) step = 1
+        // step must be a nonzero integer (can be negative)
+        if (step === 0 || (step | 0) !== step) {
+            throw VALUE_ERROR;
+        }
+
+        // If only one argument is given, then start is actually stop
+        if (stop === undefined) {
+            stop = first;
+            first = 0;
+        }
+
+        const res: number[] = [];
+        if (step > 0 && first >= stop || step < 0 && first <= stop) return res;
+
+        let index = first;
+
+        while (step < 0 ? index > stop : index < stop) {
+            res.push(index);
+            index += step
+        }
+
+        return res;
+    }
+
+    function sliceRange(valueLength: number, start?: number, stop?: number, step?: number) {
+        if (step == null) step = 1
+
+        // step must be a nonzero integer (can be negative)
+        if (step === 0 || (step | 0) !== step) {
+            throw _py.VALUE_ERROR;
+        }
+
+        if (step < 0) {
+            if (start == null) {
+                start = valueLength - 1;
+            }
+            if (stop == null) {
+                stop = -1;
+            }
+        }
+        else {
+            if (start == null) {
+                start = 0;
+            }
+            if (stop == null) {
+                stop = valueLength;
+            }
+        }
+
+        return range(start, stop, step)
+    }
+
+    /**
+     * Returns a section of an array according to python's extended slice syntax
+     */
+    export function slice<U>(value: U[], start?: number, stop?: number, step?: number): U[] {
+        if (value == null) {
+            throw TYPE_ERROR;
+        }
+        return sliceRange(value.length, start, stop, step).map(index => value[index]);
+    }
+
+    /**
+     * Returns a section of a string according to python's extended slice syntax
+     */
+    export function stringSlice(value: string, start?: number, stop?: number, step?: number): string {
+        if (value == null) {
+            throw TYPE_ERROR;
+        }
+        return sliceRange(value.length, start, stop, step).map(index => value.charAt(index)).join("");
     }
 }

@@ -49,7 +49,7 @@ namespace ts.pxtc {
     }
 
     function isTsDiagnostic(a: KsDiagnostic | Diagnostic): a is Diagnostic {
-        return (DiagnosticCategory as any).file != undefined;
+        return (a as any).file !== undefined;
     }
 
     export function plainTscCompileDir(dir: string): Program {
@@ -84,7 +84,7 @@ namespace ts.pxtc {
 
     export function plainTscCompileFiles(fileNames: string[], compilerOpts: ts.CompilerOptions): Program {
         const compilerHost = createCompilerHost(compilerOpts);
-        compilerHost.getDefaultLibFileName = () => "node_modules/typescript/lib/lib.d.ts"
+        compilerHost.getDefaultLibFileName = () => "node_modules/pxt-core/pxtcompiler/ext-typescript/lib/lib.d.ts";
         let prog = createProgram(fileNames, compilerOpts, compilerHost);
         return prog
 
@@ -92,7 +92,7 @@ namespace ts.pxtc {
         //diagnostics = diagnostics.concat(emitOutput.diagnostics);
     }
 
-    export function getProgramDiagnostics(program: ts.Program) {
+    export function getProgramDiagnostics(program: ts.Program): Diagnostic[] {
         let diagnostics = program.getSyntacticDiagnostics();
         if (diagnostics.length === 0) {
             diagnostics = program.getOptionsDiagnostics().concat(Util.toArray(program.getGlobalDiagnostics()));
@@ -100,6 +100,6 @@ namespace ts.pxtc {
                 diagnostics = program.getSemanticDiagnostics();
             }
         }
-        return diagnostics
+        return diagnostics.slice(0); // fix TS 3.5 vs 2.x issue
     }
 }

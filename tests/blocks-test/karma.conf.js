@@ -1,6 +1,8 @@
 // Karma configuration
-
-var process = require("process");
+const process = require("process");
+const puppeteer = require('puppeteer');
+process.env.CHROME_BIN = puppeteer.executablePath()
+console.log(`chromium: `, process.env.CHROME_BIN)
 
 module.exports = function(config) {
   config.set({
@@ -17,7 +19,6 @@ module.exports = function(config) {
 
     // list of files / patterns to load in the browser
     files: [
-      'node_modules/pxt-core/built/web/bluebird.min.js',
       'node_modules/pxt-core/built/web/jquery.js',
       'node_modules/pxt-core/built/web/typescript.js',
       'node_modules/pxt-core/webapp/public/blockly/**/*.js',
@@ -25,6 +26,7 @@ module.exports = function(config) {
       'node_modules/pxt-core/built/pxtblocks.js',
       'node_modules/pxt-core/built/pxtcompiler.js',
       'node_modules/pxt-core/built/pxteditor.js',
+      'node_modules/pxt-core/built/tests/blockssetup.js',
       'built/target.js',
       'built/fieldeditors.js',
 
@@ -69,7 +71,7 @@ module.exports = function(config) {
 
     // We don't use the watcher but for some reason this must be set to true for tests to run
     autoWatch: true,
-    browsers: [process.env.TRAVIS ? 'chromium_travis' : 'Chrome'],
+    browsers: [process.env.GITHUB_ACTIONS ? 'chromium_githubactions' : 'ChromeHeadless'],
 
     // Continuous Integration mode
     // if true, Karma captures browsers, runs the tests and exits
@@ -81,8 +83,8 @@ module.exports = function(config) {
 
     // Launcher for using chromium in Travis
     customLaunchers: {
-      chromium_travis: {
-        base: "Chrome",
+      chromium_githubactions: {
+        base: "ChromeHeadless",
         flags: ['--no-sandbox']
       }
     }

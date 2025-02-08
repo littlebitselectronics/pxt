@@ -40,7 +40,7 @@ namespace ts.pxtc {
     // Assumptions:
     // - registers can hold a pointer (data or code)
     // - special registers include: sp
-    // - fixed registers are r0, r1, r2, r3, r5, r6 
+    // - fixed registers are r0, r1, r2, r3, r5, r6
     //   - r0 is the current value (from expression evaluation)
     //   - registers for runtime calls (r0, r1,r2,r3)
     //   - r5 is for captured locals in lambda
@@ -54,7 +54,7 @@ namespace ts.pxtc {
     export abstract class AssemblerSnippets {
         nop() { return "TBD(nop)" }
         reg_gets_imm(reg: string, imm: number) { return "TBD(reg_gets_imm)" }
-        // Registers are stored on the stack in numerical order 
+        // Registers are stored on the stack in numerical order
         proc_setup(numlocals: number, main?: boolean) { return "TBD(proc_setup)" }
         push_fixed(reg: string[]) { return "TBD(push_fixed)" }
         push_local(reg: string) { return "TBD(push_local)" }
@@ -83,12 +83,6 @@ namespace ts.pxtc {
         rt_call(name: string, r0: string, r1: string) { return "TBD(rt_call)"; }
         call_lbl(lbl: string, saveStack?: boolean) { return "TBD(call_lbl)" }
         call_reg(reg: string) { return "TBD(call_reg)" }
-        vcall(mapMethod: string, isSet: boolean, vtableShift: number) {
-            return "TBD(vcall)"
-        }
-        prologue_vtable(arg_index: number, vtableShift: number) {
-            return "TBD(prologue_vtable"
-        }
         helper_prologue() { return "TBD(lambda_prologue)" }
         helper_epilogue() { return "TBD(lambda_epilogue)" }
         pop_clean(pops: boolean[]) { return "TBD" }
@@ -100,52 +94,59 @@ namespace ts.pxtc {
         }
 
         string_literal(lbl: string, strLit: string) {
-            const SKIP_INCR = 16
-            let vt = "pxt::string_inline_ascii_vt"
-            let utfLit = target.utf8 ? U.toUTF8(strLit, true) : strLit
-            if (utfLit !== strLit) {
-                if (strLit.length > SKIP_INCR) {
-                    vt = "pxt::string_skiplist16_vt"
-                    let skipList: number[] = []
-                    let off = 0
-                    for (let i = 0; i + SKIP_INCR <= strLit.length; i += SKIP_INCR) {
-                        off += U.toUTF8(strLit.slice(i, i + SKIP_INCR), true).length
-                        skipList.push(off)
-                    }
-                    return `
-.balign 4
-${lbl}: ${this.obj_header(vt)}
-        .short ${utfLit.length}, ${strLit.length}
-        .word ${lbl}data
-${lbl}data:
-        .short ${skipList.map(s => s.toString()).join(", ")}
-        .string ${asmStringLiteral(utfLit)}
-`
-                } else {
-                    vt = "pxt::string_inline_utf8_vt"
-                }
-            }
-
+            const info = utf8AsmStringLiteral(strLit)
             return `
-.balign 4
-${lbl}: ${this.obj_header(vt)}
-        .short ${utfLit.length}
-        .string ${asmStringLiteral(utfLit)}
+            .balign 4
+            .object ${lbl}
+            ${lbl}: ${this.obj_header(info.vt)}
+            ${info.asm}
 `
         }
 
 
         hex_literal(lbl: string, data: string) {
+            // if buffer looks as if it was prepared for in-app reprogramming (at least 8 bytes of 0xff)
+            // align it to 8 bytes, to make sure it can be rewritten also on SAMD51
+            const align = /f{16}/i.test(data) ? 8 : 4
             return `
-.balign 4
+.balign ${align}
+.object ${lbl}
 ${lbl}: ${this.obj_header("pxt::buffer_vt")}
 ${hexLiteralAsm(data)}
 `
         }
+    }
 
-        method_call(procid: ir.ProcId, topExpr: ir.Expr) {
-            return ""
+    export function utf8AsmStringLiteral(strLit: string) {
+        const PXT_STRING_SKIP_INCR = 16
+        let vt = "pxt::string_inline_ascii_vt"
+        let utfLit = target.utf8 ? U.toUTF8(strLit, true) : strLit
+        let asm = ""
+        if (utfLit !== strLit) {
+            if (strLit.length > PXT_STRING_SKIP_INCR) {
+                vt = "pxt::string_skiplist16_packed_vt"
+                let skipList: number[] = []
+                let off = 0
+                for (let i = 0; i + PXT_STRING_SKIP_INCR <= strLit.length; i += PXT_STRING_SKIP_INCR) {
+                    off += U.toUTF8(strLit.slice(i, i + PXT_STRING_SKIP_INCR), true).length
+                    skipList.push(off)
+                }
+                asm = `
+    .short ${utfLit.length}, ${strLit.length}
+    .short ${skipList.map(s => s.toString()).join(", ")}
+    .string ${asmStringLiteral(utfLit)}
+`
+            } else {
+                vt = "pxt::string_inline_utf8_vt"
+            }
         }
+
+        if (!asm)
+            asm = `
+    .short ${utfLit.length}
+    .string ${asmStringLiteral(utfLit)}
+`
+        return { vt, asm }
     }
 
     export function hexLiteralAsm(data: string, suff = "") {
@@ -187,6 +188,7 @@ ${hexLiteralAsm(data)}
             this.emitLambdaTrampoline()
             this.emitArrayMethods()
             this.emitFieldMethods()
+            this.emitBindHelper()
         }
 
         private write = (s: string) => { this.resText += asmline(s); }
@@ -225,12 +227,17 @@ ${hexLiteralAsm(data)}
 ;
 `)
 
-            this.emitLambdaWrapper(this.proc.isRoot)
-
             let baseLabel = this.proc.label()
+            this.write(`.object ${baseLabel} ${JSON.stringify(this.proc.getFullName())}`)
+            let preLabel = baseLabel + "_pre"
             let bkptLabel = baseLabel + "_bkpt"
             let locLabel = baseLabel + "_locals"
             let endLabel = baseLabel + "_end"
+
+            this.write(`${preLabel}:`)
+
+            this.emitLambdaWrapper(this.proc.isRoot)
+
             this.write(`.section code`)
             this.write(`${baseLabel}:`)
 
@@ -261,7 +268,8 @@ ${baseLabel}_nochk:
                     bkptLoc: U.lookup(labels, bkptLabel),
                     localsMark: U.lookup(th.stackAtLabel, locLabel),
                     idx: this.proc.seqNo,
-                    calls: this.calls
+                    calls: this.calls,
+                    size: U.lookup(labels, endLabel) + 2 - U.lookup(labels, preLabel)
                 }
 
                 for (let ci of this.calls) {
@@ -275,15 +283,15 @@ ${baseLabel}_nochk:
                     if (bi) {
                         let off = U.lookup(th.stackAtLabel, `__brkp_${bi.id}`)
                         if (off !== this.proc.debugInfo.localsMark) {
-                            console.log(bi)
-                            console.log(th.stackAtLabel)
+                            pxt.log(bi)
+                            pxt.log(th.stackAtLabel)
                             U.oops(`offset doesn't match: ${off} != ${this.proc.debugInfo.localsMark}`)
                         }
                     }
                 }
             }
 
-            if (this.bin.options.breakpoints) {
+            if (this.bin.breakpoints) {
                 this.write(this.t.debugger_proc(bkptLabel))
             }
             this.baseStackSize = 1 // push {lr}
@@ -304,7 +312,7 @@ ${baseLabel}_nochk:
 
             for (let i = 0; i < this.proc.body.length; ++i) {
                 let s = this.proc.body[i]
-                // console.log("STMT", s.toString())
+                // pxt.log("STMT", s.toString())
                 switch (s.stmtKind) {
                     case ir.SK.Expr:
                         this.emitExpr(s.expr)
@@ -312,9 +320,9 @@ ${baseLabel}_nochk:
                     case ir.SK.StackEmpty:
                         if (this.exprStack.length > 0) {
                             for (let stmt of this.proc.body.slice(i - 4, i + 1))
-                                console.log(`PREVSTMT ${stmt.toString().trim()}`)
+                                pxt.log(`PREVSTMT ${stmt.toString().trim()}`)
                             for (let e of this.exprStack)
-                                console.log(`EXPRSTACK ${e.currUses}/${e.totalUses} E: ${e.toString()}`)
+                                pxt.log(`EXPRSTACK ${e.currUses}/${e.totalUses} E: ${e.toString()}`)
                             oops("stack should be empty")
                         }
                         this.write("@stackempty locals")
@@ -326,8 +334,11 @@ ${baseLabel}_nochk:
                         this.write(s.lblName + ":")
                         this.validateJmpStack(s)
                         break;
+                    case ir.SK.Comment:
+                        this.write(`; ${s.expr.data}`)
+                        break
                     case ir.SK.Breakpoint:
-                        if (this.bin.options.breakpoints) {
+                        if (this.bin.breakpoints) {
                             let lbl = `__brkp_${s.breakpointInfo.id}`
                             if (s.breakpointInfo.isDebuggerStmt) {
                                 this.write(this.t.debugger_stmt(lbl))
@@ -376,7 +387,7 @@ ${baseLabel}_nochk:
         private terminate(expr: ir.Expr) {
             assert(expr.exprKind == ir.EK.SharedRef)
             let arg = expr.args[0]
-            // console.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
+            // pxt.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
             U.assert(arg.currUses != arg.totalUses)
             // we should have the terminated expression on top
             U.assert(this.exprStack[0] === arg, "term at top")
@@ -396,14 +407,14 @@ ${baseLabel}_nochk:
         }
 
         private validateJmpStack(lbl: ir.Stmt, off = 0) {
-            // console.log("Validate:", off, lbl.lblName, this.dumpStack())
+            // pxt.log("Validate:", off, lbl.lblName, this.dumpStack())
             let currSize = this.exprStack.length - off
             if (lbl.lblStackSize == null) {
                 lbl.lblStackSize = currSize
             } else {
                 if (lbl.lblStackSize != currSize) {
-                    console.log(lbl.lblStackSize, currSize)
-                    console.log(this.dumpStack())
+                    pxt.log(lbl.lblStackSize, currSize)
+                    pxt.log(this.dumpStack())
                     U.oops("stack misaligned at: " + lbl.lblName)
                 }
             }
@@ -458,10 +469,11 @@ ${baseLabel}_nochk:
             if (!fast) {
                 let toClear = this.exprStack.filter(e => e.currUses == e.totalUses && e.irCurrUses != -1)
                 if (toClear.length > 0) {
-                    this.write(this.t.reg_gets_imm("r1", 0))
+                    // use r7 as temp; r0-r3 might be used as arguments to functions
+                    this.write(this.t.reg_gets_imm("r7", 0))
                     for (let a of toClear) {
                         a.irCurrUses = -1
-                        this.write(this.loadFromExprStack("r1", a, 0, true))
+                        this.write(this.loadFromExprStack("r7", a, 0, true))
                     }
                 }
             }
@@ -530,7 +542,7 @@ ${baseLabel}_nochk:
 
         // result in R0
         private emitExpr(e: ir.Expr): void {
-            //console.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
+            //pxt.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
 
             switch (e.exprKind) {
                 case ir.EK.JmpValue:
@@ -584,6 +596,12 @@ ${baseLabel}_nochk:
             return
         }
 
+        private writeFailBranch() {
+            this.write(`.fail:`)
+            this.write(`mov r1, lr`)
+            this.write(this.t.callCPP("pxt::failedCast"))
+        }
+
         private emitClassCall(procid: ir.ProcId) {
             let effIdx = procid.virtualIndex + firstMethodOffset()
             this.write(this.t.emit_int(effIdx * 4, "r1"))
@@ -599,9 +617,73 @@ ${baseLabel}_nochk:
                     this.checkSubtype(info)
                 this.write(`ldr r1, [r3, r1] ; ld-method`)
                 this.write(`bx r1 ; keep lr from caller`)
-                this.write(`.fail:`)
-                this.write(this.t.callCPP("pxt::failedCast"))
+                this.writeFailBranch()
             })
+        }
+
+        private helperObject(desc: string) {
+            return `.object _pxt_helper_${desc.replace(/[^\w]+/g, "_")} "helper: ${desc}"`
+        }
+
+        private emitBindHelper() {
+            const maxArgs = 12
+            this.write(`
+                ${this.helperObject("bind")}
+                .section code
+                _pxt_bind_helper:
+                    push {r0, r2}
+                    movs r0, #2
+                    ldlit r1, _pxt_bind_lit
+                    ${this.t.callCPP("pxt::mkAction")}
+                    pop {r1, r2}
+                    str r1, [r0, #12]
+                    str r2, [r0, #16]
+                    bx r4 ; return
+
+                _pxt_bind_lit:
+                    ${this.t.obj_header("pxt::RefAction_vtable")}
+                    .short 0, 0 ; no captured vars
+                    .word .bindCode@fn
+                .bindCode:
+                    ; r0-bind object, r4-#args
+                    cmp r4, #${maxArgs}
+                    bge .fail
+                    lsls r3, r4, #2
+                    ldlit r2, _pxt_copy_list
+                    ldr r1, [r2, r3]
+
+                    ldr r3, [r0, #12]
+                    ldr r2, [r0, #16]
+                    adds r4, r4, #1
+                    bx r1
+            `)
+
+            this.writeFailBranch()
+
+            this.write(`_pxt_copy_list:`)
+
+            this.write(U.range(maxArgs).map(k => `.word _pxt_bind_${k}@fn`).join("\n"))
+
+            for (let numargs = 0; numargs < maxArgs; numargs++) {
+                this.write(`
+                _pxt_bind_${numargs}:
+                    sub sp, #4
+                `)
+                // inject recv argument
+                for (let i = 0; i < numargs; ++i) {
+                    this.write(`ldr r1, [sp, #4*${i + 1}]`)
+                    this.write(`str r1, [sp, #4*${i}]`)
+                }
+                this.write(`
+                    push {r3} ; this-ptr
+                    mov r1, lr
+                    str r1, [sp, #4*${numargs + 1}] ; store LR
+                    blx r2
+                    ldr r1, [sp, #4*${numargs + 1}]
+                    add sp, #8
+                    bx r1
+                `)
+            }
         }
 
         private ifaceCallCore(numargs: number, getset: string, noObjlit = false) {
@@ -642,6 +724,10 @@ ${baseLabel}_nochk:
                 beq .field
             `)
 
+            // here, it's a method entry in iface table
+
+            const callIt = this.t.emit_int(numargs, "r4") + "\n     bx r2"
+
             if (getset == "set") {
                 this.write(`
                     ; check for next descriptor
@@ -649,11 +735,37 @@ ${baseLabel}_nochk:
                     cmp r7, r1
                     bne .fail2 ; no setter!
                     ldr r2, [r3, #12]
+                    ${callIt}
                 `)
+            } else {
+                this.write(`
+                    ; check if it's getter
+                    ldrh r7, [r3, #2]
+                    cmp r7, #1
+                `)
+                if (getset == "get") {
+                    this.write(`
+                        bne .bind
+                        ${callIt}
+                    .bind:
+                        mov r4, lr
+                        bl _pxt_bind_helper
+                    `)
+                } else {
+                    this.write(`
+                        beq .doublecall
+                        ${callIt}
+                    .doublecall:
+                        ; call getter
+                        movs r4, #1
+                        push {r0, lr}
+                        blx r2
+                        pop {r1, r2}
+                        mov lr, r2
+                        b .moveArgs
+                    `)
+                }
             }
-
-            this.write(this.t.emit_int(numargs, "r4"))
-            this.write("bx r2")
 
             if (!noObjlit) {
                 this.write(`
@@ -703,7 +815,7 @@ ${baseLabel}_nochk:
 
                 for (let i = 0; i < numargs; ++i) {
                     if (i == numargs - 1)
-                        // we keep the actual lambda value on the stack, so it gets decremented
+                        // we keep the actual lambda value on the stack, so it won't be collected
                         this.write(`movs r1, r0`)
                     else
                         this.write(`ldr r1, [sp, #4*${i + 1}]`)
@@ -717,9 +829,9 @@ ${baseLabel}_nochk:
             if (noObjlit)
                 this.write(".objlit:")
 
+            this.writeFailBranch()
+
             this.write(`
-            .fail:
-                ${this.t.callCPP("pxt::failedCast")}
             .fail2:
                 ${this.t.callCPP("pxt::missingProperty")}
             `)
@@ -782,8 +894,7 @@ ${baseLabel}_nochk:
                     this.write(`bx lr`)
                 } else if (tp == "validate") {
                     this.write(`bx lr`)
-                    this.write(`.fail:`)
-                    this.write(this.t.callCPP("pxt::failedCast"))
+                    this.writeFailBranch()
                 } else if (tp == "validateNullable") {
                     this.write(`.undefined:`)
                     this.write(`bx lr`)
@@ -792,8 +903,7 @@ ${baseLabel}_nochk:
                     this.write(`bne .fail`)
                     this.write(`movs r0, #0`)
                     this.write(`bx lr`)
-                    this.write(`.fail:`)
-                    this.write(this.t.callCPP("pxt::failedCast"))
+                    this.writeFailBranch()
                 } else {
                     U.oops()
                 }
@@ -820,8 +930,8 @@ ${baseLabel}_nochk:
             let allArgs = nonRefs.concat(refs)
             for (let r of allArgs) {
                 if (r.currUses != 0 || r.totalUses != 1) {
-                    console.log(r.toString())
-                    console.log(allArgs.map(a => a.toString()))
+                    pxt.log(r.toString())
+                    pxt.log(allArgs.map(a => a.toString()))
                     U.oops(`wrong uses: ${r.currUses} ${r.totalUses}`)
                 }
                 r.currUses = 1
@@ -1037,6 +1147,7 @@ ${baseLabel}_nochk:
         private emitFieldMethods() {
             for (let op of ["get", "set"]) {
                 this.write(`
+                ${this.helperObject(op)}
                 .section code
                 _pxt_map_${op}:
                 `)
@@ -1089,6 +1200,7 @@ ${baseLabel}_nochk:
 
         private emitArrayMethod(op: string, isBuffer: boolean) {
             this.write(`
+            ${this.helperObject(op + " " + (isBuffer ? "buffer" : "array"))}
             .section code
             _pxt_${isBuffer ? "buffer" : "array"}_${op}:
             `)
@@ -1101,7 +1213,7 @@ ${baseLabel}_nochk:
                 this.checkSubtype(classNo, ".fail", "r4")
 
             // on linux we use 32 bits for array size
-            const ldrSize = target.stackAlign || isBuffer ? "ldr" : "ldrh"
+            const ldrSize = isStackMachine() || target.runtimeIsARM || isBuffer ? "ldr" : "ldrh"
 
             this.write(`
                 asrs r1, r1, #1
@@ -1153,10 +1265,9 @@ ${baseLabel}_nochk:
                 ${this.t.callCPP(`Array_::${op}At`)}
                 ${conv}
                 ${this.t.popPC()}
-
-            .fail:
-                bl pxt::failedCast
             `)
+
+            this.writeFailBranch()
 
             if (op == "get") {
                 this.write(`
@@ -1184,6 +1295,7 @@ ${baseLabel}_nochk:
         private emitLambdaTrampoline() {
             let r3 = target.stackAlign ? "r3," : ""
             this.write(`
+            ${this.helperObject("trampoline")}
             .section code
             _pxt_lambda_trampoline:
                 push {${r3} r4, r5, r6, r7, lr}
@@ -1206,9 +1318,10 @@ ${baseLabel}_nochk:
                 bl pxt::pushThreadContext
                 mov r6, r0          ; save ctx or globals
                 mov r5, r7          ; save lambda for closure
-                ldr r0, [r5, #8]    ; ld fnptr
+                mov r0, r5          ; also save lambda pointer in r0 - needed by pxt::bindMethod
+                ldr r1, [r5, #8]    ; ld fnptr
                 movs r4, #3         ; 3 args
-                blx r0              ; execute the actual lambda
+                blx r1              ; execute the actual lambda
                 mov r7, r0          ; save result
                 @dummystack 4
                 add sp, #4*4        ; remove arguments and lambda
@@ -1223,6 +1336,7 @@ ${baseLabel}_nochk:
                 pop {${r3} r4, r5, r6, r7, pc}`)
 
             this.write(`
+            ${this.helperObject("exn")}
             .section code
             ; r0 - try frame
             ; r1 - handler PC
@@ -1253,6 +1367,7 @@ ${baseLabel}_nochk:
                 `)
 
             this.write(`
+            ${this.helperObject("stringconv")}
             .section code
             _pxt_stringConv:
             `)
@@ -1388,7 +1503,6 @@ ${baseLabel}_nochk:
             }
 
             let lbl = this.mkLbl("_proccall")
-            let argsToClear = topExpr.args.slice()
 
             let procIdx = -1
             if (isLambda) {
@@ -1396,20 +1510,16 @@ ${baseLabel}_nochk:
                 this.write(this.loadFromExprStack("r0", topExpr.args[0]))
                 this.emitLabelledHelper("lambda_call" + numargs, () => {
                     this.lambdaCall(numargs)
-                    this.write(`.fail:`)
-                    this.write(this.t.callCPP("pxt::failedCast"))
+                    this.writeFailBranch()
                 })
             } else if (procid.virtualIndex != null || procid.ifaceIndex != null) {
-                let custom = this.t.method_call(procid, topExpr)
-                if (custom) {
-                    this.write(custom)
-                } else if (procid.mapMethod) {
-                    let isSet = /Set/.test(procid.mapMethod)
-                    assert(isSet == (topExpr.args.length == 2))
-                    assert(!isSet == (topExpr.args.length == 1))
-                    this.emitIfaceCall(procid, topExpr.args.length, isSet ? "set" : "get")
-                } else if (procid.ifaceIndex != null) {
-                    this.emitIfaceCall(procid, topExpr.args.length)
+                if (procid.ifaceIndex != null) {
+                    if (procid.isSet) {
+                        assert(topExpr.args.length == 2)
+                        this.emitIfaceCall(procid, topExpr.args.length, "set")
+                    } else {
+                        this.emitIfaceCall(procid, topExpr.args.length, procid.noArgs ? "get" : "")
+                    }
                 } else {
                     this.emitClassCall(procid)
                 }
@@ -1460,15 +1570,16 @@ ${baseLabel}_nochk:
                 this.write(`str r1, [sp, #4*${i}]`)
             }
 
+            // save lr and r5 (outer lambda ctx) in the newly free spots
             this.write(`
                 str r5, [sp, #4*${numargs}]
                 mov r1, lr
                 str r1, [sp, #4*${numargs + 1}]
                 mov r5, r0
                 ldr r7, [r5, #8]
-                blx r7
-                ldr r4, [sp, #4*${numargs + 1}]
-                ldr r5, [sp, #4*${numargs}]
+                blx r7 ; exec actual lambda
+                ldr r4, [sp, #4*${numargs + 1}] ; restore what was in LR
+                ldr r5, [sp, #4*${numargs}] ; restore lambda ctx
             `)
 
             // move arguments back where they were
@@ -1590,7 +1701,7 @@ ${baseLabel}_nochk:
         }
 
         private emitCallRaw(name: string) {
-            let inf = hex.lookupFunc(name)
+            let inf = hexfile.lookupFunc(name)
             assert(!!inf, "unimplemented raw function: " + name)
             this.alignedCall(name)
         }

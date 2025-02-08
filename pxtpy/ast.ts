@@ -19,12 +19,13 @@ namespace pxt.py {
         pyAST?: AST;
         isProtected?: boolean;
         moduleTypeMarker?: {};
+        isStatic?: boolean;
 
         declared?: number; // A reference to the current iteration; used for detecting duplicate functions
     }
 
     export interface TypeOptions {
-        union?: Type;
+        unifyWith?: Type;
         classType?: SymbolInfo; // instance type
         moduleType?: SymbolInfo; // class/static member type
         primType?: string;
@@ -43,18 +44,12 @@ namespace pxt.py {
         isLocal?: boolean;
         isParam?: boolean;
         isImport?: SymbolInfo;
-        modifier?: VarModifier;
-
-        /* usage information */
-        firstRefPos?: number;
-        firstAssignPos?: number;
-        firstAssignDepth?: number;
     }
 
     // based on grammar at https://docs.python.org/3/library/ast.html
     export interface AST {
-        startPos?: number;
-        endPos?: number;
+        startPos: number;
+        endPos: number;
         kind: string;
     }
     export interface Stmt extends AST {
@@ -69,6 +64,7 @@ namespace pxt.py {
         tsType?: Type;
         symbolInfo?: SymbolInfo;
         inCalledPosition?: boolean; // it's an f in f(...)
+        forTargetEndPos?: number; // it's X in "for X in ..." and this is the position of the end of that for
         _exprBrand: void;
     }
 
@@ -160,10 +156,24 @@ namespace pxt.py {
         value: Expr;
     }
 
+    export interface ScopeSymbolInfo {
+        /* usage information */
+        firstRefPos?: number;
+        lastRefPos?: number;
+        firstAssignPos?: number;
+        firstAssignDepth?: number;
+        forVariableEndPos?: number;
+        /* global/nonlocal */
+        modifier?: VarModifier;
+
+        symbol: SymbolInfo,
+    }
     export interface ScopeDef extends Stmt {
-        vars?: Map<SymbolInfo>;
+        vars: Map<ScopeSymbolInfo>;
         parent?: ScopeDef;
         blockDepth?: number;
+        /* used to avoid name collisions when generating helper vars (e.g. __tempvar1) */
+        nextHelperVariableId?: number;
     }
 
     export interface FunctionDef extends Symbol, ScopeDef {
@@ -191,7 +201,7 @@ namespace pxt.py {
         keywords: Keyword[];
         body: Stmt[];
         decorator_list: Expr[];
-        baseClass?: ClassDef;
+        baseClass?: SymbolInfo;
         isEnum?: boolean;
         isNamespace?: boolean;
     }
@@ -337,7 +347,7 @@ namespace pxt.py {
     }
     export interface Dict extends Expr {
         kind: "Dict";
-        keys: Expr[];
+        keys: (Expr | undefined)[];
         values: Expr[];
     }
     export interface Set extends Expr {
@@ -415,7 +425,7 @@ namespace pxt.py {
     }
     export interface NameConstant extends Expr {
         kind: "NameConstant";
-        value: boolean; // null=None, True, False
+        value: boolean | null; // null=None, True, False
     }
     export interface Ellipsis extends Expr {
         kind: "Ellipsis";
@@ -455,5 +465,12 @@ namespace pxt.py {
     export interface Tuple extends AssignmentExpr {
         kind: "Tuple";
         elts: Expr[];
+    }
+
+    export function isIndex(e: AST): e is Index {
+        return e.kind === "Index"
+    }
+    export function isSubscript(e: Expr): e is Subscript {
+        return e.kind === "Subscript"
     }
 }

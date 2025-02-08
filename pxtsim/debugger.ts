@@ -124,13 +124,13 @@ namespace pxsim {
         }
     }
 
-    export function dumpHeap(v: any, heap: Map<any>, fields?: string[], filters?: string[]): Variables {
+    export function dumpHeap(v: any, heap: Map<any>, fields?: string[], filters?: string[], includeAll = false): Variables {
         function frameVars(frame: any, fields?: string[]) {
             const r: Variables = {}
             for (let k of Object.keys(frame)) {
                 // skip members starting with __
                 if (!/^__/.test(k) && /___\d+$/.test(k) && (!filters || filters.indexOf(k) !== -1)) {
-                    r[k.replace(/___\d+$/, '')] = valToJSON(frame[k], heap)
+                    r[k] = valToJSON(frame[k], heap)
                 }
             }
             if (frame.fields && fields) {
@@ -141,14 +141,29 @@ namespace pxsim {
                 }
             }
             if (frame.fields) {
-                for (let k of Object.keys(frame.fields).filter(field => !field.startsWith('_'))) {
-                    r[k.replace(/___\d+$/, '')] = valToJSON(frame.fields[k], heap)
+                for (let k of Object.keys(frame.fields).filter(field => includeAll || !field.startsWith('_'))) {
+                    r[k] = valToJSON(frame.fields[k], heap)
                 }
-            } else if (Array.isArray(frame.data)) {
+            }
+            else if (frame instanceof RefMap) {
+                for (const entry of frame.data) {
+                    r[entry.key] = valToJSON(entry.val, heap);
+                }
+            }
+            else if (Array.isArray(frame.data)) {
                 // This is an Array.
                 (frame.data as any[]).forEach((element, index) => {
                     r[index] = valToJSON(element, heap);
                 });
+            }
+            else if (frame._width !== undefined && frame._height !== undefined) {
+                // Probably a RefImage
+                r["width"] = frame._width;
+                r["height"] = frame._height;
+
+                if (includeAll && frame._bpp !== undefined) {
+                    r["isMono"] = frame._bpp === 1;
+                }
             }
             return r
         }
@@ -175,6 +190,17 @@ namespace pxsim {
         }
 
         return stackFrame.retval;
+    }
+
+    export function injectEnvironmentGlobals(msg: DebuggerBreakpointMessage, heap: Map<any>) {
+        const environmentGlobals = runtime.environmentGlobals;
+        const keys = Object.keys(environmentGlobals);
+        if (!keys.length)
+            return;
+
+        const envVars: Variables = msg.environmentGlobals = {};
+        Object.keys(environmentGlobals)
+            .forEach(n => envVars[n] = valToJSON(runtime.environmentGlobals[n], heap))
     }
 
     export function getBreakpointMsg(s: pxsim.StackFrame, brkId: number, userGlobals?: string[]): { msg: DebuggerBreakpointMessage, heap: Map<any> } {
@@ -218,6 +244,7 @@ namespace pxsim {
                 locals: dumpHeap(s, heap),
                 funcInfo: info,
                 breakpointId: s.lastBrkId,
+                callLocationId: s.callLocIdx,
                 arguments: argInfo
             };
         }

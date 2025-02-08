@@ -3,9 +3,10 @@
 <statement name="HANDLER">
 <block type="pxt_controls_for">
 <value name="VAR">
-<shadow type="variables_get_reporter">
+<block type="variables_get_reporter">
+<mutation duplicateondrag="true" />
 <field name="VAR">i</field>
-</shadow>
+</block>
 </value>
 <value name="TO">
 <shadow type="math_whole_number"><field name="NUM">0</field></shadow>
@@ -18,7 +19,6 @@
 <mutation numlines="1" error="Enum arguments may only be literal property access expressions" line0="testNamespace.enumArgument&#40;i&#41;&#59;" />
 </block>
 </statement>
-<comment pinned="false">&#47; &#60;reference path&#61;&#34;.&#47;testBlocks&#47;basic.ts&#34; &#47;&#62;</comment>
 </block>
 </statement>
 </block>

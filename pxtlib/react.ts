@@ -1,13 +1,15 @@
 namespace pxt.react {
-    export interface FieldEditorView {
+    export interface FieldEditorView<U> {
         show(): void;
         hide(): void;
-        getResult(): string;
+        getResult(): U;
         onHide(cb: () => void): void;
 
         getPersistentData(): any;
         restorePersistentData(value: any): void;
     }
 
-    export let getFieldEditorView: (fieldEditorId: string, value: string, options: any) => FieldEditorView;
+    export let isFieldEditorViewVisible: () => boolean;
+    export let getFieldEditorView: <U>(fieldEditorId: string, value: U, options: any, container?: HTMLDivElement) => FieldEditorView<U>;
+    export let getTilemapProject: () => TilemapProject;
 }

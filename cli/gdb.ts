@@ -5,24 +5,29 @@ import * as fs from 'fs';
 import * as buildengine from './buildengine';
 import * as commandParser from './commandparser';
 
+import { promisify } from "util";
+
 import U = pxt.Util;
 
+const maxDMesgSize = 4096
 
-const openAsync = Promise.promisify(fs.open)
-const closeAsync = Promise.promisify(fs.close) as (fd: number) => Promise<void>
-const writeAsync = Promise.promisify(fs.write)
+const openAsync = promisify(fs.open)
+const closeAsync = promisify(fs.close) as (fd: number) => Promise<void>
+const writeAsync = promisify(fs.write)
 
 let gdbServer: pxt.GDBServer
 let bmpMode = false
 
-const execAsync: (cmd: string, options?: { cwd?: string }) => Promise<Buffer | string> = Promise.promisify(child_process.exec)
+const cpExecAsync = promisify(child_process.exec)
 
 function getBMPSerialPortsAsync(): Promise<string[]> {
+    if (process.env["PXT_IGNORE_BMP"])
+        return Promise.resolve([])
     if (process.platform == "win32") {
-        return execAsync("wmic PATH Win32_SerialPort get DeviceID, PNPDeviceID")
-            .then((buf: Buffer) => {
+        return cpExecAsync("wmic PATH Win32_SerialPort get DeviceID, PNPDeviceID")
+            .then(({ stdout, stderr }) => {
                 let res: string[] = []
-                buf.toString("utf8").split(/\n/).forEach(ln => {
+                stdout.split(/\n/).forEach(ln => {
                     let m = /^(COM\d+)\s+USB\\VID_(\w+)&PID_(\w+)&MI_(\w+)/.exec(ln)
                     if (m) {
                         const comp = m[1]
@@ -38,16 +43,16 @@ function getBMPSerialPortsAsync(): Promise<string[]> {
             })
     }
     else if (process.platform == "darwin") {
-        return execAsync("ioreg -p IOUSB -l -w 0")
-            .then((buf: Buffer) => {
+        return cpExecAsync("system_profiler SPUSBDataType")
+            .then(({ stdout, stderr }) => {
                 let res: string[] = []
                 let inBMP = false
-                buf.toString("utf8").split(/\n/).forEach(ln => {
-                    if (ln.indexOf("+-o Black Magic Probe") >= 0)
+                stdout.split(/\n/).forEach(ln => {
+                    if (ln.indexOf("   Black Magic Probe") >= 0)
                         inBMP = true
                     if (!inBMP)
                         return
-                    let m = /"USB Serial Number" = "(\w+)"/.exec(ln)
+                    let m = / Serial Number: (\w+)/.exec(ln)
                     if (m) {
                         inBMP = false
                         res.push("/dev/cu.usbmodem" + m[1] + "1")
@@ -135,7 +140,7 @@ function fatal(msg: string) {
     U.userError(msg)
 }
 
-function getOpenOcdPath(cmds = "") {
+function getOpenOcdPath(cmds = "", showLog = false) {
     function latest(tool: string) {
         let dir = path.join(pkgDir, "tools/", tool, "/")
         if (!fs.existsSync(dir)) fatal(dir + " doesn't exists; " + tool + " not installed in Arduino?")
@@ -207,15 +212,10 @@ gdb_memory_map disable
 $_TARGETNAME configure -event gdb-attach {
     echo "Halting target"
     halt
-}
-
-$_TARGETNAME configure -event gdb-detach {
-    echo "Resetting target"
-    reset
 }`
 
     fs.writeFileSync("built/debug.cfg", `
-log_output built/openocd.log
+${showLog ? "" : "log_output built/openocd.log"}
 ${script}
 ${cmds}
 `)
@@ -233,17 +233,20 @@ ${cmds}
 }
 
 function codalBin() {
-    let cs = pxt.appTarget.compileService
-
-    return buildengine.thisBuild.buildPath + "/build/" + (cs.codalBinary ? cs.codalBinary :
-        cs.yottaTarget + "/source/" + cs.yottaBinary.replace(/\.hex$/, "").replace(/-combined$/, ""));
+    const cs = pxt.appTarget.compileService
+    const be = buildengine.thisBuild
+    if (be.outputPath)
+        return be.buildPath + "/" + be.outputPath
+    if (cs.codalBinary)
+        return be.buildPath + "/build/" + cs.codalBinary
+    return be.buildPath + "/build/" + (cs.yottaTarget.split("@")[0]) + "/source/" + cs.yottaBinary.replace(/\.hex$/, "").replace(/-combined$/, "")
 }
 
 let cachedMap = ""
 let addrCache: pxt.Map<number>
 function getMap() {
     if (!cachedMap)
-        cachedMap = fs.readFileSync(codalBin() + ".map", "utf8")
+        cachedMap = fs.readFileSync(codalBin().replace(/\.elf$/, "") + ".map", "utf8")
     return cachedMap
 }
 
@@ -307,10 +310,54 @@ async function initGdbServerAsync() {
     })
 }
 
-async function getMemoryAsync(addr: number, bytes: number) {
+async function flashAsync() {
+    const r = pxtc.UF2.toBin(fs.readFileSync("built/binary.uf2"))
+    fs.writeFileSync("built/binary.bin", r.buf)
+    let toolPaths = getOpenOcdPath(`
+        program built/binary.bin ${r.start} verify reset exit
+    `, true)
+    let oargs = toolPaths.args
+    await nodeutil.spawnAsync({
+        cmd: oargs[0],
+        args: oargs.slice(1)
+    })
+}
+
+async function resetAsync(bootMode: boolean) {
+    let bi = getBootInfo()
+    if (gdbServer) {
+        if (bootMode && bi.addr)
+            await gdbServer.write32Async(bi.addr, bi.boot)
+        await gdbServer.sendCmdAsync("R00", null)
+    } else {
+        let cmd = "init\nhalt\n"
+        if (bootMode && bi.addr) {
+            cmd += `set M(0) ${bi.boot}\narray2mem M 32 ${bi.addr} 1\n`
+        }
+        cmd += `reset run\nshutdown`
+        let toolPaths = getOpenOcdPath(cmd, true)
+        let oargs = toolPaths.args
+        await nodeutil.spawnAsync({
+            cmd: oargs[0],
+            args: oargs.slice(1)
+        })
+    }
+}
+
+async function getMemoryAsync(addr: number, bytes: number): Promise<Buffer> {
     if (gdbServer) {
         return gdbServer.readMemAsync(addr, bytes)
             .then((b: Uint8Array) => Buffer.from(b))
+    }
+
+    const maxMem = 32 * 1024
+
+    if (bytes > maxMem) {
+        let bufs: Buffer[] = []
+        for (let ptr = 0; ptr < bytes; ptr += maxMem) {
+            bufs.push(await getMemoryAsync(addr + ptr, Math.min(maxMem, bytes - ptr)))
+        }
+        return Buffer.concat(bufs)
     }
 
     let toolPaths = getOpenOcdPath(`
@@ -366,13 +413,38 @@ function VAR_BLOCK_WORDS(vt: number) {
     return (((vt) << 12) >> (12 + 2))
 }
 
-export async function dumpheapAsync() {
+export async function dumpMemAsync(args: string[]) {
     await initGdbServerAsync()
 
     let memStart = findAddr("_sdata", true) || findAddr("__data_start__")
+    memStart &= ~0xffff
+    let memEnd = findAddr("_estack", true) || findAddr("__StackTop")
+
+    if (!isNaN(parseInt(args[0]))) {
+        memStart = parseInt(args[0])
+        memEnd = parseInt(args[1])
+        args.shift()
+        args.shift()
+    }
+
+    console.log(`memory: ${hex(memStart)} - ${hex(memEnd)}`)
+
+    let mem = await getMemoryAsync(memStart, memEnd - memStart)
+    fs.writeFileSync(args[0], mem)
+}
+
+export async function dumpheapAsync(filename?: string) {
+    let memStart = findAddr("_sdata", true) || findAddr("__data_start__")
     let memEnd = findAddr("_estack", true) || findAddr("__StackTop")
     console.log(`memory: ${hex(memStart)} - ${hex(memEnd)}`)
-    let mem = await getMemoryAsync(memStart, memEnd - memStart)
+    let mem: Buffer
+    if (filename) {
+        const buf = fs.readFileSync(filename)
+        mem = buf.slice(memStart & 0xffff)
+    } else {
+        await initGdbServerAsync()
+        mem = await getMemoryAsync(memStart, memEnd - memStart)
+    }
     let heapDesc = findAddr("heap")
     let m = /\.bss\.heap\s+0x000000[a-f0-9]+\s+0x([a-f0-9]+)/.exec(getMap())
     let heapSz = 8
@@ -415,13 +487,16 @@ export async function dumpheapAsync() {
             pointerClassification[hex(ptr)] = "codal::EventQueueItem"
         }
 
-        for (let ptr = read32(findAddr("pxt::handlerBindings")); ptr; ptr = read32(ptr)) {
-            pointerClassification[hex(ptr)] = "pxt::HandlerBinding"
-        }
+        const handler = findAddr("pxt::handlerBindings", true)
+        if (handler)
+            for (let ptr = read32(handler); ptr; ptr = read32(ptr)) {
+                pointerClassification[hex(ptr)] = "pxt::HandlerBinding"
+            }
     }
 
     console.log(`heaps at ${hex(heapDesc)}, num=${heapNum}`)
     let cnts: pxt.Map<number> = {}
+    let examples: pxt.Map<number[]> = {}
     let fiberSize = 0
     for (let i = 0; i < heapNum; ++i) {
         let heapStart = read32(heapDesc + i * heapSz)
@@ -442,9 +517,12 @@ export async function dumpheapAsync() {
             if (U.startsWith(classification, "Fiber/"))
                 fiberSize += blockSize * 4
             let mark = `[${isFree ? "F" : "U"}:${blockSize * 4} / ${classification}]`
-            if (!cnts[mark])
+            if (!cnts[mark]) {
                 cnts[mark] = 0
+                examples[mark] = []
+            }
             cnts[mark] += blockSize * 4
+            examples[mark].push(block)
 
             if (isFree)
                 totalFreeBlock += blockSize;
@@ -460,7 +538,8 @@ export async function dumpheapAsync() {
         let keys = Object.keys(cnts)
         keys.sort((a, b) => cnts[b] - cnts[a])
         for (let k of keys) {
-            console.log(`${cnts[k]}\t${k}`)
+            U.randomPermute(examples[k])
+            console.log(`${cnts[k]}\t${k}\t${examples[k].slice(0, 6).map(p => p.toString(16)).join(", ")}`)
         }
     }
 
@@ -508,6 +587,16 @@ export async function dumpheapAsync() {
     const string_inline_utf8_vt = findAddr("pxt::string_inline_utf8_vt")
     const string_cons_vt = findAddr("pxt::string_cons_vt")
     const string_skiplist16_vt = findAddr("pxt::string_skiplist16_vt")
+    const string_skiplist16_packed_vt = findAddr("pxt::string_skiplist16_packed_vt", true)
+
+    const PNG: any = require("pngjs").PNG;
+    const visWidth = 256
+    const visHeight = 256
+    const heapVis = new PNG({ width: visWidth, height: visHeight })
+    const visData: Uint8Array = heapVis.data
+
+    for (let i = 0; i < visWidth * visHeight * 4; ++i)
+        visData[i] = 0xff
 
     /*
     struct VTable {
@@ -531,7 +620,9 @@ export async function dumpheapAsync() {
             let category = ""
             let addWords = 0
             fields = {}
+            let color = 0x000000
             if (vtable & FREE_MASK) {
+                color = 0x00ff00
                 category = "free"
                 numbytes = VAR_BLOCK_WORDS(vtable) << 2
                 maxFree = Math.max(numbytes, maxFree)
@@ -573,6 +664,10 @@ export async function dumpheapAsync() {
                             category = "skip_string"
                             numbytes = 4 + 2 + 2 + 4
                             fields[".data"] = hex(read32(objPtr + 8) - 4)
+                        } else if (vtable == string_skiplist16_packed_vt) {
+                            category = "skip_string_packed"
+                            const numskip = (word0 >> 16) >> 4
+                            numbytes = 2 + 2 + numskip * 2 + (word0 & 0xffff) + 1
                         } else if (vtable == string_cons_vt) {
                             category = "cons_string"
                             numbytes = 4 + 4 + 4
@@ -665,9 +760,28 @@ export async function dumpheapAsync() {
             objects[obj.addr] = obj
             byCategory[category] += (addWords + numwords) * 4
             numByCategory[category]++
+
+            for (let i = 0; i < numwords; ++i) {
+                const j = (objPtr & 0xffffff) + i * 4
+                if (category == "free") {
+                    const mask = Math.min(i / 1, 255) | 0
+                    color = (mask << 16) | 0x00ff00
+                }
+                visData[j] = (color >> 16) & 0xff
+                visData[j + 1] = (color >> 8) & 0xff
+                visData[j + 2] = (color >> 0) & 0xff
+                visData[j + 3] = 0xff // alpha
+            }
+
             objPtr += numwords * 4
         }
     }
+
+    heapVis.pack()
+        .pipe(fs.createWriteStream('heap.png'))
+        .on('finish', function () {
+            console.log('Written heap.png!');
+        });
 
     let cats = Object.keys(byCategory)
     cats.sort((a, b) => byCategory[b] - byCategory[a])
@@ -808,8 +922,8 @@ export async function dumpheapAsync() {
     function getDmesg() {
         let addr = findAddr("codalLogStore")
         let start = addr + 4 - memStart
-        for (let i = 0; i < 1024; ++i) {
-            if (i == 1023 || mem[start + i] == 0)
+        for (let i = 0; i < maxDMesgSize; ++i) {
+            if (i == maxDMesgSize - 1 || mem[start + i] == 0)
                 return mem.slice(start, start + i).toString("utf8")
         }
         return ""
@@ -839,7 +953,7 @@ export async function dumpheapAsync() {
 export async function dumplogAsync() {
     await initGdbServerAsync()
     let addr = findAddr("codalLogStore")
-    let buf = await getMemoryAsync(addr + 4, 1024)
+    let buf = await getMemoryAsync(addr + 4, maxDMesgSize)
     for (let i = 0; i < buf.length; ++i) {
         if (buf[i] == 0) {
             console.log("\n\n" + buf.slice(0, i).toString("utf8"))
@@ -854,14 +968,10 @@ export async function hwAsync(cmds: string[]) {
     switch (cmds[0]) {
         case "rst":
         case "reset":
-            await gdbServer.sendCmdAsync("R00", null)
+            await resetAsync(false)
             break
         case "boot":
-            let bi = getBootInfo()
-            if (bi.addr) {
-                await gdbServer.write32Async(bi.addr, bi.boot)
-            }
-            await gdbServer.sendCmdAsync("R00", null)
+            await resetAsync(true)
             break
         case "log":
         case "dmesg":
@@ -884,6 +994,12 @@ function getBootInfo() {
         r.boot = 0xf01669ef
     }
 
+    if (/nrf52/.test(pxt.appTarget.compile.openocdScript)) {
+        r.addr = 0x20007F7C
+        r.app = 0x4ee5677e
+        r.boot = 0x5A1AD5
+    }
+
     return r
 }
 
@@ -896,6 +1012,7 @@ export async function startAsync(gdbArgs: string[]) {
     let trg = ""
     let monReset = "monitor reset"
     let monResetHalt = "monitor reset halt"
+    const pyOCD = !!process.env["PXT_PYOCD"]
 
     if (bmpPort) {
         bmpMode = true
@@ -903,7 +1020,7 @@ export async function startAsync(gdbArgs: string[]) {
         trg += "\nmonitor swdp_scan\nattach 1"
         pxt.log("Using Black Magic Probe at " + bmpPort)
         monReset = "run"
-        monResetHalt = "run"
+        monResetHalt = "set {int}0xE000ED0C = 0x05fa0004" // NVIC_SystemReset()
     }
 
     let mapsrc = ""
@@ -911,12 +1028,23 @@ export async function startAsync(gdbArgs: string[]) {
         mapsrc = "set substitute-path /src " + buildengine.thisBuild.buildPath
     }
 
+    if (gdbArgs[0] == "flash") {
+        await flashAsync()
+        return
+    }
+
     let toolPaths = getOpenOcdPath()
 
+
     if (!bmpMode) {
-        let oargs = toolPaths.args
-        trg = "target remote | " + oargs.map(s => `"${s.replace(/\\/g, "/")}"`).join(" ")
-        pxt.log("starting openocd: " + oargs.join(" "))
+        if (pyOCD) {
+            trg = "target extended-remote localhost:3333"
+            pxt.log("will connect to pyocd at localhost:3333")
+        } else {
+            let oargs = toolPaths.args
+            trg = "target remote | " + oargs.map(s => `"${s.replace(/\\/g, "/")}"`).join(" ")
+            pxt.log("starting openocd: " + oargs.join(" "))
+        }
     }
 
     let binfo = getBootInfo()

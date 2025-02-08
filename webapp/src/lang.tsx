@@ -2,8 +2,10 @@ import * as React from "react";
 import * as codecard from "./codecard"
 import * as sui from "./sui"
 import * as data from "./data"
+import * as core from "./core"
 
-type ISettingsProps = pxt.editor.ISettingsProps;
+import ISettingsProps = pxt.editor.ISettingsProps;
+
 
 interface LanguagesState {
     visible?: boolean;
@@ -15,25 +17,6 @@ export let initialLang: string;
 
 export function setInitialLang(lang: string) {
     initialLang = pxt.Util.normalizeLanguageCode(lang)[0];
-}
-
-export function getCookieLang() {
-    const cookiePropRegex = new RegExp(`${pxt.Util.escapeForRegex(pxt.Util.pxtLangCookieId)}=(.*?)(?:;|$)`)
-    const cookieValue = cookiePropRegex.exec(document.cookie);
-    return cookieValue && cookieValue[1] || null;
-}
-
-export function setCookieLang(langId: string) {
-    if (!pxt.Util.allLanguages[langId]) {
-        return;
-    }
-
-    if (langId !== getCookieLang()) {
-        pxt.tickEvent(`menu.lang.setcookielang`, { lang: langId });
-        const expiration = new Date();
-        expiration.setTime(expiration.getTime() + (pxt.Util.langCookieExpirationDays * 24 * 60 * 60 * 1000));
-        document.cookie = `${pxt.Util.pxtLangCookieId}=${langId}; expires=${expiration.toUTCString()}`;
-    }
 }
 
 export class LanguagePicker extends data.Component<ISettingsProps, LanguagesState> {
@@ -56,9 +39,33 @@ export class LanguagePicker extends data.Component<ISettingsProps, LanguagesStat
     }
 
     translateEditor() {
-        pxt.tickEvent("translate.editor.incontext")
-        const sep = window.location.href.indexOf("?") < 0 ? "?" : "&";
-        window.location.href = window.location.pathname + (window.location.search || "") + sep +  "translate=1" + (window.location.hash || "");
+        pxt.tickEvent("translate.editor.incontext", undefined, { interactiveConsent: true })
+
+        core.confirmAsync({
+            header: lf("Translate the editor"),
+            jsx: <div><p>
+                {lf("This editor uses crowd-sourced translation! If you wish to help with translation, make sure to register as a translator.")}
+            </p>
+                <p>
+                    {lf("'Translate' will reload the editor with in-context translations. Close the editor when done.")}
+                </p></div>,
+            helpUrl: "/translate",
+            buttons: [{
+                label: lf("Register"),
+                icon: "xicon globe",
+                className: lf("secondary"),
+                title: lf("Register as a translator before starting the translation."),
+                url: `https://crowdin.com/project/${pxt.appTarget.appTheme.crowdinProject}`
+            }],
+            agreeLbl: lf("Translate"),
+            hasCloseIcon: true
+        }).then(r => {
+            if (r) {
+                pxt.tickEvent("translate.editor.incontext.translate")
+                const sep = window.location.href.indexOf("?") < 0 ? "?" : "&";
+                window.location.href = window.location.pathname + (window.location.search || "") + sep + "translate=1" + (window.location.hash || "");
+            }
+        })
     }
 
     changeLanguage(langId: string) {
@@ -66,15 +73,12 @@ export class LanguagePicker extends data.Component<ISettingsProps, LanguagesStat
             return;
         }
 
-        setCookieLang(langId);
-
         if (langId !== initialLang) {
             pxt.tickEvent(`menu.lang.changelang`, { lang: langId });
-            pxt.winrt.releaseAllDevicesAsync()
+            core.setLanguage(langId)
                 .then(() => {
                     this.props.parent.reloadEditor();
-                })
-                .done();
+                });
         } else {
             pxt.tickEvent(`menu.lang.samelang`, { lang: langId });
             this.hide();
@@ -95,9 +99,15 @@ export class LanguagePicker extends data.Component<ISettingsProps, LanguagesStat
         const targetTheme = pxt.appTarget.appTheme;
         const languageList = this.languageList();
         const modalSize = languageList.length > 4 ? "large" : "small";
+        const translateTheEditor = !pxt.BrowserUtils.isIE()
+            && !pxt.shell.isReadOnly()
+            && !pxt.BrowserUtils.isPxtElectron()
+            && pxt.appTarget.appTheme.crowdinProject;
+        const classes = this.props.parent.createModalClasses();
 
         return (
             <sui.Modal isOpen={this.state.visible}
+                className={classes}
                 size={modalSize}
                 onClose={this.hide}
                 dimmer={true} header={lf("Select Language")}
@@ -107,26 +117,27 @@ export class LanguagePicker extends data.Component<ISettingsProps, LanguagesStat
                 closeOnDocumentClick
                 closeOnEscape
             >
-                <div className="group">
-                    <div className="ui cards centered" role="listbox">
-                        {languageList.map(langId =>
-                            <LanguageCard
+                <div id="langmodal">
+                    <div id="availablelocales" className="ui cards centered" role="list" aria-label={lf("List of available languages")}>
+                        {languageList.map(langId => {
+                            const lang = pxt.Util.allLanguages[langId];
+                            return <LanguageCard
                                 key={langId}
                                 langId={langId}
-                                name={pxt.Util.allLanguages[langId].localizedName}
-                                ariaLabel={pxt.Util.allLanguages[langId].englishName}
-                                description={pxt.Util.allLanguages[langId].englishName}
+                                name={lang.localizedName}
+                                ariaLabel={lang.englishName}
+                                description={lang.englishName}
                                 onClick={this.changeLanguage}
                             />
+                        }
                         )}
                     </div>
+                    {targetTheme.crowdinProject ?
+                        <div className="ui" id="langmodalfooter">
+                            <sui.Link aria-label={lf("How do I add a new language?")} href="/translate" text={lf("How do I add a new language?")} target="_blank" />
+                            {translateTheEditor && <sui.Button aria-label={lf("Translate the editor")} onClick={this.translateEditor} text={lf("Translate the editor")} />}
+                        </div> : undefined}
                 </div>
-                <br/>
-                {targetTheme.crowdinProject ?
-                    <div className="ui">
-                        {!pxt.BrowserUtils.isIE() ? <sui.Button aria-label={lf("Translate the editor")} onClick={this.translateEditor} text={lf("Translate the editor")} /> : undefined }
-                        <sui.Link className="button" role="button" aria-label={lf("Learn about translations")} href="/translate" text={lf("Learn about translations")} target="_blank" />
-                    </div> : undefined}
             </sui.Modal>
         );
     }
@@ -154,10 +165,10 @@ class LanguageCard extends sui.StatelessUIElement<LanguageCardProps> {
 
     renderCore() {
         const { name, ariaLabel, description } = this.props;
-        return <codecard.CodeCardView className={`card-selected`}
+        return <codecard.CodeCardView className={`card-selected langoption`}
             name={name}
             ariaLabel={ariaLabel}
-            role="link"
+            role="listitem"
             description={description}
             onClick={this.handleClick}
         />

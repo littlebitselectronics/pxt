@@ -1,6 +1,13 @@
 import { BuiltinCategoryDefinition, BlockDefinition, CategoryNameID } from "./toolbox";
 
 import * as blocks from "./blocks";
+import * as Blockly from "blockly";
+import * as pxtblockly from "../../pxtblocks";
+
+import ToolboxBlockDefinition = pxt.editor.ToolboxBlockDefinition;
+import ToolboxCategoryDefinition = pxt.editor.ToolboxCategoryDefinition;
+import ToolboxDefinition = pxt.editor.ToolboxDefinition;
+
 
 let _cachedBuiltinCategories: pxt.Map<BuiltinCategoryDefinition> = null;
 function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
@@ -12,6 +19,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             blocks: [
                 {
                     name: "controls_repeat_ext",
+                    snippetName: "repeat",
                     attributes: {
                         blockId: "controls_repeat_ext",
                         weight: 49
@@ -25,27 +33,32 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "device_while",
+                    snippetName: "while",
                     attributes: {
                         blockId: "device_while",
                         weight: 48
                     },
                     blockXml: `<block type="device_while">
                     <value name="COND">
-                        <shadow type="logic_boolean"></shadow>
+                        <shadow type="logic_boolean">
+                            <field name="BOOL">FALSE</field>
+                        </shadow>
                     </value>
                 </block>`
                 },
                 {
                     name: "pxt_controls_for",
+                    snippetName: "for",
                     attributes: {
                         blockId: "pxt_controls_for",
                         weight: 47
                     },
                     blockXml: `<block type="pxt_controls_for">
                     <value name="VAR">
-                        <shadow type="variables_get_reporter">
+                        <block type="variables_get_reporter">
                             <field name="VAR">${lf("{id:var}index")}</field>
-                        </shadow>
+                            <mutation duplicateondrag="true"></mutation>
+                        </block>
                     </value>
                     <value name="TO">
                         <shadow type="math_whole_number">
@@ -56,20 +69,22 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
                 {
                     name: "pxt_controls_for_of",
+                    snippetName: "for of",
                     attributes: {
                         blockId: "pxt_controls_for_of",
                         weight: 46
                     },
                     blockXml: `<block type="pxt_controls_for_of">
                     <value name="VAR">
-                        <shadow type="variables_get_reporter">
+                        <block type="variables_get_reporter">
                             <field name="VAR">${lf("{id:var}value")}</field>
-                        </shadow>
+                            <mutation duplicateondrag="true"></mutation>
+                        </block>
                     </value>
                     <value name="LIST">
-                        <shadow type="variables_get">
+                        <block type="variables_get">
                             <field name="VAR">list</field>
-                        </shadow>
+                        </block>
                     </value>
                 </block>`
                 }
@@ -84,6 +99,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
         if (pxt.appTarget.runtime && pxt.appTarget.runtime.breakBlock) {
             _cachedBuiltinCategories[CategoryNameID.Loops].blocks.push({
                 name: "pxt_break",
+                snippetName: "break",
                 attributes: {
                     blockId: "break_keyword",
                     weight: 30
@@ -94,6 +110,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
         if (pxt.appTarget.runtime && pxt.appTarget.runtime.continueBlock) {
             _cachedBuiltinCategories[CategoryNameID.Loops].blocks.push({
                 name: "pxt_continue",
+                snippetName: "continue",
                 attributes: {
                     blockId: "continue_keyword",
                     weight: 29
@@ -108,6 +125,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             blocks: [
                 {
                     name: "controls_if",
+                    snippetName: "if",
                     attributes: {
                         blockId: "controls_if",
                         group: lf("Conditionals"),
@@ -122,6 +140,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "controls_if_else",
+                    snippetName: "if else",
                     attributes: {
                         blockId: "controls_if",
                         group: lf("Conditionals"),
@@ -137,6 +156,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_compare_eq",
+                    snippetName: "equals",
                     attributes: {
                         blockId: "logic_compare",
                         group: lf("Comparison"),
@@ -156,6 +176,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_compare_lt",
+                    snippetName: "less than | greater than",
                     attributes: {
                         blockId: "logic_compare",
                         group: lf("Comparison"),
@@ -176,6 +197,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_compare_strings",
+                    snippetName: "equals",
                     attributes: {
                         blockId: "logic_compare",
                         group: lf("Comparison"),
@@ -195,6 +217,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_operation_and",
+                    snippetName: "and",
                     attributes: {
                         blockId: "logic_operation",
                         group: lf("Boolean"),
@@ -205,6 +228,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_operation_or",
+                    snippetName: "or",
                     attributes: {
                         blockId: "logic_operation",
                         group: lf("Boolean"),
@@ -215,6 +239,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_negate",
+                    snippetName: "not",
                     attributes: {
                         blockId: "logic_negate",
                         group: lf("Boolean"),
@@ -223,6 +248,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     blockXml: `<block type="logic_negate"></block>`
                 }, {
                     name: "logic_boolean_true",
+                    snippetName: "true",
                     attributes: {
                         blockId: "logic_boolean",
                         group: lf("Boolean"),
@@ -233,6 +259,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 </block>`
                 }, {
                     name: "logic_boolean_false",
+                    snippetName: "false",
                     attributes: {
                         blockId: "logic_boolean",
                         group: lf("Boolean"),
@@ -271,6 +298,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             blocks: [
                 {
                     name: "math_arithmetic_ADD",
+                    snippetName: "plus",
                     attributes: {
                         blockId: "math_arithmetic",
                         weight: 90
@@ -290,6 +318,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_arithmetic_MINUS",
+                    snippetName: "minus",
                     attributes: {
                         blockId: "math_arithmetic",
                         weight: 89
@@ -309,6 +338,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_arithmetic_TIMES",
+                    snippetName: "times",
                     attributes: {
                         blockId: "math_arithmetic",
                         weight: 88
@@ -328,6 +358,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_arithmetic_DIVIDE",
+                    snippetName: "divide",
                     attributes: {
                         blockId: "math_arithmetic",
                         weight: 87
@@ -347,6 +378,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_number",
+                    snippetName: "number",
                     attributes: {
                         blockId: "math_number",
                         weight: 86
@@ -356,6 +388,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_modulo",
+                    snippetName: "remainder",
                     attributes: {
                         blockId: "math_modulo",
                         weight: 85
@@ -374,6 +407,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_op2_min",
+                    snippetName: "min",
                     attributes: {
                         blockId: "math_op2",
                         weight: 84
@@ -393,6 +427,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_op2_max",
+                    snippetName: "max",
                     attributes: {
                         blockId: "math_op2",
                         weight: 83
@@ -412,6 +447,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_op3",
+                    snippetName: "absolute value",
                     attributes: {
                         blockId: "math_op3",
                         weight: 82
@@ -425,6 +461,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_js_op",
+                    snippetName: "sqrt | sin | cos | tan | ...",
                     attributes: {
                         blockId: "math_js_op",
                         weight: 81
@@ -439,6 +476,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "math_js_round",
+                    snippetName: "round | ceil | floor | trunc",
                     attributes: {
                         blockId: "math_js_round",
                         weight: 80
@@ -483,8 +521,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             blocks: [
                 {
                     name: "lists_create_with",
+                    snippetName: "create array",
                     attributes: {
                         blockId: "lists_create_with",
+                        group: "Create",
                         weight: 90
                     },
                     blockXml: `<block type="variables_set" gap="8">
@@ -494,12 +534,12 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                                 <mutation items="2"></mutation>
                                 <value name="ADD0">
                                     <shadow type="math_number">
-                                        <field name="NUM">1</field>
+                                        <field name="NUM">0</field>
                                     </shadow>
                                 </value>
                                 <value name="ADD1">
                                     <shadow type="math_number">
-                                        <field name="NUM">2</field>
+                                        <field name="NUM">1</field>
                                     </shadow>
                                 </value>
                             </block>
@@ -507,8 +547,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "lists_create_with",
+                    snippetName: "create array",
                     attributes: {
                         blockId: "lists_create_with",
+                        group: "Create",
                         weight: 89
                     },
                     blockXml: `<block type="variables_set">
@@ -536,8 +578,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "lists_create_with",
+                    snippetName: "create array",
                     attributes: {
                         blockId: "lists_create_with",
+                        group: "Create",
                         weight: 5
                     },
                     blockXml: `<block type="lists_create_with">
@@ -546,8 +590,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
                 {
                     name: "lists_index_get",
+                    snippetName: "array get value",
                     attributes: {
                         blockId: "lists_index_get",
+                        group: "Read",
                         weight: 87
                     },
                     blockXml: `<block type="lists_index_get">
@@ -565,8 +611,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
                 {
                     name: "lists_index_set",
+                    snippetName: "array set value",
                     attributes: {
                         blockId: "lists_index_set",
+                        group: "Modify",
                         weight: 86
                     },
                     blockXml: `<block type="lists_index_set">
@@ -584,8 +632,10 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
                 {
                     name: "lists_length",
+                    snippetName: "length",
                     attributes: {
                         blockId: "lists_length",
+                        group: "Read",
                         weight: 88
                     },
                     blockXml: `<block type="lists_length">
@@ -601,6 +651,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 advanced: true,
                 weight: 7,
                 icon: "arrays",
+                groups: ["Create", "Read", "Modify", "Operations"],
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
             }
@@ -611,6 +662,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
             blocks: [
                 {
                     name: "text",
+                    snippetName: "text",
                     attributes: {
                         blockId: "text",
                         weight: 90
@@ -618,6 +670,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     blockXml: `<block type="text"></block>`
                 }, {
                     name: "text_length",
+                    snippetName: "text length",
                     attributes: {
                         blockId: "text_length",
                         weight: 87
@@ -631,6 +684,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </block>`
                 }, {
                     name: "text_join",
+                    snippetName: "text join",
                     attributes: {
                         blockId: "text_join",
                         weight: 88
@@ -668,8 +722,9 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 theEditor.showPackageDialog();
                 return true;
             },
+            onlyTriggerOnClick: true,
             attributes: {
-                advanced: true,
+                advanced: false,
                 weight: -1,
                 icon: 'addpackage',
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
@@ -689,13 +744,13 @@ export function getPauseUntil() {
     if (opts) {
         pauseUntil = {
             name: pxtc.PAUSE_UNTIL_TYPE,
-
+            snippetName: "pause until",
             attributes: {
                 blockId: pxtc.PAUSE_UNTIL_TYPE,
                 blockNamespace: opts.category || "loops",
                 weight: opts.weight == null ? 0 : opts.weight
             },
-            blockXml: Blockly.Xml.domToText(pxt.blocks.mkPredicateBlock(pxtc.PAUSE_UNTIL_TYPE))
+            blockXml: Blockly.Xml.domToText(pxtblockly.mkPredicateBlock(pxtc.PAUSE_UNTIL_TYPE))
         };
     }
 
@@ -731,9 +786,11 @@ export function allBuiltinBlocks() {
     // Add on start built in block
     builtinBlockCache[ts.pxtc.ON_START_TYPE] = {
         name: ts.pxtc.ON_START_TYPE,
+        snippetName: "on start",
         attributes: {
             blockId: ts.pxtc.ON_START_TYPE,
-            weight: pxt.appTarget.runtime.onStartWeight || 10
+            weight: pxt.appTarget.runtime.onStartWeight || 10,
+            group: pxt.appTarget.runtime.onStartGroup || undefined
         },
         blockXml: `<block type="pxt-on-start"></block>`
     };
@@ -749,7 +806,7 @@ export function clearBuiltinBlockCache() {
     builtinBlockCache = undefined;
 }
 
-export function overrideCategory(ns: string, def: pxt.editor.ToolboxCategoryDefinition) {
+export function overrideCategory(ns: string, def: ToolboxCategoryDefinition) {
     const cat = getBuiltinCategory(ns);
     if (def && cat) {
         if (Object.keys(def).length === 0) {
@@ -792,7 +849,7 @@ export function overrideCategory(ns: string, def: pxt.editor.ToolboxCategoryDefi
     }
 }
 
-function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: number): BlockDefinition {
+function blockFromJson(b: ToolboxBlockDefinition, currentWeight?: number): BlockDefinition {
     return {
         name: b.name,
         snippet: b.snippet,
@@ -812,7 +869,7 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
     }
 }
 
-function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
+function blockToJson(b: BlockDefinition): ToolboxBlockDefinition {
     return {
         name: b.name,
         snippet: b.snippet,
@@ -830,7 +887,7 @@ function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
     }
 }
 
-function categoryToJson(c: BuiltinCategoryDefinition): pxt.editor.ToolboxCategoryDefinition {
+function categoryToJson(c: BuiltinCategoryDefinition): ToolboxCategoryDefinition {
     return {
         name: c.name,
         icon: c.attributes.icon,
@@ -841,7 +898,7 @@ function categoryToJson(c: BuiltinCategoryDefinition): pxt.editor.ToolboxCategor
     }
 }
 
-export function overrideToolbox(def: pxt.editor.ToolboxDefinition) {
+export function overrideToolbox(def: ToolboxDefinition) {
     overrideCategory(CategoryNameID.Loops, def.loops);
     overrideCategory(CategoryNameID.Logic, def.logic);
     overrideCategory(CategoryNameID.Variables, def.variables);
@@ -851,7 +908,7 @@ export function overrideToolbox(def: pxt.editor.ToolboxDefinition) {
     overrideCategory(CategoryNameID.Functions, def.functions);
 }
 
-export function getToolboxDefinition(): pxt.editor.ToolboxDefinition {
+export function getToolboxDefinition(): ToolboxDefinition {
     return {
         loops: categoryToJson(getBuiltinCategory(CategoryNameID.Loops)),
         logic: categoryToJson(getBuiltinCategory(CategoryNameID.Logic)),

@@ -1,154 +1,31 @@
+/* eslint-disable  jsx-a11y/anchor-is-valid */
+
 import * as React from "react";
 import * as sui from "./sui";
 import * as core from "./core";
 import * as coretsx from "./coretsx";
-import * as cloudsync from "./cloudsync";
 import * as pkg from "./package";
+import * as cloudsync from "./cloudsync";
+import * as workspace from "./workspace";
+import * as pxteditor from "../../pxteditor";
 
 import Cloud = pxt.Cloud;
 import Util = pxt.Util;
+import { TimeMachine } from "./timeMachine";
+import { fireClickOnEnter } from "./util";
+import { pairAsync } from "./cmds";
+import { invalidate } from "./data";
 
-export function showGithubLoginAsync() {
-    pxt.tickEvent("github.token.dialog");
-    let input: HTMLInputElement;
-    return core.confirmAsync({
-        header: lf("Log in to GitHub"),
-        hideCancel: true,
-        hasCloseIcon: true,
-        helpUrl: "/github/token",
-        onLoaded: (el) => {
-            input = el.querySelectorAll('input')[0] as HTMLInputElement;
-        },
-        jsx: <div className="ui form">
-            <p>{lf("Host your code on GitHub and work together with friends on projects.")}
-                {sui.helpIconLink("/github", lf("Learn more about GitHub"))}</p>
-            <p>{lf("You will need a GitHub token:")}</p>
-            <ol>
-                <li>
-                    {lf("Navigate to: ")}
-                    <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer">
-                        {lf("GitHub token generation page")}
-                    </a>
-                </li>
-                <li>
-                    {lf("Put something like 'MakeCode {0}' in description", pxt.appTarget.name)}
-                </li>
-                <li>
-                    {lf("Select either '{0}' or '{1}' scope, depending which repos you want to edit from here", "repo", "public_repo")}
-                </li>
-                <li>
-                    {lf("Click generate token, copy it, and paste it below.")}
-                </li>
-            </ol>
-            <div className="ui field">
-                <label id="selectUrlToOpenLabel">{lf("Paste GitHub token here:")}</label>
-                <input type="url" tabIndex={0} autoFocus aria-labelledby="selectUrlToOpenLabel" placeholder="0123abcd..." className="ui blue fluid"></input>
-            </div>
-        </div>,
-    }).then(res => {
-        if (!res)
-            pxt.tickEvent("github.token.cancel");
-        else {
-            const hextoken = input.value.trim()
-            if (hextoken.length != 40 || !/^[a-f0-9]+$/.test(hextoken)) {
-                pxt.tickEvent("github.token.invalid");
-                core.errorNotification(lf("Invalid token format"))
-            } else {
-                pxt.github.token = hextoken
-                // try to create a bogus repo - it will fail with
-                // 401 - invalid token, 404 - when token doesn't have repo permission,
-                // 422 - because the request is bogus, but token OK
-                // Don't put any string in repo name - github seems to normalize these
-                return pxt.github.createRepoAsync(undefined, "")
-                    .then(r => {
-                        // what?!
-                        pxt.reportError("github", "Succeeded creating undefined repo!")
-                        core.infoNotification(lf("Something went wrong with validation; token stored"))
-                        pxt.storage.setLocal("githubtoken", hextoken)
-                        pxt.tickEvent("github.token.wrong");
-                    }, err => {
-                        pxt.github.token = ""
-                        if (!showGithubTokenError(err)) {
-                            if (err.statusCode == 422)
-                                core.infoNotification(lf("Token validated and stored"))
-                            else
-                                core.infoNotification(lf("Token stored but not validated"))
-                            pxt.github.token = hextoken
-                            pxt.storage.setLocal("githubtoken", hextoken)
-                            pxt.tickEvent("github.token.ok");
-                        }
-                    })
-            }
-        }
-        return Promise.resolve()
-    })
-}
+import IProjectView = pxt.editor.IProjectView;
+import ImportFileOptions = pxt.editor.ImportFileOptions;
 
-export function showGithubTokenError(err: any) {
-    if (err.statusCode == 401) {
-        core.errorNotification(lf("GitHub didn't accept token"))
-        return true
-    } else if (err.statusCode == 404) {
-        core.errorNotification(lf("Token has neither '{0}' nor '{1}' scope", "repo", "public_repo"))
-        return true
-    } else {
-        return false
-    }
-}
+let dontShowDownloadFlag = false;
 
-export function githubFooter(msg: string, close: () => void) {
-    function githubLogin(e: React.MouseEvent<HTMLElement>) {
-        e.preventDefault()
-        close()
-        showGithubLoginAsync()
-    }
-
-    function githubLogout(e: React.MouseEvent<HTMLElement>) {
-        e.preventDefault()
-        close()
-        pxt.storage.removeLocal("githubtoken")
-        pxt.github.token = ""
-        core.infoNotification(lf("Logged out from GitHub"))
-    }
-
-    if (!pxt.appTarget.cloud || !pxt.appTarget.cloud.githubPackages)
-        return <div />
-
-    /* tslint:disable:react-a11y-anchors */
-    if (pxt.github.token) {
-        return (
-            <p>
-                <br />
-                <br />
-                <a href="#github" onClick={githubLogout}>
-                    {lf("Logout from GitHub")}
-                </a>
-                <br />
-                <br />
-            </p>)
-    } else {
-        return (
-            <p>
-                <br />
-                <br />
-                {msg}
-                {" "}
-                <a href="#github" onClick={githubLogin}>
-                    {lf("Login to GitHub")}
-                </a>
-                <br />
-                <br />
-            </p>)
-    }
-}
-
-export function showAboutDialogAsync(projectView: pxt.editor.IProjectView) {
+export function showAboutDialogAsync(projectView: IProjectView) {
     const compileService = pxt.appTarget.compileService;
     const githubUrl = pxt.appTarget.appTheme.githubUrl;
     const targetTheme = pxt.appTarget.appTheme;
     const versions: pxt.TargetVersions = pxt.appTarget.versions;
-    const showCompile = compileService && compileService.githubCorePackage && compileService.gittag && compileService.serviceId;
-
     const buttons: sui.ModalButton[] = [];
     if (targetTheme.experiments)
         buttons.push({
@@ -161,33 +38,41 @@ export function showAboutDialogAsync(projectView: pxt.editor.IProjectView) {
             }
         })
 
+    const compileVariantInfos = (pxt.appTarget.multiVariants?.map(
+        variantName => {
+            const compileService = pxt.U.clone(pxt.appTarget.compileService);
+            const variant = pxt.appTarget.variants[variantName];
+            if (variant?.compileService)
+                pxt.U.jsonCopyFrom(compileService, variant.compileService);
+            return { variantName, compileService };
+        }
+    ) || [{
+        variantName: "",
+        compileService: pxt.appTarget.compileService
+    }])
+        .filter(info => info.compileService && info.compileService.githubCorePackage && info.compileService.gittag && info.compileService.serviceId);
+
     pxt.targetConfigAsync()
         .then(config => {
             const isPxtElectron = pxt.BrowserUtils.isPxtElectron();
-            const electronManifest = config && config.electronManifest;
+            const latestElectronRelease = config?.electronManifest?.latest;
             return core.confirmAsync({
                 header: lf("About"),
-                hideCancel: true,
+                hasCloseIcon: true,
                 agreeLbl: lf("Ok"),
                 agreeClass: "positive",
                 buttons,
                 jsx: <div>
                     {isPxtElectron ?
-                        (!pxt.Cloud.isOnline() || !electronManifest)
+                        (!pxt.Cloud.isOnline() || !latestElectronRelease)
                             ? <p>{lf("Please connect to internet to check for updates")}</p>
-                            : pxt.semver.strcmp(pxt.appTarget.versions.target, electronManifest.latest) < 0
-                                ? <a href="/offline-app">{lf("An update {0} for {1} is available", electronManifest.latest, pxt.appTarget.title)}</a>
+                            : pxt.semver.strcmp(pxt.appTarget.versions.target, latestElectronRelease) < 0
+                                ? <a target="_blank" rel="noopener noreferrer" href="/offline-app">{lf("An update {0} for {1} is available", latestElectronRelease, pxt.appTarget.title)}</a>
                                 : <p>{lf("{0} is up to date", pxt.appTarget.title)}</p>
                         : undefined}
-                    {githubUrl && versions ?
-                        renderVersionLink(pxt.appTarget.name, versions.target, `${githubUrl}/releases/tag/v${versions.target}`)
-                        : undefined}
-                    {versions ?
-                        renderVersionLink("Microsoft MakeCode", versions.pxt, `https://github.com/Microsoft/pxt/releases/tag/v${versions.pxt}`)
-                        : undefined}
-                    {showCompile ?
-                        renderCompileLink(compileService)
-                        : undefined}
+                    {githubUrl && versions && renderVersionLink(pxt.appTarget.name, versions.target, `${githubUrl}/releases/tag/v${versions.target}`)}
+                    {versions && renderVersionLink("Microsoft MakeCode", versions.pxt, `https://github.com/Microsoft/pxt/releases/tag/v${versions.pxt}`)}
+                    {compileVariantInfos?.length ? compileVariantInfos.map(info => <div key={info.variantName}>{renderCompileLink(info.variantName, info.compileService)}</div>) : undefined}
                     <p><br /></p>
                     <p>
                         {targetTheme.termsOfUseUrl ? <a target="_blank" className="item" href={targetTheme.termsOfUseUrl} rel="noopener noreferrer">{lf("Terms of Use")}</a> : undefined}
@@ -196,11 +81,11 @@ export function showAboutDialogAsync(projectView: pxt.editor.IProjectView) {
                     {targetTheme.copyrightText ? <p> {targetTheme.copyrightText} </p> : undefined}
                 </div>
             })
-        }).done();
+        });
 }
 
 
-function renderCompileLink(cs: pxt.TargetCompileService) {
+function renderCompileLink(variantName: string, cs: pxt.TargetCompileService) {
     let url: string;
     let version: string;
     let name: string;
@@ -221,8 +106,9 @@ function renderCompileLink(cs: pxt.TargetCompileService) {
 
 function renderVersionLink(name: string, version: string, url: string) {
     return <p>{lf("{0} version:", name)} &nbsp;
-            <a href={encodeURI(url)}
+        <a href={encodeURI(url)}
             title={`${lf("{0} version: {1}", name, version)}`}
+            aria-label={`${lf("{0} version{1}", name, version)}`}
             target="_blank" rel="noopener noreferrer">{version}</a>
     </p>;
 }
@@ -239,7 +125,6 @@ export function showPackageErrorDialogAsync(badPackages: pkg.EditorPackage[], up
     return core.dialogAsync({
         header: lf("Extension Errors"),
         hasCloseIcon: true,
-        hideCancel: true,
         jsx: <div className="wizard-wrapper">
             <ExtensionErrorWizard
                 openLegacyEditor={openLegacyEditor}
@@ -428,7 +313,7 @@ interface ProgressBarProps {
     cornerRadius?: number;
 }
 
-class ProgressBar extends React.Component<ProgressBarProps, {}> {
+export class ProgressBar extends React.Component<ProgressBarProps, {}> {
     render() {
         let { percentage, label, cornerRadius } = this.props;
 
@@ -464,42 +349,6 @@ class WizardMenu extends sui.StatelessUIElement<WizardMenuProps> {
     }
 }
 
-export function showCommitDialogAsync(repo: string) {
-    let input: HTMLInputElement;
-    const deflMsg = lf("Updates.")
-    let bump = false
-    const setBump = (v: boolean) => {
-        bump = !!v
-    }
-    return core.confirmAsync({
-        header: lf("Commit to {0}", repo),
-        agreeLbl: lf("Commit"),
-        onLoaded: (el) => {
-            input = el.querySelectorAll('input')[0] as HTMLInputElement;
-        },
-        jsx: <div className="ui form">
-            <div className="ui field">
-                <label id="selectUrlToOpenLabel">{lf("Describe your changes.")}</label>
-                <input type="url" tabIndex={0} autoFocus aria-labelledby="selectUrlToOpenLabel" placeholder={deflMsg} className="ui blue fluid"></input>
-            </div>
-            <div className="ui field">
-                <sui.PlainCheckbox
-                    label={lf("Publish to users (bump)")}
-                    onChange={setBump} />
-            </div>
-        </div>,
-    }).then(res => {
-        if (res) {
-            pxt.tickEvent("app.commit.ok");
-            return {
-                msg: input.value || deflMsg,
-                bump
-            }
-        }
-        return undefined;
-    })
-}
-
 export function showPRDialogAsync(repo: string, prURL: string): Promise<void> {
     return core.confirmAsync({
         header: lf("Commit conflict in {0}", repo),
@@ -520,10 +369,18 @@ export function showPRDialogAsync(repo: string, prURL: string): Promise<void> {
 export function showImportUrlDialogAsync() {
     let input: HTMLInputElement;
     const shareUrl = pxt.appTarget.appTheme.shareUrl || "https://makecode.com/";
+
     return core.confirmAsync({
         header: lf("Open project URL"),
+        hasCloseIcon: true,
         onLoaded: (el) => {
-            input = el.querySelectorAll('input')[0] as HTMLInputElement;
+            input = el.querySelector('input');
+            input.onkeydown = ev => {
+                if (ev.key === "Enter") {
+                    const confirm = el.querySelector('.button.approve') as HTMLButtonElement;
+                    confirm?.click();
+                }
+            }
         },
         jsx: <div className="ui form">
             <div className="ui icon violet message">
@@ -548,13 +405,9 @@ export function showImportUrlDialogAsync() {
         if (res) {
             pxt.tickEvent("app.open.url");
             const url = input.value;
-            let projectId: string;
-            if (/^(github:|https:\/\/github\.com\/)/.test(url)) {
-                projectId = pxt.github.noramlizeRepoId(url)
-            } else {
+            let projectId = pxt.github.normalizeRepoId(url);
+            if (!projectId)
                 projectId = pxt.Cloud.parseScriptId(url);
-            }
-
             if (!projectId) {
                 return Promise.reject(new Error(lf("Sorry, the project url looks invalid.")));
             }
@@ -567,13 +420,23 @@ export function showImportUrlDialogAsync() {
     })
 }
 
+export function showGithubTokenError(err: any) {
+    if (err.statusCode == 401) {
+        core.errorNotification(lf("GitHub didn't accept token"))
+        return true
+    } else if (err.statusCode == 404) {
+        core.errorNotification(lf("Token has neither '{0}' nor '{1}' scope", "repo", "public_repo"))
+        return true
+    } else {
+        return false
+    }
+}
 
 export function showCreateGithubRepoDialogAsync(name?: string) {
     pxt.tickEvent("github.create.dialog");
     if (name) {
         name = name.toLocaleLowerCase().replace(/\s+/g, '-');
         name = name.replace(/[^\w\-]/g, '');
-        if (!/^pxt-/.test(name)) name = 'pxt-' + name;
     }
 
     let repoName: string = name || "";
@@ -614,24 +477,27 @@ export function showCreateGithubRepoDialogAsync(name?: string) {
     }
 
     return core.confirmAsync({
-        hideCancel: true,
         hasCloseIcon: true,
         header: lf("Create GitHub repository"),
         jsxd: () => {
             const nameErr = repoNameError();
-            return <div className="ui form">
+            return <div className={`ui form`}>
                 <p>
                     {lf("Host your code on GitHub and work together with friends.")}
                     {sui.helpIconLink("/github", lf("Learn more about GitHub"))}
                 </p>
                 <div className="ui field">
-                    <sui.Input type="url" value={repoName} onChange={onNameChanged} label={lf("Repository name")} placeholder={`pxt-my-gadget...`} class="fluid" error={nameErr} />
+                    <sui.Input type="url" autoFocus value={repoName} onChange={onNameChanged}
+                        label={lf("Repository name")} id="githubRepoNameInput"
+                        placeholder={`pxt-my-gadget...`} class="fluid" error={nameErr} />
                 </div>
                 <div className="ui field">
-                    <sui.Input type="text" value={repoDescription} onChange={onDescriptionChanged} label={lf("Repository description")} placeholder={lf("MakeCode extension for my gadget")} class="fluid" />
+                    <sui.Input type="text" value={repoDescription} onChange={onDescriptionChanged}
+                        label={lf("Repository description")} id="githubRepoDescriptionInput"
+                        placeholder={lf("MakeCode extension for my gadget")} class="fluid" />
                 </div>
                 <div className="ui field">
-                    <select className="ui dropdown" onChange={onPublicChanged}>
+                    <select className={`ui dropdown`} onChange={onPublicChanged} aria-label={lf("Repository visibility setting")}>
                         <option aria-selected={repoPublic} value="true">{lf("Public repository, anyone can look at your code.")}</option>
                         <option aria-selected={!repoPublic} value="false">{lf("Private repository, your code is only visible to you.")}</option>
                     </select>
@@ -643,12 +509,13 @@ export function showCreateGithubRepoDialogAsync(name?: string) {
             pxt.tickEvent("github.create.cancel");
         else {
             if (!repoNameError()) {
+                repoDescription = repoDescription || lf("A MakeCode project")
                 core.showLoading("creategithub", lf("creating {0} repository...", repoName))
                 return pxt.github.createRepoAsync(repoName, repoDescription.trim(), !repoPublic)
                     .finally(() => core.hideLoading("creategithub"))
                     .then(r => {
                         pxt.tickEvent("github.create.ok");
-                        return pxt.github.noramlizeRepoId("https://github.com/" + r.fullName);
+                        return pxt.github.normalizeRepoId("https://github.com/" + r.fullName, "master");
                     }, err => {
                         if (!showGithubTokenError(err)) {
                             if (err.statusCode == 422)
@@ -674,72 +541,74 @@ export function showImportGithubDialogAsync() {
         res = "NEW"
         core.hideDialog()
     }
-    core.showLoading("githublist", lf("Getting repo list..."))
-    return pxt.github.listUserReposAsync()
+    core.showLoading("githublist", lf("searching GitHub repositories..."))
+    return cloudsync.githubProvider(true).routedLoginAsync(`import`)
+        .then(r => r && r.accessToken && pxt.github.listUserReposAsync())
         .finally(() => core.hideLoading("githublist"))
         .then(repos => {
-            let isPXT = (r: pxt.github.GitRepo) => /pxt|makecode/.test(r.name)
-            return repos.filter(isPXT).concat(repos.filter(r => !isPXT(r)))
-                .map(r => ({
-                    name: r.fullName,
-                    description: r.description,
-                    updatedAt: r.updatedAt,
-                    onClick: () => {
-                        res = pxt.github.noramlizeRepoId("https://github.com/" + r.fullName)
-                        core.hideDialog()
-                    },
-                }))
-        })
-        .then(repos => core.confirmAsync({
-            header: lf("Clone or create your own GitHub repo"),
-            hideAgree: true,
-            /* tslint:disable:react-a11y-anchors */
-            jsx: <div className="ui form">
-                <div className="ui relaxed divided list" role="menu">
-
-                    <div key={"create new"} className="item">
-                        <i className="large plus circle middle aligned icon"></i>
-                        <div className="content">
-                            <a onClick={createNew} role="menuitem" className="header"
-                                title={lf("Create new GitHub repository")}>
-                                <b>{lf("Create new...")}</b>
-                            </a>
-                            <div className="description">
-                                {lf("Create a new GitHub repo in your account.")}
-                            </div>
-                        </div>
-                    </div>
-
-                    {repos.map(r =>
-                        <div key={r.name} className="item">
-                            <i className="large github middle aligned icon"></i>
+            if (!repos)
+                return Promise.resolve(-1);
+            const repoInfo = repos.map(r => ({
+                name: r.fullName,
+                description: r.description,
+                updatedAt: r.updatedAt,
+                onClick: () => {
+                    res = pxt.github.normalizeRepoId("https://github.com/" + r.fullName, r.defaultBranch)
+                    core.hideDialog()
+                },
+            }));
+            return core.confirmAsync({
+                header: lf("Clone or create your own GitHub repo"),
+                hideAgree: true,
+                hasCloseIcon: true,
+                jsx: <div className="ui form">
+                    <div className="ui relaxed divided list">
+                        <div key={"create new"} className="item">
+                            <i className="large plus circle middle aligned icon"></i>
                             <div className="content">
-                                <a onClick={r.onClick} role="menuitem" className="header">{r.name}</a>
+                                <a onClick={createNew} role="button" className="header"
+                                    tabIndex={0} onKeyDown={fireClickOnEnter}
+                                    title={lf("Create new GitHub repository")}>
+                                    <b>{lf("Create new...")}</b>
+                                </a>
                                 <div className="description">
-                                    {pxt.Util.timeSince(r.updatedAt)}
-                                    {". "}
-                                    {r.description}
+                                    {lf("Create a new GitHub repo in your account.")}
                                 </div>
                             </div>
-                        </div>)}
-                </div>
-
-                <div className="ui icon green message">
-                    <i className="info circle icon"></i>
-                    <div className="content">
-                        <h3 className="header">
-                            {lf("Not finding what you're looking for?")}
-                        </h3>
-                        <p>
-                            {lf("Use the 'Import URL' option in the previous dialog to import repo by exact URL.")}
-                        </p>
+                        </div>
+                        {repoInfo.map(r =>
+                            <div key={r.name} className="item">
+                                <i className="large github middle aligned icon"></i>
+                                <div className="content">
+                                    <a onClick={r.onClick} role="button" className="header"
+                                        tabIndex={0} onKeyDown={fireClickOnEnter}
+                                    >{r.name}</a>
+                                    <div className="description">
+                                        {pxt.Util.timeSince(r.updatedAt)}
+                                        {". "}
+                                        {r.description}
+                                    </div>
+                                </div>
+                            </div>)}
                     </div>
-                </div>
-            </div>,
-        })).then(() => res)
+
+                    <div className="ui icon green message">
+                        <i className="info circle icon"></i>
+                        <div className="content">
+                            <h3 className="header">
+                                {lf("Not finding what you're looking for?")}
+                            </h3>
+                            <p>
+                                {lf("Use the 'Import URL' option in the previous dialog to import repo by exact URL.")}
+                            </p>
+                        </div>
+                    </div>
+                </div>,
+            })
+        }).then(() => res)
 }
 
-export function showImportFileDialogAsync(options?: pxt.editor.ImportFileOptions) {
+export function showImportFileDialogAsync(options?: ImportFileOptions) {
     let input: HTMLInputElement;
     let exts = [pxt.appTarget.compile.saveAsPNG ? ".png" : ".mkcd"];
     if (pxt.appTarget.compile.hasHex) {
@@ -750,6 +619,7 @@ export function showImportFileDialogAsync(options?: pxt.editor.ImportFileOptions
     }
     return core.confirmAsync({
         header: lf("Open {0} file", exts.join(lf(" or "))),
+        hasCloseIcon: true,
         onLoaded: (el) => {
             input = el.querySelectorAll('input')[0] as HTMLInputElement;
         },
@@ -772,10 +642,28 @@ export function showImportFileDialogAsync(options?: pxt.editor.ImportFileOptions
 
 export function showReportAbuseAsync(pubId?: string) {
     // send users to github directly for unwanted repoes
-    const ghid = /^https:\/\/github\.com\//i.test(pubId) && pxt.github.parseRepoUrl(pubId);
+    const ghid = pxt.github.parseRepoId(pubId);
     if (ghid) {
         pxt.tickEvent("reportabuse.github");
-        window.open("https://github.com/contact/report-content", "_blank");
+        core.confirmAsync({
+            header: lf("Is this content inappropriate?"),
+            hasCloseIcon: true,
+            agreeLbl: lf("Report"),
+            disagreeLbl: lf("Cancel"),
+            jsx: <div className="ui form">
+                <div className="ui field">
+                    <p>{lf("This content was written by an independent user and may be inappropriate or abusive. Help us block or filter that content by reporting it to Github.")}</p>
+                </div>
+                <div className="ui field">
+                    <label id="githubContentUrlLabel">{lf("Content URL")}</label>
+                    <sui.Input type="url" aria-labelledby="githubContentUrlLabel" readOnly lines={1} copy={true} autoFocus={!pxt.BrowserUtils.isMobile()} selectOnClick={true} value={pubId}></sui.Input>
+                </div>
+            </div>,
+        }).then(res => {
+            if (res) {
+                window.open("https://github.com/contact/report-content", "_blank");
+            }
+        });
         return;
     }
 
@@ -785,6 +673,7 @@ export function showReportAbuseAsync(pubId?: string) {
     const shareUrl = pxt.appTarget.appTheme.shareUrl || "https://makecode.com/";
     core.confirmAsync({
         header: lf("Report Abuse"),
+        hasCloseIcon: true,
         onLoaded: (el) => {
             urlInput = el.querySelectorAll('input')[0] as HTMLInputElement;
             reasonInput = el.querySelectorAll('textarea')[0] as HTMLTextAreaElement;
@@ -802,7 +691,7 @@ export function showReportAbuseAsync(pubId?: string) {
                 <textarea aria-labelledby="abuseDescriptionLabel"></textarea>
             </div>
         </div>,
-    }).done(res => {
+    }).then(res => {
         if (res) {
             pxt.tickEvent("app.reportabuse.send");
             const id = pxt.Cloud.parseScriptId(urlInput.value as string);
@@ -838,34 +727,9 @@ export function showResetDialogAsync() {
     })
 }
 
-export function showCloudSignInDialog() {
-    const providers = cloudsync.providers();
-    if (providers.length == 0)
-        return;
-    if (providers.length == 1)
-        providers[0].login()
-    else {
-        core.dialogAsync({
-            header: lf("Sign in"),
-            body: lf("Please choose your cloud storage provider."),
-            hideCancel: true,
-            buttons:
-                providers.map(p => ({
-                    label: p.friendlyName,
-                    className: "positive small",
-                    icon: "user circle",
-                    onclick: () => {
-                        p.login()
-                    }
-                }))
-        })
-    }
-}
-
 export function promptTranslateBlock(blockid: string, blockTranslationIds: string[]) {
     core.confirmAsync({
         header: lf("Translate this block"),
-        hideCancel: true,
         hideAgree: true,
         hasCloseIcon: true,
         helpUrl: "/translate",
@@ -877,5 +741,212 @@ export function promptTranslateBlock(blockid: string, blockTranslationIds: strin
             </div>
             {blockTranslationIds.map(trid => <div key={`ictr${trid}`} className="ui basic segment">{trid}</div>)}
         </div>
-    }).done();
+    });
+}
+
+export function renderBrowserDownloadInstructions(saveonly?: boolean, redeploy?: () => Promise<void>) {
+    const boardName = pxt.appTarget.appTheme.boardName || lf("device");
+    const boardDriveName = pxt.appTarget.appTheme.driveDisplayName || pxt.appTarget.compile.driveName || "???";
+    const fileExtension = pxt.appTarget.compile?.useUF2 ? ".uf2" : ".hex";
+    const webUSBSupported = pxt.usb.isEnabled && pxt.appTarget?.compile?.webUSB;
+
+    const onPairClicked = async () => {
+        core.hideDialog();
+        const successfulPairing = await pairAsync(true);
+        if (redeploy && successfulPairing)
+            await redeploy();
+    }
+
+    const onCheckboxClicked = (value: boolean) => {
+        const valueString = "" + value;
+        pxt.tickEvent("downloaddialog.dontshowagain", { checked: valueString });
+
+        dontShowDownloadFlag = value;
+    }
+
+    const image = pxt.appTarget.appTheme.downloadDialogTheme?.dragFileImage;
+    const columns = image ? "two" : "one";
+
+    return <div className="ui grid stackable upload">
+        <div className="column sixteen wide instructions">
+            <div className="ui grid">
+                <div className="row">
+                    <div className="column">
+                        <div className={`ui ${columns} column grid padded`}>
+                            <div className="column">
+                                <div className="ui">
+                                    <div className="content">
+                                        <div className="description">
+                                            {lf("Your code is being downloaded as a {1} file. You can drag this file to your {0} using your computer's file explorer.", boardName, fileExtension)}
+                                        </div>
+                                        {webUSBSupported &&
+                                            <div className="download-callout">
+                                                <label className="ui purple ribbon label">{lf("Want faster downloads?")}</label>
+                                                <div className="ui two column grid content">
+                                                    <div className="icon-align three wide column">
+                                                        <div />
+                                                        <i className="icon big usb" />
+                                                        <div />
+                                                    </div>
+                                                    <div className="thirteen wide column">
+                                                        {lf("Download your code faster by pairing with WebUSB!")}
+                                                        <a className="ui button purple" onClick={onPairClicked}>{lf("Pair Now")}</a>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            {image &&
+                                <div className="column">
+                                    <div className="ui">
+                                        <div className="image">
+                                            <img alt={lf("Comic moving {1} file to {0}", boardDriveName, fileExtension)} className="ui medium rounded image" src={image} />
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                {!saveonly &&
+                    <sui.Checkbox
+                        inputLabel={lf("Don't show this again")}
+                        onChange={onCheckboxClicked}
+                    />
+                }
+            </div>
+        </div>
+    </div>;
+}
+
+export function renderIncompatibleHardwareDialog() {
+    const boardName = pxt.appTarget.appTheme.boardName || lf("device");
+    const bodyText = lf("Oops! Looks like your project has code that won't run on the hardware you have connected. Would you like to download anyway?");
+    const helpText = lf("Learn more about what's supported by your hardware…")
+    const helpURL = pxt.appTarget.appTheme.downloadDialogTheme?.incompatibleHardwareHelpURL;
+    const imageURL = pxt.appTarget.appTheme.downloadDialogTheme?.incompatibleHardwareImage;
+    const columns = imageURL ? "two" : "one";
+
+    return <div className={`ui ${columns} column grid padded download-dialog`}>
+        <div className="column">
+            <div className="ui">
+                <div className="content">
+                    <div className="description">
+                        {bodyText}
+                        <br />
+                        {helpURL && <a target="_blank" rel="noopener noreferrer" href={helpURL}>{helpText}</a>}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {imageURL &&
+            <div className="column">
+                <div className="ui">
+                    <div className="image download-dialog-image">
+                        <img alt={lf("Image of {0}", boardName)} className="ui medium rounded image" src={imageURL} />
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+export function clearDontShowDownloadDialogFlag() {
+    dontShowDownloadFlag = false;
+}
+
+export function isDontShowDownloadDialogFlagSet() {
+    return dontShowDownloadFlag;
+}
+
+export async function showTurnBackTimeDialogAsync(header: pxt.workspace.Header, reloadHeader: () => void) {
+    const text = await workspace.getTextAsync(header.id, true);
+    let history: pxteditor.history.HistoryFile;
+
+    if (text?.[pxt.HISTORY_FILE]) {
+        history = pxteditor.history.parseHistoryFile(text[pxt.HISTORY_FILE]);
+    }
+    else {
+        history = {
+            entries: [],
+            snapshots: [],
+            shares: [],
+            lastSaveTime: Date.now()
+        };
+    }
+
+    const loadProject = async (text: pxt.workspace.ScriptText, editorVersion: string) => {
+        core.hideDialog();
+
+        header.targetVersion = editorVersion;
+
+        await workspace.saveSnapshotAsync(header.id);
+        await workspace.saveAsync(header, text);
+        reloadHeader();
+    }
+
+    const copyProject = async (text: pxt.workspace.ScriptText, editorVersion: string, timestamp?: number) => {
+        core.hideDialog();
+
+        let newHistory = history
+
+        if (timestamp != undefined) {
+            newHistory = {
+                entries:  history.entries.slice(0, history.entries.findIndex(e => e.timestamp === timestamp)),
+                snapshots: history.snapshots.filter(s => s.timestamp <= timestamp),
+                shares: history.shares.filter(s => s.timestamp <= timestamp),
+                lastSaveTime: timestamp
+            }
+        }
+
+        text[pxt.HISTORY_FILE] = JSON.stringify(newHistory);
+
+        const date = timestamp ? new Date(timestamp) : new Date();
+
+        const dateString = date.toLocaleDateString(
+            pxt.U.userLanguage(),
+            {
+                year: "numeric",
+                month: "numeric",
+                day: "numeric"
+            }
+        );
+
+        const timeString = date.toLocaleTimeString(
+            pxt.U.userLanguage(),
+            {
+                timeStyle: "short"
+            } as any
+        );
+
+        const newHeader: pxt.workspace.Header = {
+            ...header,
+            targetVersion: editorVersion
+        }
+
+        await workspace.duplicateAsync(newHeader, `${newHeader.name} ${dateString} ${timeString}`, text);
+
+        invalidate("headers:");
+
+        core.infoNotification(lf("Project copy saved to My Projects"))
+    }
+
+    await core.dialogAsync({
+        header: lf("Turn back time"),
+        className: "time-machine-dialog",
+        size: "fullscreen",
+        hasCloseIcon: true,
+        jsx: (
+            <TimeMachine
+                history={history}
+                text={text}
+                onProjectLoad={loadProject}
+                onProjectCopy={copyProject}
+            />
+        )
+    })
 }

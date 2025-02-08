@@ -1,9 +1,13 @@
 import * as React from "react";
 
 import { connect } from 'react-redux';
-import { ImageEditorStore } from './store/imageReducer';
-import { dispatchChangeImageDimensions, dispatchUndoImageEdit, dispatchRedoImageEdit, dispatchToggleAspectRatioLocked, dispatchChangeZoom, dispatchToggleOnionSkinEnabled} from './actions/dispatch';
-import { IconButton } from "./Button";
+import { ImageEditorStore, AnimationState, TilemapState } from './store/imageReducer';
+import { dispatchChangeImageDimensions, dispatchUndoImageEdit, dispatchRedoImageEdit, dispatchToggleAspectRatioLocked, dispatchChangeZoom, dispatchToggleOnionSkinEnabled, dispatchChangeAssetName } from './actions/dispatch';
+import { fireClickOnlyOnEnter } from "./util";
+import { isNameTaken } from "../../assets";
+import { obtainShortcutLock, releaseShortcutLock } from "./keyboardShortcuts";
+import { classList } from "../../../../react-common/components/util";
+import { Button } from "../../../../react-common/components/controls/Button";
 
 export interface BottomBarProps {
     dispatchChangeImageDimensions: (dimensions: [number, number]) => void;
@@ -11,26 +15,38 @@ export interface BottomBarProps {
     imageDimensions: [number, number];
     cursorLocation: [number, number];
 
+    resizeDisabled: boolean;
     hasUndo: boolean;
     hasRedo: boolean;
+    assetName?: string;
 
     aspectRatioLocked: boolean;
     onionSkinEnabled: boolean;
+    hideAssetName: boolean;
 
     dispatchUndoImageEdit: () => void;
     dispatchRedoImageEdit: () => void;
     dispatchToggleAspectRatioLocked: () => void;
     dispatchToggleOnionSkinEnabled: () => void;
+    dispatchChangeAssetName: (name: string) => void;
 
     singleFrame?: boolean;
+    isTilemap?: boolean;
+
+    onDoneClick?: () => void;
+    hideDoneButton?: boolean;
 }
 
 export interface BottomBarState {
     width?: string;
     height?: string;
+    assetNameMessage?: string;
+    assetName?: string;
 }
 
 export class BottomBarImpl extends React.Component<BottomBarProps, BottomBarState> {
+    protected shortcutLock: number;
+
     constructor(props: BottomBarProps) {
         super(props);
         this.state = {};
@@ -48,81 +64,130 @@ export class BottomBarImpl extends React.Component<BottomBarProps, BottomBarStat
             onionSkinEnabled,
             dispatchToggleAspectRatioLocked,
             dispatchToggleOnionSkinEnabled,
-            dispatchChangeZoom,
-            singleFrame
+            resizeDisabled,
+            singleFrame,
+            onDoneClick,
+            assetName,
+            hideDoneButton,
+            hideAssetName
         } = this.props;
+
+        const { assetNameMessage } = this.state;
 
         const width = this.state.width == null ? imageDimensions[0] : this.state.width;
         const height = this.state.height == null ? imageDimensions[1] : this.state.height;
 
+        const assetNameState = this.state.assetName == null ? (assetName || "") : this.state.assetName;
+
         return (
             <div className="image-editor-bottombar">
-                <div className="image-editor-resize">
-                    <input className="image-editor-input"
-                        title={lf("Image Width")}
-                        value={width}
-                        onChange={this.handleWidthChange}
-                        onBlur={this.handleDimensionalBlur}
-                    />
+                { !resizeDisabled &&
+                    <div className="image-editor-resize">
+                        <input className="image-editor-input"
+                            title={lf("Image Width")}
+                            value={width}
+                            tabIndex={0}
+                            onChange={this.handleWidthChange}
+                            onFocus={this.disableShortcutsOnFocus}
+                            onBlur={this.handleDimensionalBlur}
+                            onKeyDown={this.handleDimensionalKeydown}
+                        />
 
-                    <IconButton
-                        onClick={dispatchToggleAspectRatioLocked}
-                        iconClass={aspectRatioLocked ? "ms-Icon ms-Icon--Lock" : "ms-Icon ms-Icon--Unlock"}
-                        title={aspectRatioLocked ? lf("Unlock Aspect Ratio") : lf("Lock Aspect Ratio")}
-                        toggle={!aspectRatioLocked}
-                    />
+                        <Button
+                            className={classList("image-editor-button", !aspectRatioLocked && "toggle")}
+                            onClick={dispatchToggleAspectRatioLocked}
+                            leftIcon={aspectRatioLocked ? "ms-Icon ms-Icon--Lock" : "ms-Icon ms-Icon--Unlock"}
+                            title={aspectRatioLocked ? lf("Unlock Aspect Ratio") : lf("Lock Aspect Ratio")}
+                        />
 
-                    <input className="image-editor-input"
-                        title={lf("Image Height")}
-                        value={height}
-                        onChange={this.handleHeightChange}
-                        onBlur={this.handleDimensionalBlur}
-                    />
-                </div>
+                        <input className="image-editor-input"
+                            title={lf("Image Height")}
+                            value={height}
+                            tabIndex={0}
+                            onChange={this.handleHeightChange}
+                            onFocus={this.disableShortcutsOnFocus}
+                            onBlur={this.handleDimensionalBlur}
+                            onKeyDown={this.handleDimensionalKeydown}
+                        />
+                    </div>
+                }
                 { !singleFrame && <div className="image-editor-seperator"/> }
                 { !singleFrame && <div>
-                    <IconButton
+                    <Button
                         onClick={dispatchToggleOnionSkinEnabled}
-                        iconClass="ms-Icon ms-Icon--MapLayers"
+                        className={classList("image-editor-button", !onionSkinEnabled && "toggle")}
+                        leftIcon="ms-Icon ms-Icon--MapLayers"
                         title={onionSkinEnabled ? lf("Hide Previous Frame") : lf("Show Previous Frame")}
-                        toggle={!onionSkinEnabled}
                     />
                 </div> }
-                { cursorLocation && <div className="image-editor-seperator"/> }
+                { !resizeDisabled && <div className={classList("image-editor-seperator", !cursorLocation && "transparent")}/> }
                 <div className="image-editor-coordinate-preview">
                     {cursorLocation && `${cursorLocation[0]}, ${cursorLocation[1]}`}
                 </div>
+                <div className="image-editor-change-name">
+                    {!hideAssetName &&
+                        <>
+                            <input className="image-editor-input"
+                                title={lf("Asset Name")}
+                                value={assetNameState}
+                                placeholder={lf("Asset Name")}
+                                tabIndex={0}
+                                onChange={this.handleAssetNameChange}
+                                onFocus={this.disableShortcutsOnFocus}
+                                onBlur={this.handleAssetNameBlur}
+                                onKeyDown={this.handleDimensionalKeydown}
+                            />
+                            {assetNameMessage && <div className="ui pointing below red basic label">
+                                {assetNameMessage}
+                            </div>}
+                        </>
+                    }
+                </div>
                 <div className="image-editor-undo-redo">
-                    <IconButton
+                    <Button
+                        className="image-editor-button"
                         title={lf("Undo")}
-                        iconClass="ms-Icon ms-Icon--Undo"
+                        leftIcon="ms-Icon ms-Icon--Undo"
                         onClick={hasUndo ? dispatchUndoImageEdit : null}
                         disabled={!hasUndo}
                     />
-                    <IconButton
+                    <Button
+                        className="image-editor-button"
                         title={lf("Redo")}
-                        iconClass="ms-Icon ms-Icon--Redo"
+                        leftIcon="ms-Icon ms-Icon--Redo"
                         onClick={hasRedo ? dispatchRedoImageEdit : null}
                         disabled={!hasRedo}
                     />
                 </div>
                 <div className="image-editor-seperator"/>
                 <div className="image-editor-zoom-controls">
-                    <IconButton
+                    <Button
+                        className="image-editor-button toggle"
                         onClick={this.zoomOut}
-                        iconClass="ms-Icon ms-Icon--ZoomOut"
+                        leftIcon="ms-Icon ms-Icon--ZoomOut"
                         title={lf("Zoom Out")}
-                        toggle={true}
                     />
-                    <IconButton
+                    <Button
+                        className="image-editor-button toggle"
                         onClick={this.zoomIn}
-                        iconClass="ms-Icon ms-Icon--ZoomIn"
+                        leftIcon="ms-Icon ms-Icon--ZoomIn"
                         title={lf("Zoom In")}
-                        toggle={true}
                     />
                 </div>
+                {!hideDoneButton &&
+                    <Button
+                        className="image-editor-confirm"
+                        title={lf("Done")}
+                        label={lf("Done")}
+                        onClick={onDoneClick}
+                    />
+                }
             </div>
         );
+    }
+
+    protected disableShortcutsOnFocus = () => {
+        this.setShortcutsEnabled(false);
     }
 
     protected handleWidthChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -160,13 +225,16 @@ export class BottomBarImpl extends React.Component<BottomBarProps, BottomBarStat
     }
 
     protected handleDimensionalBlur = () => {
-        const { imageDimensions, dispatchChangeImageDimensions } = this.props;
+        const { imageDimensions, isTilemap, dispatchChangeImageDimensions } = this.props;
 
         const widthVal = parseInt(this.state.width);
         const heightVal = parseInt(this.state.height);
 
-        const width = isNaN(widthVal) ? imageDimensions[0] : Math.min(Math.max(widthVal, 1), 999);
-        const height = isNaN(heightVal) ? imageDimensions[1] : Math.min(Math.max(heightVal, 1), 999);
+        // tilemaps store in location as 1 byte, so max is 255x255
+        const maxSize = isTilemap ? 255 : 512;
+
+        const width = isNaN(widthVal) ? imageDimensions[0] : Math.min(Math.max(widthVal, 1), maxSize);
+        const height = isNaN(heightVal) ? imageDimensions[1] : Math.min(Math.max(heightVal, 1), maxSize);
 
         if (width !== imageDimensions[0] || height !== imageDimensions[1]) {
             dispatchChangeImageDimensions([width, height]);
@@ -176,6 +244,44 @@ export class BottomBarImpl extends React.Component<BottomBarProps, BottomBarStat
             width: null,
             height: null
         });
+        this.setShortcutsEnabled(true);
+    }
+
+    protected handleDimensionalKeydown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        const charCode = (typeof event.which == "number") ? event.which : event.keyCode
+        if (charCode === 13) {
+            event.currentTarget.blur();
+        }
+    }
+
+    protected handleAssetNameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        let errorMessage = null;
+
+        const name = event.target.value || "";      // don't trim the state otherwise they won't be able to type spaces
+        const trimmedName = name.trim();            // validate using the trimmed name
+
+        if (!pxt.validateAssetName(trimmedName)) {
+            errorMessage = lf("Names may only contain letters, numbers, '-', '_', and space");
+        }
+        else if (isNameTaken(trimmedName) && trimmedName !== this.props.assetName) {
+            errorMessage = lf("This name is already used elsewhere in your project");
+        }
+
+        this.setState({ assetName: name, assetNameMessage: errorMessage });
+    }
+
+    protected handleAssetNameBlur = () => {
+        const { dispatchChangeAssetName, assetName } = this.props;
+
+        if (this.state.assetName) {
+            let newName = this.state.assetName.trim();
+
+            if (newName !== assetName && pxt.validateAssetName(newName) && !isNameTaken(newName)) {
+                dispatchChangeAssetName(newName);
+            }
+        }
+        this.setState({ assetName: null, assetNameMessage: null });
+        this.setShortcutsEnabled(true);
     }
 
     protected zoomIn = () => {
@@ -185,20 +291,33 @@ export class BottomBarImpl extends React.Component<BottomBarProps, BottomBarStat
     protected zoomOut = () => {
         this.props.dispatchChangeZoom(-1)
     }
+
+    protected setShortcutsEnabled(enabled: boolean) {
+        if (enabled && this.shortcutLock) {
+            releaseShortcutLock(this.shortcutLock);
+            this.shortcutLock = undefined;
+        }
+        else if (!enabled && !this.shortcutLock) {
+            this.shortcutLock = obtainShortcutLock();
+        }
+    }
 }
 
-function mapStateToProps({ present: state, past, future, editor }: ImageEditorStore, ownProps: any) {
+function mapStateToProps({store: { present: state, past, future }, editor}: ImageEditorStore, ownProps: any) {
     if (!state) return {};
 
-    const bitmap = state.frames[state.currentFrame].bitmap;
+    const bitmap = editor.isTilemap ? (state as TilemapState).tilemap.bitmap : (state as AnimationState).frames[(state as AnimationState).currentFrame].bitmap;
 
     return {
         imageDimensions: [ bitmap.width, bitmap.height ],
         aspectRatioLocked: state.aspectRatioLocked,
         onionSkinEnabled: editor.onionSkinEnabled,
         cursorLocation: editor.cursorLocation,
+        resizeDisabled: state.asset?.type === pxt.AssetType.Tile,
+        assetName: state.asset?.meta?.displayName,
         hasUndo: !!past.length,
-        hasRedo: !!future.length
+        hasRedo: !!future.length,
+        isTilemap: editor.isTilemap,
     };
 }
 
@@ -208,7 +327,8 @@ const mapDispatchToProps = {
     dispatchRedoImageEdit,
     dispatchToggleAspectRatioLocked,
     dispatchToggleOnionSkinEnabled,
-    dispatchChangeZoom
+    dispatchChangeZoom,
+    dispatchChangeAssetName
 };
 
 

@@ -14,14 +14,19 @@ namespace ts.pxtc {
     export const TS_BREAK_TYPE = "break_keyword";
     export const TS_CONTINUE_TYPE = "continue_keyword";
     export const TS_OUTPUT_TYPE = "typescript_expression";
+    export const TS_RETURN_STATEMENT_TYPE = "function_return";
     export const PAUSE_UNTIL_TYPE = "pxt_pause_until";
     export const COLLAPSED_BLOCK = "pxt_collapsed_block"
+    export const FUNCTION_DEFINITION_TYPE = "function_definition";
+
     export const BINARY_JS = "binary.js";
     export const BINARY_ASM = "binary.asm";
     export const BINARY_HEX = "binary.hex";
     export const BINARY_UF2 = "binary.uf2";
     export const BINARY_ELF = "binary.elf";
     export const BINARY_PXT64 = "binary.pxt64";
+    export const BINARY_ESP = "binary.bin";
+    export const BINARY_SRCMAP = "binary.srcmap";
 
     export const NATIVE_TYPE_THUMB = "thumb";
     export const NATIVE_TYPE_VM = "vm";
@@ -65,6 +70,7 @@ namespace ts.pxtc {
         isMemberCompletion: boolean;
         isNewIdentifierLocation: boolean;
         isTypeLocation: boolean;
+        namespace: string[];
     }
 
     export interface LocationInfo {
@@ -73,8 +79,8 @@ namespace ts.pxtc {
         length: number;
 
         //derived
-        line: number;
-        column: number;
+        line?: number;
+        column?: number;
         endLine?: number;
         endColumn?: number;
     }
@@ -96,6 +102,139 @@ namespace ts.pxtc {
         value: number;
     }
 
+    export type CodeLang = "py" | "blocks" | "ts"
+    export type PosSpan = {
+        startPos: number;
+        endPos: number;
+    }
+    export interface SourceInterval {
+        ts: PosSpan;
+        py: PosSpan;
+    }
+
+    export type LineColToPos = (line: number, col: number) => number
+    export type PosToLineCol = (pos: number) => [number, number]
+    export interface SourceMapHelpers {
+        ts: {
+            posToLineCol: PosToLineCol,
+            lineColToPos: LineColToPos,
+            allOverlaps: (i: PosSpan) => SourceInterval[],
+            smallestOverlap: (i: PosSpan) => SourceInterval | undefined
+            locToLoc: (thisLoc: pxtc.LocationInfo) => pxtc.LocationInfo,
+            getText: (i: PosSpan) => string,
+        },
+        py: {
+            posToLineCol: PosToLineCol,
+            lineColToPos: LineColToPos,
+            allOverlaps: (i: PosSpan) => SourceInterval[],
+            smallestOverlap: (i: PosSpan) => SourceInterval | undefined,
+            locToLoc: (thisLoc: pxtc.LocationInfo) => pxtc.LocationInfo,
+            getText: (i: PosSpan) => string,
+        },
+    }
+
+    export function BuildSourceMapHelpers(sourceMap: SourceInterval[], tsFile: string, pyFile: string): SourceMapHelpers {
+        // Notes:
+        //  lines are 0-indexed (Monaco they are 1-indexed)
+        //  columns are 0-indexed (0th is first character)
+        //  positions are 0-indexed, as if getting the index of a character in a file as a giant string (incl. new lines)
+        //  line summation is the length of that line plus its newline plus all the lines before it; aka the position of the next line's first character
+        //  end positions are zero-index but not inclusive, same behavior as substring
+        const makeLineColPosConverters = (file: string): { posToLineCol: PosToLineCol, lineColToPos: LineColToPos } => {
+            const lines = file.split("\n")
+            const lineLengths = lines
+                .map(l => l.length)
+            const lineLenSums = lineLengths
+                .reduce(({ lens, sum }, n) =>
+                    ({ lens: [...lens, sum + n + 1], sum: sum + n + 1 }),
+                    { lens: [] as number[], sum: 0 })
+                .lens
+            const lineColToPos = (line: number, col: number) => {
+                let pos = (lineLenSums[line - 1] || 0) + col
+                return pos
+            }
+            const posToLineCol = (pos: number) => {
+                const line = lineLenSums
+                    .reduce((curr, nextLen, i) => pos < nextLen ? curr : i + 1, 0)
+                const col = lineLengths[line] - (lineLenSums[line] - pos) + 1
+                return [line, col] as [number, number]
+            }
+            return { posToLineCol, lineColToPos }
+        }
+
+        const lcp = {
+            ts: makeLineColPosConverters(tsFile),
+            py: makeLineColPosConverters(pyFile)
+        }
+
+        const intLen = (i: PosSpan) => i.endPos - i.startPos
+        const allOverlaps = (i: PosSpan, lang: "ts" | "py") => {
+            const { startPos, endPos } = i
+            return sourceMap
+                .filter(i => {
+                    // O(n), can we and should we do better?
+                    return i[lang].startPos <= startPos && endPos <= i[lang].endPos
+                })
+        }
+        const smallestOverlap = (i: PosSpan, lang: "ts" | "py"): SourceInterval | undefined => {
+            const overlaps = allOverlaps(i, lang)
+            return overlaps.reduce((p, n) => intLen(n[lang]) < intLen(p[lang]) ? n : p, overlaps[0])
+        }
+
+        const os = {
+            ts: {
+                allOverlaps: (i: PosSpan) => allOverlaps(i, "ts"),
+                smallestOverlap: (i: PosSpan) => smallestOverlap(i, "ts"),
+            },
+            py: {
+                allOverlaps: (i: PosSpan) => allOverlaps(i, "py"),
+                smallestOverlap: (i: PosSpan) => smallestOverlap(i, "py"),
+            }
+        }
+
+        const makeLocToLoc = (inLang: "ts" | "py", outLang: "ts" | "py") => {
+            const inLocToPosAndLen = (inLoc: pxtc.LocationInfo) => [lcp[inLang].lineColToPos(inLoc.line, inLoc.column), inLoc.length] as [number, number]
+            const locToLoc = (inLoc: pxtc.LocationInfo): pxtc.LocationInfo | undefined => {
+                const [inStartPos, inLen] = inLocToPosAndLen(inLoc)
+                const inEndPos = inStartPos + inLen
+                const bestOverlap = smallestOverlap({ startPos: inStartPos, endPos: inEndPos }, inLang)
+                if (!bestOverlap)
+                    return undefined
+                const [outStartLine, outStartCol] = lcp[outLang].posToLineCol(bestOverlap[outLang].startPos)
+                const outLoc = {
+                    fileName: `main.${outLang}`,
+                    start: bestOverlap[outLang].startPos,
+                    length: intLen(bestOverlap[outLang]),
+                    line: outStartLine,
+                    column: outStartCol
+                }
+                return outLoc
+            }
+            return locToLoc
+        }
+
+        const tsLocToPyLoc = makeLocToLoc("ts", "py")
+        const pyLocToTsLoc = makeLocToLoc("py", "ts")
+
+        const tsGetText = (i: PosSpan) => tsFile.substring(i.startPos, i.endPos)
+        const pyGetText = (i: PosSpan) => pyFile.substring(i.startPos, i.endPos)
+
+        return {
+            ts: {
+                ...lcp.ts,
+                ...os.ts,
+                locToLoc: tsLocToPyLoc,
+                getText: tsGetText
+            },
+            py: {
+                ...lcp.py,
+                ...os.py,
+                locToLoc: pyLocToTsLoc,
+                getText: pyGetText
+            },
+        }
+    }
+
     export interface CompileResult {
         outfiles: pxt.Map<string>;
         diagnostics: KsDiagnostic[];
@@ -103,10 +242,13 @@ namespace ts.pxtc {
         times: pxt.Map<number>;
         //ast?: Program; // Not needed, moved to pxtcompiler
         breakpoints?: Breakpoint[];
+        procCallLocations?: pxtc.LocationInfo[];
         procDebugInfo?: ProcDebugInfo[];
         blocksInfo?: BlocksInfo;
+        blockSourceMap?: pxt.blocks.BlockSourceInterval[]; // mappings id,start,end
         usedSymbols?: pxt.Map<SymbolInfo>; // q-names of symbols used
         usedArguments?: pxt.Map<string[]>;
+        usedParts?: string[];
         needsFullRecompile?: boolean;
         // client options
         saveOnly?: boolean;
@@ -115,6 +257,9 @@ namespace ts.pxtc {
         headerId?: string;
         confirmAsync?: (confirmOptions: {}) => Promise<number>;
         configData?: ConfigEntry[];
+        sourceMap?: SourceInterval[];
+        globalNames?: pxt.Map<SymbolInfo>;
+        builtVariants?: string[];
     }
 
     export interface Breakpoint extends LocationInfo {
@@ -146,6 +291,7 @@ namespace ts.pxtc {
         args: CellInfo[];
         localsMark: number;
         calls: ProcCallInfo[];
+        size: number;
     }
 
     export const enum BitSize {
@@ -195,31 +341,38 @@ namespace ts.pxtc {
         endingToken?: string;
     }
 
-    export function computeUsedParts(resp: CompileResult, ignoreBuiltin = false): string[] {
-        if (!resp.usedSymbols || !pxt.appTarget.simulator || !pxt.appTarget.simulator.parts)
+    export function computeUsedParts(resp: CompileResult, filter?: "onlybuiltin" | "ignorebuiltin", force = false): string[] {
+        if (!resp.usedSymbols || !pxt.appTarget.simulator || (!force && !pxt.appTarget.simulator.parts))
             return [];
 
+        const parseParts = (partsRaw: string, ps: string[]) => {
+            if (partsRaw) {
+                const partsSplit = partsRaw.split(/[ ,]+/g);
+                ps.push(...partsSplit.filter(p => !!p && ps.indexOf(p) < 0))
+             }
+        }
+
         let parts: string[] = [];
+        let hiddenParts: string[] = [];
         Object.keys(resp.usedSymbols).forEach(symbol => {
-            let info = resp.usedSymbols[symbol]
-            if (info && info.attributes.parts) {
-                let partsRaw = info.attributes.parts;
-                if (partsRaw) {
-                    let partsSplit = partsRaw.split(/[ ,]+/);
-                    partsSplit.forEach(p => {
-                        if (0 < p.length && parts.indexOf(p) < 0) {
-                            parts.push(p);
-                        }
-                    });
-                }
-            }
+            const info = resp.usedSymbols[symbol]
+            parseParts(info?.attributes.parts, parts)
+            parseParts(info?.attributes.hiddenParts, hiddenParts)
         });
 
-        if (ignoreBuiltin) {
+        if (filter) {
             const builtinParts = pxt.appTarget.simulator.boardDefinition.onboardComponents;
-            if (builtinParts)
-                parts = parts.filter(p => builtinParts.indexOf(p) < 0);
+            if (builtinParts) {
+                if (filter === "ignorebuiltin") {
+                    parts = parts.filter(p => builtinParts.indexOf(p) === -1);
+                } else if (filter === "onlybuiltin") {
+                    parts = parts.filter(p => builtinParts.indexOf(p) >= 0);
+                }
+            }
         }
+
+        // apply hidden parts filter
+        parts = parts.filter(p => hiddenParts.indexOf(p) < 0)
 
         //sort parts (so breadboarding layout is stable w.r.t. code ordering)
         parts.sort();
@@ -228,6 +381,18 @@ namespace ts.pxtc {
         // before "buttonpair"
 
         return parts;
+    }
+
+    export function buildSimJsInfo(compileResult: pxtc.CompileResult): pxtc.BuiltSimJsInfo {
+        return {
+            js: compileResult.outfiles[pxtc.BINARY_JS],
+            targetVersion: pxt.appTarget.versions.target,
+            fnArgs: compileResult.usedArguments,
+            parts: pxtc.computeUsedParts(compileResult, "ignorebuiltin"),
+            usedBuiltinParts: pxtc.computeUsedParts(compileResult, "onlybuiltin"),
+            allParts: pxtc.computeUsedParts(compileResult, undefined, true),
+            breakpoints: compileResult.breakpoints?.map(bp => bp.id),
+        };
     }
 
     /**
@@ -316,10 +481,24 @@ namespace ts.pxtc {
                     combinedProperties: []
                 }
                 ex.attributes.block =
-                    isGet ? `%${paramName} %property` :
-                        isSet ? `set %${paramName} %property to %${paramValue}` :
-                            `change %${paramName} %property by %${paramValue}`
+                    isGet ? U.lf("%{0} %property", paramName) :
+                        isSet ? U.lf("set %{0} %property to %{1}", paramName, paramValue) :
+                            U.lf("change %{0} %property by %{1}", paramName, paramValue)
                 updateBlockDef(ex.attributes)
+                if (pxt.Util.isTranslationMode()) {
+                    ex.attributes.translationId = ex.attributes.block;
+                    // This kicks off async work but doesn't wait; give untranslated values to start with
+                    // to avoid a race causing a crash.
+                    ex.attributes.block = isGet ? `%${paramName} %property` :
+                        isSet ? `set %${paramName} %property to %${paramValue}` :
+                            `change %${paramName} %property by %${paramValue}`;
+                    updateBlockDef(ex.attributes);
+                    pxt.crowdin.inContextLoadAsync(ex.attributes.translationId)
+                        .then(r => {
+                            ex.attributes.block = r;
+                            updateBlockDef(ex.attributes);
+                        });
+                }
                 blocks.push(ex)
             }
 
@@ -330,22 +509,22 @@ namespace ts.pxtc {
             if (s.attributes.shim === "ENUM_GET" && s.attributes.enumName && s.attributes.blockId) {
                 let didFail = false;
                 if (enumsByName[s.attributes.enumName]) {
-                    console.warn(`Enum block ${s.attributes.blockId} trying to overwrite enum ${s.attributes.enumName}`);
+                    pxt.warn(`Enum block ${s.attributes.blockId} trying to overwrite enum ${s.attributes.enumName}`);
                     didFail = true;
                 }
 
                 if (!s.attributes.enumMemberName) {
-                    console.warn(`Enum block ${s.attributes.blockId} should specify enumMemberName`);
+                    pxt.warn(`Enum block ${s.attributes.blockId} should specify enumMemberName`);
                     didFail = true;
                 }
 
                 if (!s.attributes.enumPromptHint) {
-                    console.warn(`Enum block ${s.attributes.blockId} should specify enumPromptHint`);
+                    pxt.warn(`Enum block ${s.attributes.blockId} should specify enumPromptHint`);
                     didFail = true;
                 }
 
                 if (!s.attributes.enumInitialMembers || !s.attributes.enumInitialMembers.length) {
-                    console.warn(`Enum block ${s.attributes.blockId} should specify enumInitialMembers`);
+                    pxt.warn(`Enum block ${s.attributes.blockId} should specify enumInitialMembers`);
                     didFail = true;
                 }
 
@@ -371,7 +550,7 @@ namespace ts.pxtc {
                 const kindNamespace = s.attributes.kindNamespace || s.attributes.blockNamespace || s.namespace;
 
                 if (kindsByName[kindNamespace]) {
-                    console.warn(`More than one block defined for kind ${kindNamespace}`);
+                    pxt.warn(`More than one block defined for kind ${kindNamespace}`);
                     continue;
                 }
 
@@ -419,9 +598,12 @@ namespace ts.pxtc {
                     if (s.kind == SymbolKind.Method || s.kind == SymbolKind.Property) {
                         b += " %" + s.namespace.toLowerCase()
                     }
-                    for (let p of s.parameters || []) {
+
+                    const params = s.parameters?.filter(pr => !parameterTypeIsArrowFunction(pr)) ?? [];
+                    for (let p of params) {
                         b += " %" + p.name
                     }
+
                     s.attributes.block = b
                     updateBlockDef(s.attributes)
                 }
@@ -463,88 +645,179 @@ namespace ts.pxtc {
         }
     }
 
+
+    export function tsSnippetToPySnippet(param: string, symbol?: SymbolInfo): string {
+        const keywords: pxt.Map<string> = {
+            "true": "True",
+            "false": "False",
+            "null": "None"
+        }
+        const key = keywords[param];
+        if (key) {
+            return key
+        }
+        if ((symbol && symbol.kind == SymbolKind.Enum) || (!symbol && param.includes("."))) {
+            // Python enums are all caps
+            const dotIdx = param.lastIndexOf(".");
+            const left = param.substr(0, dotIdx)
+            let right = param.substr(dotIdx + 1)
+            right = U.snakify(right).toUpperCase();
+
+            if (left) {
+                return `${left}.${right}`
+            }
+            else {
+                return right;
+            }
+        }
+        return param;
+    }
+
+
     export let apiLocalizationStrings: pxt.Map<string> = {};
 
-    export function localizeApisAsync(apis: pxtc.ApisInfo, mainPkg: pxt.MainPackage): Promise<pxtc.ApisInfo> {
+    export async function localizeApisAsync(apis: pxtc.ApisInfo, mainPkg: pxt.MainPackage): Promise<pxtc.ApisInfo> {
         const lang = pxtc.Util.userLanguage();
-        if (pxtc.Util.userLanguage() == "en") return Promise.resolve(apis);
 
-        const errors: pxt.Map<number> = {};
+        if (lang == "en")
+            return Promise.resolve(cleanLocalizations(apis));
+
         const langLower = lang.toLowerCase();
         const attrJsLocsKey = langLower + "|jsdoc";
         const attrBlockLocsKey = langLower + "|block";
-        return mainPkg.localizationStringsAsync(lang)
-            .then(loc => Promise.all(Util.values(apis.byQName).map(fn => {
-                if (apiLocalizationStrings)
-                    Util.jsonMergeFrom(loc, apiLocalizationStrings);
-                const attrLocs = fn.attributes.locs || {};
-                const locJsDoc = loc[fn.qName] || attrLocs[attrJsLocsKey];
-                if (locJsDoc) {
-                    fn.attributes.jsDoc = locJsDoc;
-                    if (fn.parameters)
-                        fn.parameters.forEach(pi => pi.description = loc[`${fn.qName}|param|${pi.name}`] || attrLocs[`${langLower}|param|${pi.name}`] || pi.description);
+
+        const loc = await mainPkg.localizationStringsAsync(lang);
+        if (apiLocalizationStrings)
+            Util.jsonMergeFrom(loc, apiLocalizationStrings);
+
+        const toLocalize = Util.values(apis.byQName).filter(fn => fn.attributes._translatedLanguageCode !== lang);
+        await Util.promiseMapAll(toLocalize, async fn => {
+            const altLocSrc = fn.attributes.useLoc || fn.attributes.blockAliasFor;
+            const altLocSrcFn = altLocSrc && apis.byQName[altLocSrc];
+
+            if (fn.attributes._untranslatedJsDoc) fn.attributes.jsDoc = fn.attributes._untranslatedJsDoc;
+            if (fn.attributes._untranslatedBlock) fn.attributes.jsDoc = fn.attributes._untranslatedBlock;
+
+            const lookupLoc = (locSuff: string, attrKey: string) => {
+                return loc[fn.qName + locSuff] || fn.attributes.locs?.[attrKey]
+                    || (altLocSrcFn && (loc[altLocSrcFn.qName + locSuff] || altLocSrcFn.attributes.locs?.[attrKey]));
+            }
+
+            const locJsDoc = lookupLoc("", attrJsLocsKey);
+            if (locJsDoc) {
+                if (!fn.attributes._untranslatedJsDoc) {
+                    fn.attributes._untranslatedJsDoc = fn.attributes.jsDoc;
                 }
-                const nsDoc = loc['{id:category}' + Util.capitalize(fn.qName)];
-                let locBlock = loc[`${fn.qName}|block`] || attrLocs[attrBlockLocsKey];
+                fn.attributes.jsDoc = locJsDoc;
+            }
 
-                if (!locBlock && fn.attributes.useLoc) {
-                    const otherFn = apis.byQName[fn.attributes.useLoc];
+            fn.parameters?.forEach(pi => {
+                const paramSuff = `|param|${pi.name}`;
+                const paramLocs = lookupLoc(paramSuff, langLower + paramSuff);
 
-                    if (otherFn) {
-                        const otherTranslation = loc[`${otherFn.qName}|block`];
-                        const isSameBlockDef = fn.attributes.block === (otherFn.attributes._untranslatedBlock || otherFn.attributes.block);
-
-                        if (isSameBlockDef && !!otherTranslation) {
-                            locBlock = otherTranslation;
-                        }
-                    }
+                if (paramLocs) {
+                    pi.description = paramLocs;
                 }
+            });
 
-                let p = Promise.resolve();
-                if (locBlock && pxt.Util.isTranslationMode()) {
-                    // in translation mode, crowdin sends translation identifiers which break the block parsing
-                    // push identifier in DOM so that crowdin sends back the actual translation
-                    fn.attributes.translationId = locBlock;
-                    p = p.then(() => pxt.crowdin.inContextLoadAsync(locBlock))
-                        .then(r => { locBlock = r; });
+            const nsDoc = loc['{id:category}' + Util.capitalize(fn.qName)];
+            let locBlock = loc[`${fn.qName}|block`] || fn.attributes.locs?.[attrBlockLocsKey];
+
+            if (!locBlock && altLocSrcFn) {
+                const otherTranslation = loc[`${altLocSrcFn.qName}|block`] || altLocSrcFn.attributes.locs?.[attrBlockLocsKey];
+                const isSameBlockDef = fn.attributes.block === (altLocSrcFn.attributes._untranslatedBlock || altLocSrcFn.attributes.block);
+
+                if (isSameBlockDef && !!otherTranslation) {
+                    locBlock = otherTranslation;
                 }
-                return p.then(() => {
-                    if (nsDoc) {
-                        // Check for "friendly namespace"
-                        if (fn.attributes.block) {
-                            fn.attributes.block = locBlock || fn.attributes.block;
-                        } else {
-                            fn.attributes.block = nsDoc;
-                        }
-                    }
-                    else if (fn.attributes.block && locBlock) {
-                        const ps = pxt.blocks.compileInfo(fn);
-                        const oldBlock = fn.attributes.block;
-                        fn.attributes.block = pxt.blocks.normalizeBlock(locBlock, err => errors[`${fn.attributes.blockId}.${lang}`] = 1);
-                        fn.attributes._untranslatedBlock = oldBlock;
-                        if (oldBlock != fn.attributes.block) {
-                            const locps = pxt.blocks.compileInfo(fn);
-                            if (JSON.stringify(ps) != JSON.stringify(locps)) {
-                                pxt.log(`block has non matching arguments: ${oldBlock} vs ${fn.attributes.block}`)
-                                fn.attributes.block = oldBlock;
-                            }
-                        }
-                    }
+            }
+
+            if (locBlock && pxt.Util.isTranslationMode()) {
+                // in translation mode, crowdin sends translation identifiers which break the block parsing
+                // push identifier in DOM so that crowdin sends back the actual translation
+                fn.attributes.translationId = locBlock;
+                locBlock = await pxt.crowdin.inContextLoadAsync(locBlock);
+            }
+
+            if (nsDoc) {
+                // Check for "friendly namespace"
+                if (fn.attributes.block) {
+                    fn.attributes.block = locBlock || fn.attributes.block;
+                } else {
+                    fn.attributes.block = nsDoc;
+                }
+                updateBlockDef(fn.attributes);
+            } else if (fn.attributes.block && locBlock) {
+                const ps = pxt.blocks.compileInfo(fn);
+                const oldBlock = fn.attributes.block;
+                fn.attributes.block = pxt.blocks.normalizeBlock(locBlock, err => {
+                    pxt.tickEvent("loc.normalized", {
+                        block: fn.attributes.block,
+                        lang: lang,
+                        error: err,
+                    });
+                });
+                if (!fn.attributes._untranslatedBlock) {
+                    fn.attributes._untranslatedBlock = oldBlock;
+                }
+                if (oldBlock != fn.attributes.block) {
                     updateBlockDef(fn.attributes);
-                })
-            })))
-            .then(() => apis)
-            .finally(() => {
-                if (Object.keys(errors).length)
-                    pxt.reportError(`loc.errors`, `invalid translation`, errors);
-            })
+                    const locps = pxt.blocks.compileInfo(fn);
+                    if (!hasEquivalentParameters(ps, locps)) {
+                        pxt.reportError("loc.errors", "block has non matching arguments", {
+                            block: fn.attributes.blockId,
+                            lang: lang,
+                            originalDefinition: oldBlock,
+                            translatedBlock: fn.attributes.block,
+                        });
+                        pxt.tickEvent("loc.errors", {
+                            block: fn.attributes.blockId,
+                            lang: lang,
+                        });
+                        fn.attributes.block = oldBlock;
+                        updateBlockDef(fn.attributes);
+                    }
+                }
+            } else {
+                updateBlockDef(fn.attributes);
+            }
+            fn.attributes._translatedLanguageCode = lang;
+        });
+
+        return cleanLocalizations(apis);
+    }
+
+    function cleanLocalizations(apis: ApisInfo) {
+        Util.values(apis.byQName)
+            .filter(fb => fb.attributes.block && /^{[^:]+:[^}]+}/.test(fb.attributes.block))
+            .forEach(fn => { fn.attributes.block = fn.attributes.block.replace(/^{[^:]+:[^}]+}/, ''); });
+        return apis;
+    }
+
+    function hasEquivalentParameters(a: pxt.blocks.BlockCompileInfo, b: pxt.blocks.BlockCompileInfo) {
+        if (a.parameters.length != b.parameters.length) {
+            pxt.debug(`Localized block has extra or missing parameters`);
+            return false;
+        }
+
+        for (const aParam of a.parameters) {
+            const bParam = b.actualNameToParam[aParam.actualName];
+            if (!bParam
+                || aParam.type != bParam.type
+                || aParam.shadowBlockId != bParam.shadowBlockId
+                || aParam.definitionName != bParam.definitionName) {
+                pxt.debug(`Parameter ${aParam.actualName} type, shadow block, or definition name does not match after localization`);
+                return false;
+            }
+        }
+        return true;
     }
 
     export function emptyExtInfo(): ExtensionInfo {
         let cs = pxt.appTarget.compileService
         if (!cs) cs = {} as any
         const pio = !!cs.platformioIni;
-        const docker = cs.buildEngine == "dockermake" || cs.buildEngine == "dockercross";
+        const docker = cs.buildEngine == "dockermake" || cs.buildEngine == "dockercross" || cs.buildEngine == "dockerespidf";
         const r: ExtensionInfo = {
             functions: [],
             generatedFiles: {},
@@ -561,7 +834,7 @@ namespace ts.pxtc {
         return r;
     }
 
-    const numberAttributes = ["weight", "imageLiteral", "topblockWeight"]
+    const numberAttributes = ["weight", "imageLiteral", "gridLiteral", "topblockWeight", "inlineInputModeLimit"]
     const booleanAttributes = [
         "advanced",
         "handlerStatement",
@@ -576,7 +849,8 @@ namespace ts.pxtc {
         "topblock",
         "callInDebugger",
         "duplicateShadowOnDrag",
-        "argsNullable"
+        "argsNullable",
+        "compileHiddenArguments"
     ];
 
     export function parseCommentString(cmt: string): CommentAttrs {
@@ -588,7 +862,7 @@ namespace ts.pxtc {
         let didSomething = true
         while (didSomething) {
             didSomething = false
-            cmt = cmt.replace(/\/\/%[ \t]*([\w\.]+)(=(("[^"\n]*")|'([^'\n]*)'|([^\s]*)))?/,
+            cmt = cmt.replace(/\/\/%[ \t]*([\w\.-]+)(=(("[^"\n]*")|'([^'\n]*)'|([^\s]*)))?/,
                 (f: string, n: string, d0: string, d1: string,
                     v0: string, v1: string, v2: string) => {
                     let v = v0 ? JSON.parse(v0) : (d0 ? (v0 || v1 || v2) : "true");
@@ -615,6 +889,16 @@ namespace ts.pxtc {
                     } else if (U.endsWith(n, ".shadow")) {
                         if (!res._shadowOverrides) res._shadowOverrides = {};
                         res._shadowOverrides[n.slice(0, n.length - 7)] = v;
+                    } else if (U.endsWith(n, ".snippet")) {
+                        if (!res.paramSnippets) res.paramSnippets = {};
+                        const paramName = n.slice(0, n.length - 8);
+                        if (!res.paramSnippets[paramName]) res.paramSnippets[paramName] = {};
+                        res.paramSnippets[paramName].ts = v;
+                    } else if (U.endsWith(n, ".pySnippet")) {
+                        if (!res.paramSnippets) res.paramSnippets = {};
+                        const paramName = n.slice(0, n.length - 10);
+                        if (!res.paramSnippets[paramName]) res.paramSnippets[paramName] = {};
+                        res.paramSnippets[paramName].python = v;
                     } else if (U.endsWith(n, ".fieldEditor")) {
                         if (!res.paramFieldEditor) res.paramFieldEditor = {}
                         res.paramFieldEditor[n.slice(0, n.length - 12)] = v
@@ -739,6 +1023,10 @@ namespace ts.pxtc {
         updateBlockDef(res);
 
         return res
+    }
+
+    export function parameterTypeIsArrowFunction(pr: pxtc.ParameterDesc) {
+        return pr.type === "Action" || /^\([^\)]*\)\s*=>/.test(pr.type);
     }
 
     export function updateBlockDef(attrs: CommentAttrs) {
@@ -885,7 +1173,6 @@ namespace ts.pxtc {
                 pushLabels();
             }
 
-            /* tslint:disable:possible-timing-attack  (tslint thinks all variables named token are passwords...) */
             if (token == TokenKind.Parameter) {
                 const param: BlockParameter = { kind: "param", name: tokens[i].content, shadowBlockId: tokens[i].type, ref: false };
                 if (tokens[i].name) param.varName = tokens[i].name;
@@ -909,7 +1196,6 @@ namespace ts.pxtc {
             else if (token == TokenKind.Pipe) {
                 parts.push({ kind: "break" });
             }
-            /* tslint:enable:possible-timing-attack */
         }
 
         pushLabels();
@@ -1008,66 +1294,56 @@ namespace ts.pxtc {
         return !!((p as BlockPart).kind);
     }
 
-    // TODO should be internal
-    export namespace hex {
-        export function isSetupFor(extInfo: ExtensionInfo) {
-            return currentSetup == extInfo.sha
-        }
-
-        export let currentSetup: string = null;
-        export let currentHexInfo: pxtc.HexInfo;
-
-        export interface ChecksumBlock {
-            magic: number;
-            endMarkerPos: number;
-            endMarker: number;
-            regions: { start: number; length: number; checksum: number; }[];
-        }
-
-        export function parseChecksumBlock(buf: ArrayLike<number>, pos = 0): ChecksumBlock {
-            let magic = pxt.HF2.read32(buf, pos)
-            if ((magic & 0x7fffffff) != 0x07eeb07c) {
-                pxt.log("no checksum block magic")
-                return null
-            }
-            let endMarkerPos = pxt.HF2.read32(buf, pos + 4)
-            let endMarker = pxt.HF2.read32(buf, pos + 8)
-            if (endMarkerPos & 3) {
-                pxt.log("invalid end marker position")
-                return null
-            }
-            let pageSize = 1 << (endMarker & 0xff)
-            if (pageSize != pxt.appTarget.compile.flashCodeAlign) {
-                pxt.log("invalid page size: " + pageSize)
-                return null
-            }
-
-            let blk: ChecksumBlock = {
-                magic,
-                endMarkerPos,
-                endMarker,
-                regions: []
-            }
-
-            for (let i = pos + 12; i < buf.length - 7; i += 8) {
-                let r = {
-                    start: pageSize * pxt.HF2.read16(buf, i),
-                    length: pageSize * pxt.HF2.read16(buf, i + 2),
-                    checksum: pxt.HF2.read32(buf, i + 4)
-                }
-                if (r.length && r.checksum) {
-                    blk.regions.push(r)
-                } else {
-                    break
-                }
-            }
-
-            //console.log(hexDump(buf), blk)
-
-            return blk
-        }
-
+    export interface ChecksumBlock {
+        magic: number;
+        endMarkerPos: number;
+        endMarker: number;
+        regions: { start: number; length: number; checksum: number; }[];
     }
+
+    export function parseChecksumBlock(buf: ArrayLike<number>, pos = 0): ChecksumBlock {
+        let magic = pxt.HF2.read32(buf, pos)
+        if ((magic & 0x7fffffff) != 0x07eeb07c) {
+            pxt.log("no checksum block magic")
+            return null
+        }
+        let endMarkerPos = pxt.HF2.read32(buf, pos + 4)
+        let endMarker = pxt.HF2.read32(buf, pos + 8)
+        if (endMarkerPos & 3) {
+            pxt.log("invalid end marker position")
+            return null
+        }
+        let pageSize = 1 << (endMarker & 0xff)
+        if (pageSize != pxt.appTarget.compile.flashCodeAlign) {
+            pxt.log("invalid page size: " + pageSize)
+            return null
+        }
+
+        let blk: ChecksumBlock = {
+            magic,
+            endMarkerPos,
+            endMarker,
+            regions: []
+        }
+
+        for (let i = pos + 12; i < buf.length - 7; i += 8) {
+            let r = {
+                start: pageSize * pxt.HF2.read16(buf, i),
+                length: pageSize * pxt.HF2.read16(buf, i + 2),
+                checksum: pxt.HF2.read32(buf, i + 4)
+            }
+            if (r.length && r.checksum) {
+                blk.regions.push(r)
+            } else {
+                break
+            }
+        }
+
+        //pxt.log(hexDump(buf), blk)
+
+        return blk
+    }
+
 
     export namespace UF2 {
         export const UF2_MAGIC_START0 = 0x0A324655; // "UF2\n"
@@ -1112,7 +1388,7 @@ namespace ts.pxtc {
                 if (len >= 0) {
                     fnbuf = fnbuf.slice(0, len)
                 }
-                filename = U.fromUTF8(U.uint8ArrayToString(fnbuf))
+                filename = U.fromUTF8Array(fnbuf);
                 fileSize = wordAt(28)
             }
 
@@ -1264,7 +1540,7 @@ namespace ts.pxtc {
         }
 
         export function readBytesFromFile(f: BlockFile, addr: number, length: number): Uint8Array {
-            //console.log(`read @${addr} len=${length}`)
+            //pxt.log(`read @${addr} len=${length}`)
             let needAddr = addr >> 8
             let bl: Uint8Array
             if (needAddr == f.currPtr)
@@ -1334,8 +1610,11 @@ namespace ts.pxtc {
                     setWord(currBlock, 20, f.blocks.length)
                     setWord(currBlock, 28, f.familyId)
                     setWord(currBlock, 512 - 4, UF2_MAGIC_END)
+                    // if bytes are not written, leave them at erase value
+                    for (let i = 32; i < 32 + 256; ++i)
+                        currBlock[i] = 0xff
                     if (f.filename) {
-                        U.memcpy(currBlock, 32 + 256, U.stringToUint8Array(U.toUTF8(f.filename)))
+                        U.memcpy(currBlock, 32 + 256, U.toUTF8Array(f.filename))
                     }
                     f.blocks.push(currBlock)
                     f.ptrs.push(needAddr)
@@ -1381,13 +1660,17 @@ namespace ts.pxtc.service {
         fileContent?: string;
         infoType?: InfoType;
         position?: number;
+        wordStartPos?: number;
+        wordEndPos?: number;
         options?: CompileOptions;
         search?: SearchOptions;
         format?: FormatOptions;
         blocks?: BlocksOptions;
+        extensions?: ExtensionsOptions;
         projectSearch?: ProjectSearchOptions;
         snippet?: SnippetOptions;
         runtime?: pxt.RuntimeOptions;
+        light?: boolean; // in light mode?
     }
 
     export interface SnippetOptions {
@@ -1407,6 +1690,26 @@ namespace ts.pxtc.service {
         pos: number;
     }
 
+
+    export enum ExtensionType {
+        Bundled = 1,
+        Github = 2,
+        ShareScript = 3,
+    }
+
+    export interface ExtensionMeta {
+        name: string,
+        fullName?: string,
+        description?: string,
+        imageUrl?: string,
+        type?: ExtensionType
+        learnMoreUrl?: string;
+
+        pkgConfig?: pxt.PackageConfig; // Added if the type is Bundled
+        repo?: pxt.github.GitRepo; //Added if the type is Github VVN TODO ADD THIS
+        scriptInfo?: pxt.Cloud.JsonScript
+    }
+
     export interface SearchInfo {
         id: string;
         name: string;
@@ -1417,6 +1720,7 @@ namespace ts.pxtc.service {
         field?: [string, string];
         localizedCategory?: string;
         builtinBlock?: boolean;
+        params?: string;
     }
 
     export interface ProjectSearchOptions {
@@ -1431,5 +1735,8 @@ namespace ts.pxtc.service {
 
     export interface BlocksOptions {
         bannedCategories?: string[];
+    }
+    export interface ExtensionsOptions {
+        srcs: ExtensionMeta[];
     }
 }

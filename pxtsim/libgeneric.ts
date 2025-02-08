@@ -93,7 +93,7 @@ namespace pxsim {
         }
 
         print() {
-            //console.log(`RefCollection id:${this.id} refs:${this.refcnt} len:${this.data.length} d0:${this.data[0]}`)
+            //pxsim.log(`RefCollection id:${this.id} refs:${this.refcnt} len:${this.data.length} d0:${this.data[0]}`)
         }
     }
 
@@ -301,7 +301,7 @@ namespace pxsim {
             if (v instanceof RefRecord) {
                 if (v.vtable.toStringMethod) {
                     runtime.runFiberAsync(v.vtable.toStringMethod as any, v)
-                        .done(() => {
+                        .then(() => {
                             cb(runtime.currFrame.retval + "")
                         })
                     return
@@ -417,7 +417,11 @@ namespace pxsim {
         gcIsStatic() { return this.isStatic }
 
         print() {
-            // console.log(`RefBuffer id:${this.id} refs:${this.refcnt} len:${this.data.length} d0:${this.data[0]}`)
+            // pxsim.log(`RefBuffer id:${this.id} refs:${this.refcnt} len:${this.data.length} d0:${this.data[0]}`)
+        }
+
+        toDebugString(): string {
+            return BufferMethods.toHex(this);
         }
     }
 
@@ -543,6 +547,10 @@ namespace pxsim {
             return r
         }
 
+        export function isReadOnly(buf: RefBuffer) {
+            return buf.isStatic
+        }
+
         export function getBytes(buf: RefBuffer) {
             // not sure if this is any useful...
             return buf.data;
@@ -566,8 +574,15 @@ namespace pxsim {
             setByte(buf, off, v);
         }
 
+        function checkWrite(buf: RefBuffer) {
+            if (buf.isStatic) U.userError("Writing to read only buffer.")
+        }
+
         export function setByte(buf: RefBuffer, off: number, v: number) {
-            if (inRange(buf, off)) buf.data[off] = v
+            if (inRange(buf, off)) {
+                checkWrite(buf)
+                buf.data[off] = v
+            }
         }
 
         export function length(buf: RefBuffer) {
@@ -581,6 +596,7 @@ namespace pxsim {
                 length = buf.data.length;
             length = Math.min(length, buf.data.length - offset);
 
+            checkWrite(buf)
             buf.data.fill(value, offset, offset + length)
         }
 
@@ -603,7 +619,7 @@ namespace pxsim {
         }
 
         export function toString(buf: RefBuffer): string {
-            return U.fromUTF8(U.uint8ArrayToString(buf.data))
+            return U.fromUTF8Array(buf.data);
         }
 
         function memmove(dst: Uint8Array, dstOff: number, src: Uint8Array, srcOff: number, len: number) {
@@ -627,6 +643,7 @@ namespace pxsim {
                 return;
             }
 
+            checkWrite(buf)
             if (offset < 0) {
                 offset = -offset;
                 memmove(buf.data, start + offset, buf.data, start, len - offset);
@@ -643,6 +660,8 @@ namespace pxsim {
 
             if (start < 0 || start + len > buf.data.length || start + len < start
                 || len == 0 || offset == 0 || offset == INT_MIN) return;
+
+            checkWrite(buf)
 
             if (offset < 0)
                 offset += len << 8; // try to make it positive
@@ -680,6 +699,7 @@ namespace pxsim {
             if (length < 0)
                 return;
 
+            checkWrite(buf)
             memmove(buf.data, dstOffset, src.data, srcOffset, length)
         }
     }
@@ -687,6 +707,6 @@ namespace pxsim {
 
 namespace pxsim.control {
     export function createBufferFromUTF8(str: string) {
-        return new pxsim.RefBuffer(U.stringToUint8Array(U.toUTF8(str)));
+        return new pxsim.RefBuffer(U.toUTF8Array(str));
     }
 }

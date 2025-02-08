@@ -1,9 +1,10 @@
-/// <reference path="..\..\localtypings\pxtblockly.d.ts" />
-/// <reference path="..\..\built\pxtblocks.d.ts" />
+/// <reference path="..\..\localtypings\pxteditor.d.ts" />
 /// <reference path="..\..\built\pxtcompiler.d.ts" />
-/// <reference path="..\..\built\pxteditor.d.ts" />
 
 const WEB_PREFIX = "http://localhost:9876";
+
+import * as Blockly from "blockly";
+import * as pxtblockly from "../../pxtblocks";
 
 interface BlockTestCase {
     packageName: string;
@@ -11,9 +12,6 @@ interface BlockTestCase {
 }
 
 declare const testJSON: { libsTests: BlockTestCase[], commonTests: BlockTestCase[] };
-
-// Blockly crashes if this isn't defined
-(Blockly as any).Msg.DELETE_VARIABLE = "Delete the '%1' variable";
 
 // target.js should be embedded in the page
 pxt.setAppTarget((window as any).pxtTargetBundle);
@@ -25,6 +23,8 @@ pxt.webConfig = {
     workerjs: WEB_PREFIX + "/blb/worker.js",
     monacoworkerjs: undefined,
     gifworkerjs: undefined,
+    serviceworkerjs: undefined,
+    typeScriptWorkerJs: undefined,
     pxtVersion: undefined,
     pxtRelId: undefined,
     pxtCdnUrl: undefined,
@@ -36,9 +36,12 @@ pxt.webConfig = {
     targetUrl: undefined,
     targetId: undefined,
     simUrl: undefined,
+    simserviceworkerUrl: undefined,
+    simworkerconfigUrl: undefined,
     partsUrl: undefined,
     runUrl: undefined,
     docsUrl: undefined,
+    multiUrl: undefined,
     isStatic: undefined,
 };
 
@@ -51,7 +54,7 @@ class BlocklyCompilerTestHost implements pxt.Host {
                 .then(res => {
                     if (res.fieldEditors)
                         res.fieldEditors.forEach(fi => {
-                            pxt.blocks.registerFieldEditor(fi.selector, fi.editor, fi.validator);
+                            pxtblockly.registerFieldEditor(fi.selector, fi.editor, fi.validator);
                         })
                 })
                 .then(() => new BlocklyCompilerTestHost())
@@ -84,7 +87,7 @@ class BlocklyCompilerTestHost implements pxt.Host {
     }
 
     getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
-        return pxt.hex.getHexInfoAsync(this, extInfo)
+        return pxt.hexloader.getHexInfoAsync(this, extInfo)
     }
 
     cacheStoreAsync(id: string, val: string): Promise<void> {
@@ -100,7 +103,8 @@ class BlocklyCompilerTestHost implements pxt.Host {
     }
 }
 
-function fail(msg: string) {
+// @ts-ignore
+function fail(msg: string): never {
     chai.assert(false, msg);
 }
 
@@ -127,7 +131,7 @@ function getBlocksInfoAsync(): Promise<pxtc.BlocksInfo> {
             // decompile to blocks
             let apis = pxtc.getApiInfo(resp.ast, opts.jres);
             let blocksInfo = pxtc.getBlocksInfo(apis);
-            pxt.blocks.initializeAndInject(blocksInfo);
+            pxtblockly.initializeAndInject(blocksInfo);
 
             cachedBlocksInfo = blocksInfo;
 
@@ -141,7 +145,7 @@ function testXmlAsync(blocksfile: string) {
         .then(blocksInfo => {
             const workspace = new Blockly.Workspace();
             (Blockly as any).mainWorkspace = workspace;
-            const xml = Blockly.Xml.textToDom(blocksfile);
+            const xml = Blockly.utils.xml.textToDom(blocksfile);
 
             try {
                 Blockly.Xml.domToWorkspace(xml, workspace);
@@ -153,7 +157,7 @@ function testXmlAsync(blocksfile: string) {
                 fail(e.message);
             }
 
-            const err = compareBlocklyTrees(xml, Blockly.Xml.workspaceToDom(workspace));
+            const err = compareBlocklyTrees(xml, pxtblockly.workspaceToDom(workspace));
             if (err) {
                 fail(`XML mismatch (${err.reason}) ${err.chain} \n See https://makecode.com/develop/blockstests for more info`);
             }
@@ -256,7 +260,7 @@ function initAsync() {
             .then(res => {
                 if (res.fieldEditors)
                     res.fieldEditors.forEach(fi => {
-                        pxt.blocks.registerFieldEditor(fi.selector, fi.editor, fi.validator);
+                        pxtblockly.registerFieldEditor(fi.selector, fi.editor, fi.validator);
                     })
             })
     }

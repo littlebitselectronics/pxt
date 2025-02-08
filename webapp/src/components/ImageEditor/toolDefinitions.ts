@@ -1,5 +1,4 @@
-import { ImageEditorTool } from "./store/imageReducer";
-import { Coord, Bitmap, Bitmask, ImageState } from "./store/bitmap";
+import { ImageEditorTool, TileDrawingMode } from "./store/imageReducer";
 
 export enum ToolCursor {
     None = "none",
@@ -8,7 +7,7 @@ export enum ToolCursor {
     Crosshair = "crosshair",
     Grab = "grab",
     Grabbing = "grabbing",
-    EyeDropper = ""
+    EyeDropper = "var(--eyedropper)"
 }
 
 export interface ToolInfo {
@@ -53,14 +52,12 @@ export const tools: ToolInfo[] = [
     },
     {
         tool: ImageEditorTool.Circle,
-        hiddenTool: true,
         iconClass: "ms-Icon ms-Icon--CircleRing",
         title: lf("Circle Tool"),
         hoverCursor: ToolCursor.Crosshair,
     },
     {
         tool: ImageEditorTool.Line,
-        hiddenTool: true,
         iconClass: "ms-Icon ms-Icon--Line",
         title: lf("Line Tool"),
         hoverCursor: ToolCursor.Crosshair,
@@ -79,6 +76,13 @@ export const tools: ToolInfo[] = [
         title: lf("Canvas Pan Tool"),
         hoverCursor: ToolCursor.Grab,
         downCursor: ToolCursor.Grabbing
+    },
+    {
+        tool: ImageEditorTool.ColorSelect,
+        hiddenTool: true,
+        iconClass: "ms-Icon ms-Icon--Edit",
+        title: lf("Color Select Tool"),
+        hoverCursor: ToolCursor.EyeDropper
     }
 ];
 
@@ -106,23 +110,42 @@ export function getEdit(tool: ImageEditorTool, state: EditState, color: number, 
     }
 }
 
-export function getEditState(state: ImageState): EditState {
-    const res = new EditState(Bitmap.fromData(state.bitmap).copy());
+export function getEditState(state: pxt.sprite.ImageState, isTilemap: boolean, drawingMode: TileDrawingMode = TileDrawingMode.Default): EditState {
+    const res =  new EditState(isTilemap
+        ? pxt.sprite.Tilemap.fromData(state.bitmap).copy()
+        : pxt.sprite.Bitmap.fromData(state.bitmap).copy());
+    if (state.overlayLayers) res.overlayLayers = state.overlayLayers.map(layer => pxt.sprite.Bitmap.fromData(layer).copy());
     res.layerOffsetX = state.layerOffsetX;
     res.layerOffsetY = state.layerOffsetY;
 
-    if (state.floatingLayer) res.floatingLayer = Bitmap.fromData(state.floatingLayer).copy();
+    let floating, image, overlayLayers;
+    if (state.floating) {
+        if (state.floating.bitmap)
+            image = isTilemap ? pxt.sprite.Tilemap.fromData(state.floating.bitmap).copy() : pxt.sprite.Bitmap.fromData(state.floating.bitmap).copy();
+        if (state.floating.overlayLayers)
+            overlayLayers = state.floating.overlayLayers.map(el => pxt.sprite.Bitmap.fromData(el).copy());
+        floating = { image, overlayLayers };
+    }
+    res.floating = floating;
+
+    res.setActiveLayer(drawingMode);
 
     return res;
 }
 
 export class EditState {
-    image: Bitmap;
-    floatingLayer: Bitmap;
+    image: pxt.sprite.Bitmap;
+    overlayLayers?: pxt.sprite.Bitmap[];
+    floating: {
+        image: pxt.sprite.Bitmap;
+        overlayLayers?: pxt.sprite.Bitmap[];
+    }
     layerOffsetX: number;
     layerOffsetY: number;
 
-    constructor(bitmap?: Bitmap) {
+    protected activeLayerIndex: number = -1;
+
+    constructor(bitmap?: pxt.sprite.Bitmap) {
         this.image = bitmap;
         this.layerOffsetX = 0;
         this.layerOffsetY = 0;
@@ -136,12 +159,35 @@ export class EditState {
         return this.image.height;
     }
 
+    get activeLayer(): pxt.sprite.Bitmap {
+        if (this.activeLayerIndex < 0) {
+            return this.image;
+        } else {
+            return this.overlayLayers[this.activeLayerIndex];
+        }
+    }
+
+    setActiveLayer(drawingMode: TileDrawingMode) {
+        switch (drawingMode) {
+            case TileDrawingMode.Wall:
+                this.activeLayerIndex = 0;
+                break;
+            default:
+                this.activeLayerIndex = -1;
+                break;
+        }
+    }
+
     copy() {
         const res = new EditState();
         res.image = this.image.copy();
+        res.overlayLayers = this.overlayLayers && this.overlayLayers.map(layer => layer.copy());
 
-        if (this.floatingLayer) {
-            res.floatingLayer = this.floatingLayer.copy();
+        if (this.floating) {
+            let image, overlayLayers;
+            if (this.floating.image) image = this.floating.image.copy();
+            if (this.floating.overlayLayers) overlayLayers = this.floating.overlayLayers.map(el => el.copy());
+            res.floating = { image: image, overlayLayers: overlayLayers };
             // res.floatingLayer.x0 = this.layerOffsetX;
             // res.floatingLayer.y0 = this.layerOffsetY;
         }
@@ -152,21 +198,33 @@ export class EditState {
     }
 
     equals(other: EditState) {
-        if (!this.image.equals(other.image) || (this.floatingLayer && !other.floatingLayer) || (!this.floatingLayer && other.floatingLayer)) return false;
+        // todo add overlay layers
+        if (!this.image.equals(other.image) || (this.floating && !other.floating) || (!this.floating && other.floating)) return false;
 
-        if (this.floatingLayer) return this.floatingLayer.equals(other.floatingLayer) && this.layerOffsetX === other.layerOffsetX && this.layerOffsetY === other.layerOffsetY;
+        if (this.floating && this.floating.image) return this.floating.image.equals(other.floating.image) && this.layerOffsetX === other.layerOffsetX && this.layerOffsetY === other.layerOffsetY;
 
         return true;
     }
 
     mergeFloatingLayer() {
-        if (!this.floatingLayer) return;
+        if (!this.floating || (!this.floating.image && !this.floating.overlayLayers)) return;
 
-        this.floatingLayer.x0 = this.layerOffsetX;
-        this.floatingLayer.y0 = this.layerOffsetY;
+        if (this.floating.image) {
+            this.floating.image.x0 = this.layerOffsetX;
+            this.floating.image.y0 = this.layerOffsetY;
 
-        this.image.apply(this.floatingLayer, true);
-        this.floatingLayer = undefined;
+            this.image.apply(this.floating.image, true);
+            this.floating.image = undefined;
+        }
+
+        if (this.floating.overlayLayers) {
+            this.floating.overlayLayers.forEach((el, i) => {
+                el.x0 = this.layerOffsetX;
+                el.y0 = this.layerOffsetY;
+                this.overlayLayers[i].apply(el, true);
+            })
+            this.floating.overlayLayers = undefined;
+        }
     }
 
     copyToLayer(left: number, top: number, width: number, height: number, cut = false) {
@@ -182,37 +240,72 @@ export class EditState {
             height = -height;
         }
 
-        this.floatingLayer = this.image.copy(left, top, width, height);
-        this.layerOffsetX = this.floatingLayer.x0;
-        this.layerOffsetY = this.floatingLayer.y0;
+        let image = this.image.copy(left, top, width, height);
+        this.layerOffsetX = image.x0;
+        this.layerOffsetY = image.y0;
 
-        this.floatingLayer.x0 = undefined;
-        this.floatingLayer.y0 = undefined;
+        image.x0 = undefined;
+        image.y0 = undefined;
+
+        let overlayLayers;
+        if (this.overlayLayers) {
+            overlayLayers = this.overlayLayers.map(el => el.copy(left, top, width, height));
+        }
 
         if (cut) {
             for (let c = 0; c < width; c++) {
                 for (let r = 0; r < height; r++) {
                     this.image.set(left + c, top + r, 0);
+                    if (this.overlayLayers)
+                        this.overlayLayers.forEach(el => el.set(left + c, top + r, 0));
                 }
             }
         }
+
+        this.floating = { image: image, overlayLayers: overlayLayers }
     }
 
     inFloatingLayer(col: number, row: number) {
-        if (!this.floatingLayer) return false;
+        if (!this.floating || !this.floating.image) return false;
 
         col = col - this.layerOffsetX;
         row = row - this.layerOffsetY;
 
-        return col >= 0 && col < this.floatingLayer.width && row >= 0 && row < this.floatingLayer.height;
+        return col >= 0 && col < this.floating.image.width && row >= 0 && row < this.floating.image.height;
+    }
+
+    setFloatingLayer(floatingImage: pxt.sprite.Bitmap, offset?: { layerOffsetX: number, layerOffsetY: number }, merge?: boolean) {
+        if (merge) {
+            this.mergeFloatingLayer();
+        }
+
+        this.floating = { image: floatingImage };
+        this.layerOffsetX = offset?.layerOffsetX ?? 0;
+        this.layerOffsetY = offset?.layerOffsetY ?? 0;
+    }
+
+    toImageState(): pxt.sprite.ImageState {
+        return {
+            bitmap: this.image.data(),
+            layerOffsetX: this.layerOffsetX,
+            layerOffsetY: this.layerOffsetY,
+            floating: this.floating && {
+                bitmap: this.floating.image ? this.floating.image.data() : undefined,
+                overlayLayers: this.floating.overlayLayers ? this.floating.overlayLayers.map(el => el.data()) : undefined
+            },
+            overlayLayers: this.overlayLayers ? this.overlayLayers.map(el => el.data()) : undefined
+        };
     }
 }
 
 export abstract class Edit {
     protected startCol: number;
     protected startRow: number;
+    protected startX: number;
+    protected startY: number;
     isStarted: boolean;
     showPreview: boolean;
+    originalImage: pxt.sprite.Bitmap
 
     constructor (protected canvasWidth: number, protected canvasHeight: number, public color: number, protected toolWidth: number) {
     }
@@ -231,10 +324,12 @@ export abstract class Edit {
     }
 
 
-    start(cursorCol: number, cursorRow: number, state: EditState) {
+    start(cursorCol: number, cursorRow: number, cursorX: number, cursorY: number, state: EditState) {
         this.isStarted = true;
         this.startCol = cursorCol;
         this.startRow = cursorRow;
+        this.startX = cursorX;
+        this.startY = cursorY;
     }
 
     drawCursor(col: number, row: number, draw: (c: number, r: number) => void) {
@@ -256,14 +351,14 @@ export abstract class SelectionEdit extends Edit {
         }
     }
 
-    protected topLeft(): Coord {
+    protected topLeft(): pxt.sprite.Coord {
         return {
             x: Math.min(this.startCol, this.endCol),
             y: Math.min(this.startRow, this.endRow)
         };
     }
 
-    protected bottomRight(): Coord {
+    protected bottomRight(): pxt.sprite.Coord {
         return {
             x: Math.max(this.startCol, this.endCol),
             y: Math.max(this.startRow, this.endRow)
@@ -275,12 +370,12 @@ export abstract class SelectionEdit extends Edit {
  * Regular old drawing tool
  */
 export class PaintEdit extends Edit {
-    protected mask: Bitmask;
+    protected mask: pxt.sprite.Bitmask;
     showPreview = true;
 
     constructor (canvasWidth: number, canvasHeight: number, color: number, toolWidth: number) {
         super(canvasWidth, canvasHeight, color, toolWidth);
-        this.mask = new Bitmask(canvasWidth, canvasHeight);
+        this.mask = new pxt.sprite.Bitmask(canvasWidth, canvasHeight);
     }
 
     update(col: number, row: number) {
@@ -329,7 +424,7 @@ export class PaintEdit extends Edit {
         for (let c = 0; c < state.width; c++) {
             for (let r = 0; r < state.height; r++) {
                 if (this.mask.get(c, r)) {
-                    state.image.set(c, r, this.color);
+                    state.activeLayer.set(c, r, this.color);
                 }
             }
         }
@@ -367,7 +462,7 @@ export class RectangleEdit extends SelectionEdit {
         const br = this.bottomRight();
         for (let c = tl.x; c <= br.x; c++) {
             for (let r = tl.y; r <= br.y; r++) {
-                state.image.set(c, r, this.color);
+                state.activeLayer.set(c, r, this.color);
             }
         }
     }
@@ -397,16 +492,16 @@ export class OutlineEdit extends SelectionEdit {
         }
     }
 
-    protected drawRectangle(state: EditState, tl: Coord, br: Coord) {
+    protected drawRectangle(state: EditState, tl: pxt.sprite.Coord, br: pxt.sprite.Coord) {
         if (tl.x > br.x || tl.y > br.y) return;
 
         for (let c = tl.x; c <= br.x; c++) {
-            state.image.set(c, tl.y, this.color);
-            state.image.set(c, br.y, this.color);
+            state.activeLayer.set(c, tl.y, this.color);
+            state.activeLayer.set(c, br.y, this.color);
         }
         for (let r = tl.y; r <= br.y; r++) {
-            state.image.set(tl.x, r, this.color);
-            state.image.set(br.x, r, this.color);
+            state.activeLayer.set(tl.x, r, this.color);
+            state.activeLayer.set(br.x, r, this.color);
         }
     }
 
@@ -446,7 +541,7 @@ export class LineEdit extends SelectionEdit {
     protected bresenham(x0: number, y0: number, x1: number, y1: number, state: EditState) {
         const dx = x1 - x0;
         const dy = y1 - y0;
-        const draw = (c: number, r: number) => state.image.set(c, r, this.color);
+        const draw = (c: number, r: number) => state.activeLayer.set(c, r, this.color);
         if (dx === 0) {
             const startY = dy >= 0 ? y0 : y1;
             const endY = dy >= 0 ? y1 : y0;
@@ -522,14 +617,14 @@ export class CircleEdit extends SelectionEdit {
         let dy = 1;
         let err = dx - (radius * 2);
         while (x >= y) {
-            state.image.set(cx + x, cy + y, this.color);
-            state.image.set(cx + x, cy - y, this.color);
-            state.image.set(cx + y, cy + x, this.color);
-            state.image.set(cx + y, cy - x, this.color);
-            state.image.set(cx - y, cy + x, this.color);
-            state.image.set(cx - y, cy - x, this.color);
-            state.image.set(cx - x, cy + y, this.color);
-            state.image.set(cx - x, cy - y, this.color);
+            state.activeLayer.set(cx + x, cy + y, this.color);
+            state.activeLayer.set(cx + x, cy - y, this.color);
+            state.activeLayer.set(cx + y, cy + x, this.color);
+            state.activeLayer.set(cx + y, cy - x, this.color);
+            state.activeLayer.set(cx - y, cy + x, this.color);
+            state.activeLayer.set(cx - y, cy - x, this.color);
+            state.activeLayer.set(cx - x, cy + y, this.color);
+            state.activeLayer.set(cx - x, cy - y, this.color);
             if (err <= 0) {
                 y++;
                 err += dy;
@@ -550,7 +645,7 @@ export class FillEdit extends Edit {
     protected row: number;
     showPreview = true;
 
-    start(col: number, row: number, state: EditState) {
+    start(col: number, row: number, cursorX: number, cursorY: number, state: EditState) {
         this.isStarted = true;
         this.col = col;
         this.row = row;
@@ -562,19 +657,23 @@ export class FillEdit extends Edit {
     }
 
     protected doEditCore(state: EditState) {
-        const replColor = state.image.get(this.col, this.row);
-        if (replColor === this.color) {
+        const includeActiveLayerData = state.activeLayer !== state.image;
+        const getData = (col: number, row: number) => (includeActiveLayerData ? (state.activeLayer.get(col, row) + 1) << 8 : 0) + state.image.get(col, row);
+
+        const colorToReplace = getData(this.col, this.row);
+        if (colorToReplace === this.color) {
             return;
         }
+
         state.mergeFloatingLayer();
 
-        const mask = new Bitmask(state.width, state.height);
+        const mask = new pxt.sprite.Bitmask(state.width, state.height);
         mask.set(this.col, this.row);
-        const q: Coord[] = [{x: this.col, y: this.row}];
+        const q: pxt.sprite.Coord[] = [{x: this.col, y: this.row}];
         while (q.length) {
             const curr = q.pop();
-            if (state.image.get(curr.x, curr.y) === replColor) {
-                state.image.set(curr.x, curr.y, this.color);
+            if (getData(curr.x, curr.y) === colorToReplace) {
+                state.activeLayer.set(curr.x, curr.y, this.color);
                 tryPush(curr.x + 1, curr.y);
                 tryPush(curr.x - 1, curr.y);
                 tryPush(curr.x, curr.y + 1);
@@ -594,17 +693,52 @@ export class FillEdit extends Edit {
 
 export class MarqueeEdit extends SelectionEdit {
     protected isMove = false;
+    protected isResize = false;
     showPreview = false;
 
     protected startOffsetX: number;
     protected startOffsetY: number;
+    protected anchorCol: number;
+    protected anchorRow: number;
 
-    start(cursorCol: number, cursorRow: number, state: EditState) {
+    start(cursorCol: number, cursorRow: number, cursorX: number, cursorY: number, state: EditState) {
         this.isStarted = true;
         this.startCol = cursorCol;
         this.startRow = cursorRow;
-        if (state.floatingLayer) {
-            if (state.inFloatingLayer(cursorCol, cursorRow)) {
+
+        const div = document.elementFromPoint(cursorX, cursorY)
+
+        if (state.floating && state.floating.image) {
+            if (div && div.className == "image-editor-floating-layer-corner") {
+                this.isResize = true;
+                this.startOffsetX = state.layerOffsetX;
+                this.startOffsetY = state.layerOffsetY;
+                let farthestCorner = undefined;
+                let farthestCornerDistance = 0;
+                const corners = document.getElementsByClassName("image-editor-floating-layer-corner")
+                for (let i = 0; i < corners.length; i++) {
+                    let distance = Math.sqrt(Math.pow(corners[i].getBoundingClientRect().x - cursorX, 2) + Math.pow(corners[i].getBoundingClientRect().y - cursorY, 2))
+                    if (distance > farthestCornerDistance) {
+                        farthestCornerDistance = distance;
+                        farthestCorner = corners[i];
+                    }
+                }
+                const surfaces = document.getElementsByClassName("paint-surface")
+                let canvas: HTMLCanvasElement;
+                for (let i = 0; i < surfaces.length; i++) {
+                    if (surfaces[i].className.includes('main')) {
+                        canvas = surfaces[i] as HTMLCanvasElement
+                    }
+                }
+                const canvasLeft = canvas.getBoundingClientRect().left;
+                const canvasTop = canvas.getBoundingClientRect().top;
+                const canvasWidth = canvas.getBoundingClientRect().width;
+                const canvasHeight = canvas.getBoundingClientRect().height;
+                this.anchorCol = ((farthestCorner.getBoundingClientRect().x - canvasLeft) / canvasWidth) * this.canvasWidth;
+                this.anchorRow = ((farthestCorner.getBoundingClientRect().y - canvasTop) / canvasHeight) * this.canvasHeight;
+                if (!this.originalImage)
+                    this.originalImage = state.floating.image.copy();
+            } else if (state.inFloatingLayer(cursorCol, cursorRow)) {
                 this.isMove = true;
                 this.startOffsetX = state.layerOffsetX;
                 this.startOffsetY = state.layerOffsetY;
@@ -617,6 +751,19 @@ export class MarqueeEdit extends SelectionEdit {
     }
 
     protected doEditCore(state: EditState): void {
+        function resize(bitmap: pxt.sprite.Bitmap, newWidth: number, newHeight: number): pxt.sprite.Bitmap {
+            const image = new pxt.sprite.Bitmap(newWidth, newHeight, 0, 0)
+            for (let x = 0; x < newWidth; x++) {
+                for (let y = 0; y < newHeight; y++) {
+                    const nnX = Math.floor(((x / newWidth) * bitmap.width))
+                    const nnY = Math.floor((( y / newHeight) * bitmap.height))
+
+                    const nearestNeighborColor = bitmap.get(nnX, nnY)
+                    image.set(x, y, nearestNeighborColor)
+                }
+            }
+            return image;
+        }
         const tl = this.topLeft();
         const br = this.bottomRight();
 
@@ -624,14 +771,156 @@ export class MarqueeEdit extends SelectionEdit {
             if (this.isMove) {
                 state.layerOffsetX = this.startOffsetX + this.endCol - this.startCol;
                 state.layerOffsetY = this.startOffsetY + this.endRow - this.startRow;
-            }
-            else {
+            } else if (this.isResize) {
+                const resizedWidth = Math.round(Math.abs(this.anchorCol - this.endCol))
+                const resizedHeight = Math.round(Math.abs(this.anchorRow - this.endRow))
+                const resizedImage = resize(this.originalImage, resizedWidth, resizedHeight)
+                state.setFloatingLayer(resizedImage, {layerOffsetX: Math.round(Math.min(this.anchorCol, this.endCol)),
+                        layerOffsetY: Math.round(Math.min(this.anchorRow, this.endRow))}, false);
+            } else {
                 state.mergeFloatingLayer();
                 state.copyToLayer(tl.x, tl.y, br.x - tl.x + 1, br.y - tl.y + 1, true);
             }
-        }
-        else if (!this.isMove) {
+        } else if (!this.isMove) {
             state.mergeFloatingLayer();
         }
     }
+}
+
+export function rotateEdit(image: EditState, clockwise: boolean, isTilemap: boolean, toFloatingLayer: boolean) {
+    const hasFloatingLayer = !!image.floating?.image;
+    const source = hasFloatingLayer ? image.floating : image;
+
+    const newImage = isTilemap ? new pxt.sprite.Tilemap(source.image.height, source.image.width) :
+        new pxt.sprite.Bitmap(source.image.height, source.image.width);
+    const newOverlayLayers = source.overlayLayers ? source.overlayLayers.map(layer => new pxt.sprite.Bitmap(layer.height, layer.width)) : undefined;
+
+    for (let x = 0; x < source.image.width; x++) {
+        for (let y = 0; y < source.image.height; y++) {
+            rotatePixel(source.image, newImage, x, y);
+            if (newOverlayLayers) {
+                newOverlayLayers.forEach((layer, i) => rotatePixel(source.overlayLayers[i], layer, x, y));
+            }
+        }
+    }
+
+    const isSquareFullImageRotate = newImage.width === newImage.height && newImage.width === image.image.width && image.image.width === image.image.height;
+
+    if ((toFloatingLayer || hasFloatingLayer) && !isSquareFullImageRotate) {
+        if (!hasFloatingLayer) {
+            for (let x = 0; x < image.width; x++) {
+                for (let y = 0; y < image.height; y++) {
+                    image.image.set(x, y, 0);
+                    if (image.overlayLayers) image.overlayLayers.forEach(layer => layer?.set(x, y, 0))
+                }
+            }
+        }
+
+        // If this is a full sized image, center it on the canvas
+        if (newImage.width === image.image.height && newImage.height === image.image.width || newImage.width === image.image.width && newImage.height === image.image.height) {
+            image.layerOffsetX = (image.width >> 1) - (newImage.width >> 1);
+            image.layerOffsetY = (image.height >> 1) - (newImage.height >> 1);
+        }
+
+        image.floating = {
+            image: newImage,
+            overlayLayers: newOverlayLayers
+        };
+    }
+    else {
+        const rotated = new EditState(newImage);
+        rotated.overlayLayers = newOverlayLayers;
+        return rotated;
+    }
+
+
+    return image;
+
+
+    function rotatePixel(src: pxt.sprite.Bitmap, dest: pxt.sprite.Bitmap, x: number, y: number) {
+        if (clockwise) {
+            dest.set(y, x, src.get(x, src.height - y - 1))
+        }
+        else {
+            dest.set(y, x, src.get(src.width - x - 1, y))
+        }
+    }
+}
+
+export function flipEdit(image: EditState, vertical: boolean, isTilemap: boolean) {
+    const source = image.floating?.image ? image.floating : image;
+
+    const newImage = isTilemap ? new pxt.sprite.Tilemap(source.image.width, source.image.height) :
+        new pxt.sprite.Bitmap(source.image.width, source.image.height);
+    const newOverlayLayers = source.overlayLayers ? source.overlayLayers.map(layer => new pxt.sprite.Bitmap(layer.width, layer.height)) : undefined;
+
+    for (let x = 0; x < source.image.width; x++) {
+        for (let y = 0; y < source.image.height; y++) {
+            flipPixel(source.image, newImage, x, y);
+            if (newOverlayLayers) {
+                newOverlayLayers.forEach((layer, i) => flipPixel(source.overlayLayers[i], layer, x, y));
+            }
+        }
+    }
+
+    if (image.floating?.image) {
+        image.floating = {
+            image: newImage,
+            overlayLayers: newOverlayLayers
+        };
+        return image;
+
+    }
+    else {
+        const edit = new EditState(newImage);
+        edit.overlayLayers = newOverlayLayers;
+        return edit;
+    }
+
+
+    function flipPixel(src: pxt.sprite.Bitmap, dest: pxt.sprite.Bitmap, x: number, y: number) {
+        if (vertical) {
+            dest.set(x, y, src.get(x, src.height - y - 1))
+        }
+        else {
+            dest.set(x, y, src.get(src.width - x - 1, y))
+        }
+    }
+}
+
+export function outlineEdit(image: EditState, color: number) {
+    const source = image.floating?.image ? image.floating : image;
+    const out = image.copy();
+
+    const newImage = image?.floating?.image ? out.floating.image : out.image;
+
+    for (let x = 0; x < source.image.width; x++) {
+        for (let y = 0; y < source.image.height; y++) {
+            if (source.image.get(x, y) === 0) {
+                if (source.image.get(x - 1, y) !== 0 || source.image.get(x, y - 1) !== 0 ||
+                    source.image.get(x + 1, y) !== 0 || source.image.get(x, y + 1) !== 0) {
+                    newImage.set(x, y, color);
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+export function replaceColorEdit(image: EditState, fromColor: number, toColor: number) {
+    const source = image.floating?.image ? image.floating : image;
+    const out = image.copy();
+
+    const newImage = image?.floating?.image ? out.floating.image : out.image;
+
+    for (let x = 0; x < source.image.width; x++) {
+        for (let y = 0; y < source.image.height; y++) {
+            if (source.image.get(x, y) === fromColor) {
+                newImage.set(x, y, toColor);
+            }
+        }
+    }
+
+    return out;
 }

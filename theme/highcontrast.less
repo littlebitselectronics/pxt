@@ -11,6 +11,7 @@
 
 @selected: yellow;
 @disabled: #3ff23f;
+@hyperlink: #807FFF;
 
 /* Messages */
 #msg .hc {
@@ -61,6 +62,35 @@
         }
     }
 
+    p {
+        color: @HCtextColor !important;
+        background-color: @HCbackground !important;
+    }
+
+    /* semantic */
+    .ui.toggle.checkbox .box, .ui.toggle.checkbox label,
+    .ui.toggle.checkbox input:focus:checked~.box, .ui.toggle.checkbox input:focus:checked~label,
+    .ui.checkbox+label, .ui.checkbox label,
+    .ui.items>.item .meta {
+        color: @HCtextColor !important;
+    }
+    p > a.ui.link {
+        text-decoration: underline;
+    }
+
+    ul > li {
+        color: @HCtextColor;
+    }
+
+    #tutorialcard .prevbutton,
+    #tutorialcard .nextbutton {
+        &:hover, &:focus {
+            > i, > span, > i.orange {
+                color: @HCtextColor !important;
+            }
+        }
+    }
+
     @media all and (pointer:coarse) { /* If touch screen */
         *[tabindex='0'],
         *[tabindex*='d1'],
@@ -87,7 +117,7 @@
         }
     }
 
-    /* Blockly toolbox */
+    /* Toolbox */
     .pxtToolbox:not(.invertedToolbox) {
         span.blocklyTreeLabel {
             color: @HCblocklyTreeLabelColor;
@@ -101,15 +131,81 @@
         }
     }
 
+    .pxtToolbox {
+        .blocklyTreeRow:not(.blocklyTreeSelected) {
+            background-color: @HCblocklyToolboxColor !important;
+        }
+    }
+
+    .toolbox-title {
+        background-color: @HCbackground;
+        color: @HCtextColor;
+    }
+
+    #monacoEditor .monacoDraggableBlock {
+        background: none !important;
+
+        span.argName {
+            border: 1px solid rgba(255, 255, 255, .7);
+        }
+    }
+
+    /* ErrorList */
+    .errorList {
+        background-color: @HCbackground !important;
+        color: @HCtextColor !important;
+
+        .errorListHeader:focus {
+            border: 1px @selected solid !important;
+        }
+
+        .errorListInner {
+            .ui.selection.list > .item {
+                background-color: @HCbackground !important;
+                color: @HCtextColor !important;
+                border: 1px solid @HCtextColor !important;
+
+                &:focus {
+                    border: 1px solid @selected!important;
+                }
+            }
+
+            .debuggerSuggestion {
+                color: @HCtextColor !important;
+            }
+
+            .label {
+                color: @HCtextColor !important;
+            }
+        }
+    }
+
     /* Blockly flyout */
     path.blocklyFlyoutBackground {
         fill-opacity: 1 !important;
         stroke-width: 4px;
         stroke: @HCblocklyTreeLabelColor;
     }
+
+    .blocklyFlyoutButton .blocklyText {
+        fill: @HCtextColor !important;
+    }
+
     .monacoFlyout {
         background: @HCblocklySvgColor !important;
         border-right: 4px solid @HCtextColor !important;
+
+        .monacoBlock {
+            color: @HCtextColor !important;
+        }
+        .blockHandle {
+            background: @HCblocklySvgColor !important;
+        }
+    }
+
+    .blocklyFlyoutButtonBackground {
+        stroke: @HCtextColor !important;
+        fill: transparent !important;
     }
 
     /* Main editor areas */
@@ -117,7 +213,7 @@
     #root {
         background: @HCRootBackground !important;
     }
-    #filelist {
+    #simulator .editor-sidebar {
         background: @HCsimulatorBackground !important;
 
         #boardview {
@@ -125,7 +221,7 @@
         }
     }
     svg.blocklySvg {
-        background-color: @HCblocklySvgColor !important;
+        background: @HCblocklySvgColor !important;
     }
 
     .blocklyMainBackground {
@@ -140,6 +236,14 @@
         stroke-width: 3px;
     }
 
+    .cloudstatusarea {
+        color: @HCtextColor !important;
+
+        .ui.loader:after {
+            border-top-color: @HCtextColor !important;
+        }
+    }
+
     /* Menu bar */
     .menubar .menu > .item:focus > i,
     .menubar .menu > .item:focus > span {
@@ -150,7 +254,7 @@
         color: @HCbackground !important;
     }
 
-    #mainmenu:not(.inverted), #homemenu:not(.inverted) {
+    #mainmenu:not(.inverted) {
         background-color: @HCmainMenuBackground !important;
         color: @HCmainMenuTextColor !important;
         border-bottom: 4px solid @HCtextColor;
@@ -162,16 +266,71 @@
             border: 1px solid @HCbackground !important;
         }
     }
-    #mainmenu.inverted, #homemenu.inverted {
-        background-color: @HCmainMenuTextColor !important;
+    #mainmenu.inverted {
         color: @HCmainMenuBackground !important;
         border-bottom: 4px solid @HCtextColor;
+        background: @HCmainMenuTextColor !important;
 
         .ui.item {
             color: @HCmainMenuBackground;
         }
         .item.editor-menuitem .ui.grid {
             border: 1px solid @HCtextColor !important;
+        }
+    }
+
+    .simtoolbar .debug-button.orange {
+        color: @HCeditorToolsBackground !important;
+        background-color: @HCtextColor !important;
+    }
+
+    /* Debugger toolbox */
+    .debugtoolbar .ui.compact.menu {
+        color: @HCblocklyTreeLabelColor !important;
+        background-color: @HCblocklyToolboxColor !important;
+        border-bottom: solid @HCblocklyTreeLabelColor 1px !important;
+
+        .ui.item.link.dbg-btn {
+            .icon.green, .icon.blue, .ui.text, .xicon  {
+                color: @HCblocklyTreeLabelColor !important;
+            }
+        }
+        .ui.item.link.dbg-btn.disabled {
+            .icon.green, .icon.blue, .ui.text, .xicon, .icon.disabled.icon-and-text {
+                opacity: 1 !important;
+                color: @disabled !important;
+            }
+        }
+        .ui.item.link.dbg-btn.dbg-trace.tracing {
+            background-color: @HCtextColor !important;
+            .xicon  {
+                color: @HCblocklyToolboxColor !important;
+            }
+        }
+    }
+
+    .varExplorer {
+        background-color: @HCblocklyToolboxColor !important;
+
+        .variableTableHeader, .variableTablePlaceholder {
+            color: @HCblocklyTreeLabelColor !important;
+            background-color: @HCblocklyToolboxColor !important;
+        }
+
+        .ui.segment.debugvariables {
+            .item {
+                background-color: @HCblocklyToolboxColor !important;
+
+                .variableAndValue {
+                    .variable.varname, .variable.detail {
+                        color: @HCblocklyTreeLabelColor !important;
+
+                        .varval.number, .varval.string, .varval.boolean, .varval.array, .varval.Sprite {
+                            color: @HCblocklyTreeLabelColor !important;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -182,9 +341,25 @@
             opacity: 1 !important;
             color: @HCmainMenuInverseTextColor !important;
         }
-        .item.active {
+        .item.active,
+        .menu > .item.selected {
             background: @HCtextColor !important;
             color: @HCmainMenuTextColor !important;
+        }
+
+        .dropdown, .dropdown:hover {
+            .selected i, .selected span {
+                color: @HCmainMenuTextColor !important;
+            }
+        }
+
+        .dropdown.active:hover:not(.visible) i {
+            color: @HCmainMenuTextColor !important;
+        }
+
+        .dropdown:focus:not(.visible) i,
+        .dropdown.active:focus:not(.visible) i {
+            color: @HCtextColor !important;
         }
     }
 
@@ -205,6 +380,7 @@
         &:focus, &:hover {
             color: @HCtextColor !important;
             border-color: @selected !important;
+            background: @HCbackground !important;
 
             i, span {
                 color: @HCtextColor !important;
@@ -233,6 +409,12 @@
                 color: @selected !important;
             }
         }
+    }
+
+    .signin-button {
+        background-color: @HCbackground;
+        color: @HCtextColor;
+        border: 1px solid @HCtextColor !important;
     }
 
     /* Inputs */
@@ -278,14 +460,27 @@
         color: @HCtextColor !important;
         border-color: @HCtextColor !important;
 
-        .header {
+        .header,
+        span.view-all-button {
             opacity: 1 !important;
-            color: @HCtextColor;
+            color: @HCtextColor !important;
         }
 
-        .homefooter a {
+        .homefooter a,
+        .homefooter i {
             color: @HCtextColor !important
         }
+
+        .getting-started-segment.hero .dots  button.active {
+            background: @selected !important;
+            border-color: @HCbackground !important;
+        }
+    }
+
+    #homescreen .ui.home .tutorial-progress {
+        border-color: @HCtextColor !important;
+        background-color: @HCbackground !important;
+        color: @HCtextColor !important;
     }
 
     .projectsdialog {
@@ -304,9 +499,39 @@
                 background-color: @HCbackground;
             }
             .header {
-                color: @HCbackground;
+                color: @HCtextColor;
+            }
+            .ui.grid {
+                background-color: @HChomeScreenBackground;
+                border-width: 2px 0;
+                border-color: @HCtextColor;
+                border-style: solid;
+            }
+            .ui.grid.stackable .actions {
+                .card-action {
+                    border: 2px solid @HCtextColor;
+                    .button.attached i {
+                        opacity: 1;
+                        color: @HCtextColor;
+                    }
+                }
+                .card-action-title {
+                    color: @HCtextColor;
+                }
+                .card-action:hover,
+                .card-action:focus-within {
+                    border-color: @selected;
+                }
             }
         }
+    }
+    .ui.card.link.newprojectcard{
+        background: darken(@primaryColor, 20%) !important;
+        color: white;
+    }
+
+    .ui.image~.content {
+        background: rgba(0,0,0,.75) !important;
     }
 
     .ui.form .content .description {
@@ -327,8 +552,33 @@
         border: 2px solid @HCtextColor !important;
     }
 
+    /* banners */
+    #notificationBanner {
+        background: @HCbackground !important;
+        border: 2px solid @HCtextColor !important;
+
+        .header {
+            color: @HCtextColor !important;
+        }
+    }
+
+    .ui.message {
+        background: @HCbackground !important;
+        color: @HCtextColor !important;
+        border: 2px solid @HCtextColor !important;
+    }
+
+    #winAppError {
+        img {
+            background-color: white;
+        }
+        #winAppErrorMsg {
+            color: @HCtextColor;
+        }
+    }
+
     /* Cards */
-    .card {
+    .card:not(.icon) {
         background: @HCbackground !important;
         border: 2px solid @HCtextColor !important;
         border-radius: initial !important;
@@ -395,7 +645,8 @@
         color: @HCtextColor;
     }
 
-    #serialCharts .ui.segment {
+    #serialCharts .ui.segment,
+    #serialPlaceholder.ui.segment {
         background-color: @HCtextColor;
     }
 
@@ -424,9 +675,76 @@
         background: @HCtextColor !important;
     }
 
+    // Serial csv
+    #serialArea #serialCsv {
+        background-color: @HCbackground !important;
+        tr {
+            background-color: @HCbackground !important;
+        }
+        td, th {
+            border-color: @HCtextColor !important;
+            color: @HCtextColor !important;
+        }
+    }
+
+
+    /* Asset Editor */
+    #assetEditor {
+        .asset-editor-sidebar,
+        .asset-editor-sidebar-preview,
+        .asset-editor-preview,
+        .asset-editor-sidebar-temp {
+            color: @HCtextColor;
+            background-color: @HCbackground;
+            border-color: @HCtextColor;
+        }
+
+        .asset-editor-gallery-tab {
+            color: @HCtextColor;
+            background-color: @HCbackground;
+            border-right: 1px solid @HCtextColor;
+        }
+
+        .asset-editor-topbar {
+            border-bottom: 1px solid @HCtextColor;
+        }
+
+        .common-button {
+            border: 1px solid;
+        }
+
+        .asset-editor-card,
+        .create-new {
+            color: @HCtextColor;
+            background: @HCbackground;
+            border: 1px solid @HCtextColor;
+            box-shadow: none;
+        }
+
+        .asset-editor-card-label {
+            color: @HCbackground;
+        }
+
+        .asset-editor-card.selected,
+        .asset-editor-gallery-tab.selected,
+        .asset-editor-button:hover,
+        .create-new:hover {
+            border: 2px solid @selected;
+        }
+    }
+
+    .asset-editor-create-button {
+        background-color: @HCbackground;
+        border: 1px solid @HCtextColor;
+        &:hover {
+            border: 2px solid @selected;
+        }
+    }
+
     /* Hyperlinks */
     a {
-        color: @HCtextColor !important;
+        color: @hyperlink !important;
+        text-decoration: underline !important;
     }
 
     #sidedocsbar {
@@ -444,11 +762,17 @@
     }
 
     /* Dropdown */
+    .ui.dropdown .menu,
     .ui.menu .ui.dropdown .menu {
         border: 1px solid @HCtextColor !important;
     }
 
-    .ui.menu .ui.dropdown .menu, .ui.menu .ui.dropdown .menu > .item {
+    .ui.dropdown .menu,
+    .ui.dropdown .menu > .item,
+    .ui.dropdown .menu > .item:hover,
+    .ui.menu .ui.dropdown .menu,
+    .ui.menu .ui.dropdown .menu > .item,
+    .ui.menu .ui.dropdown .menu > .item:hover {
         background: @HCbackground !important;
         color: @HCtextColor !important;
 
@@ -463,9 +787,14 @@
         }
     }
 
+    .ui.dropdown .menu > .divider,
     .ui.menu .ui.dropdown .menu > .divider {
         background: @HCbackground !important;
         border-top: 1px solid @HCtextColor !important;
+    }
+
+    #editordropdown .menu > .item:not(.selected) {
+        background: transparent !important;
     }
 
     /* Tab list in Modals*/
@@ -484,18 +813,96 @@
     }
 
     /* Tutorial */
-    .ui.message {
+    .ui.tutorialsegment {
         background-color: @HCbackground !important;
         color: @HCtextColor !important;
 
         .tutorialmessage {
-            outline: 1px solid @HCtextColor !important;
             border: none !important;
 
             &:focus {
                 color: @selected !important;
             }
+
         }
+
+        .tooltip, .tooltip:before {
+            background-color: @HCbackground;
+            border: 2px solid @HCtextColor;
+            color: @HCtextColor;
+        }
+
+        .tooltip:before {
+            border-color: @HCtextColor transparent transparent @HCtextColor !important;
+        }
+    }
+
+    .tutorialhint, .tutorial-hint .tutorial-callout {
+        border-color: @HCtextColor;
+        background-color: @HCbackground;
+        color: @HCtextColor;
+
+        .hint-title {
+            margin: 0;
+            > span {
+                background-color: @HCbackground;
+                color: @HCtextColor;
+            }
+        }
+
+        &:before {
+            border-right-color: @HCtextColor;
+        }
+    }
+
+    /* Tabbed tutorial */
+
+    .tutorial-container-outer { background-color: @HCbackground; }
+    .tutorial-content-bkg { background-color: @HCbackground; }
+    .tutorial-step-counter { background-color: @HCbackground; }
+    .tutorial-scroll-gradient { display: none; }
+    .tutorial-title { color: @HCtextColor; }
+
+    .tutorial-step-counter {
+        border-color: @HCtextColor;
+    }
+    .tutorial-step-bar {
+        background-color: @HCbackground;
+        border: 1px solid @HCtextColor;
+    }
+    .tutorial-step-label { color: @HCtextColor; }
+    .tutorial-step-bar-fill { background-color: @HCtextColor; }
+    .tutorial-step-bubbles > button {
+        border: 1px solid @HCtextColor;
+    }
+
+    #simulator .editor-sidebar:not(.topInstructions) {
+        border-right: 1px solid @HCtextColor;
+    }
+
+    #simulator .topInstructionsWrapper .editor-sidebar {
+        border-bottom: 1px solid @HCtextColor;
+    }
+
+    #simulator .editor-sidebar .tab-navigation {
+        color: @HCtextColor;
+        background-color: @HCbackground;
+        border-bottom: 2px solid @HCtextColor;
+
+        .active {
+            color: @HCbackground;
+            background-color: @HCtextColor;
+        }
+
+        .tab-badge {
+            display: none;
+        }
+    }
+
+    &.tabTutorial details {
+        background-color: @HCbackground !important;
+        border: 2px solid @HCtextColor !important;
+        color: @HCtextColor !important;
     }
 
     .ui.label {
@@ -507,6 +914,23 @@
         border-color: @selected !important;
     }
 
+    .formatted-bullet {
+        background: linear-gradient(@HCtextColor, @HCtextColor) ~"no-repeat 45%/2px 100%";
+        i.icon, i.xicon {
+            color: @HCbackground;
+            background-color: @HCtextColor;
+        }
+        &:after {
+            border-color: @HCtextColor !important;
+        }
+    }
+
+    // Tutorial tablet mode
+    @media only screen and (max-width: @largestTabletScreen) {
+        .editor-sidebar {
+            border-bottom: 1px solid @HCtextColor;
+        }
+    }
 
     /* Modals */
     .ui.modal {
@@ -517,6 +941,12 @@
         > .closeIcon .close {
             color: @HCtextColor !important;
         }
+    }
+
+    .ui.modal.inverted-theme {
+        border: 2px solid @HCtextColor !important;
+        border-radius: initial !important;
+        box-shadow: initial !important;
     }
 
     .ui.modal, .ui.modal > .header, .ui.modal > .content, .ui.modal > .actions, .ui.modal > .segment {
@@ -530,6 +960,114 @@
             color: @HCaccessibleMenuColor !important;
             background: @HCaccessibleMenuBackground !important;
         }
+    }
+
+    [data-tooltip]:after,
+    [data-tooltip]:before {
+        color: @HCtextColor!important;
+        background-color: @HCbackground!important;
+    }
+
+    [data-tooltip]:after {
+        border: 1px solid @HCtextColor!important;
+    }
+
+    [data-tooltip]:before {
+        box-shadow: 1px 1px 0 0 @HCtextColor!important;
+    }
+
+    /* immersive reader */
+    .modals .ui.button.immersive-reader-button,
+    #mainmenu .immersive-reader-button.ui.item,
+    #simulator .editor-sidebar .immersive-reader-button.ui.item {
+        border: 1px solid #fff!important;
+        background-image: @immersiveReaderLightIcon !important;
+        background-repeat: no-repeat !important;
+        background-size: 80% !important;
+        background-position: center!important;
+    }
+
+    .modals .ui.button.immersive-reader-button:focus,
+    .modals .ui.button.immersive-reader-button:hover,
+    #mainmenu .immersive-reader-button.ui.item:focus,
+    #mainmenu .immersive-reader-button.ui.item:hover,
+    #simulator .editor-sidebar .immersive-reader-button.ui.item:focus,
+    #simulator .editor-sidebar .immersive-reader-button.ui.item:hover {
+        background-color: white !important;
+        background-image: @immersiveReaderIcon !important;
+        background-repeat: no-repeat !important;
+        background-size: 80% !important;
+        background-position: center!important;
+        filter: none!important;
+    }
+
+    // skillmap embedded tutorials
+    .tutorial.tutorial-embed {
+        .immersive-reader-button.ui.item,
+        .immersive-reader-button.ui.item:focus,
+        .immersive-reader-button.ui.item:hover {
+            background-size: 80%!important;
+            background-color: transparent!important;
+            filter: none!important;
+        }
+    }
+
+    /* github */
+    #githubEditor {
+        background-color: @HCbackground !important;
+        color: @HCtextColor !important;
+
+        .ui.button {
+            color: @HCtextColor !important;
+
+            &:focus, &:hover {
+                color: @HCtextColor !important;
+                border-color: @selected !important;
+                background: @HCbackground !important;
+
+                i, span {
+                    color: @HCtextColor !important;
+                }
+            }
+        }
+
+        table.diffview {
+            background: @HCbackground !important;
+            color: @HCtextColor !important;
+            .diff-marker, .diff-removed, .diff-added, code.ch-removed, code.ch-added {
+                background: @HCbackground !important;
+                color: @HCtextColor !important;
+            }
+            .diff-marker {
+                border-bottom: 1px solid @HCtextColor !important;
+            }
+            .diff-removed, code.ch-removed {
+                border: 2px dashed #900 !important;
+            }
+            .diff-added, code.ch-added {
+                border: 2px dotted #090 !important;
+            }
+        }
+    }
+
+    .ui.dropdown > .avatar > .initials {
+        background-color: @HCbackground !important;
+    }
+}
+
+/* OS-specific Fixes (eg Windows High Contrast) */
+
+@media (forced-colors: active) {
+    .ui.toggle.checkbox .box:after,
+    .ui.toggle.checkbox label:after {
+        forced-color-adjust: none;
+    }
+}
+
+@media (forced-colors: active) and (prefers-color-scheme: light) {
+    #mainmenu .logo.organization img,
+    #mainmenu .logo.brand img {
+        filter: invert(1);
     }
 }
 

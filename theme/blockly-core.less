@@ -18,8 +18,22 @@ svg.blocklySvg {
     background: @blocklySvgColor;
 }
 
+.blocksAndErrorList {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.blocksEditorOuter {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
+    height: 100%;
+}
+
 #blocksEditor {
     position: absolute;
+    width: 100%;
+    height: 100%;
     .injectionDiv svg {
         overflow: visible;
     }
@@ -45,6 +59,7 @@ svg.blocklySvg {
 body.blocklyMinimalBody {
     min-width: initial;
     overflow: initial;
+    position: unset;
 }
 
 @supports (-ms-accelerator:true) {
@@ -58,32 +73,36 @@ body.blocklyMinimalBody {
         Blockly Text
 *******************************/
 
-text.blocklyText, input.blocklyHtmlInput, .blocklyDropDownDiv .goog-menuitem, textarea.blocklyCommentTextarea {
-    font-family: @blocklyFont !important;
-    font-weight: normal;
-}
+.pxt-renderer.classic-theme {
+    text.blocklyFlyoutLabelText, .blocklyFlyoutButton text.blocklyText {
+        font-family: @pageFont !important;
+    }
 
-text.blocklyFlyoutLabelText, .blocklyFlyoutButton text.blocklyText {
-    font-family: @pageFont !important;
-}
+    text.blocklyText.blocklyBoldText {
+        font-weight: bold;
+    }
 
-text.blocklyText.blocklyBoldText {
-    font-weight: bold;
-}
+    text.blocklyText.blocklyItalicizedText {
+        font-style: italic;
+    }
 
-text.blocklyText.blocklyItalicizedText {
-    font-style: italic;
-}
+    text.blocklyText.blocklyBoldItalicizedText {
+        font-weight: bold;
+        font-style: italic;
+    }
 
-text.blocklyText.blocklyBoldItalicizedText {
-    font-weight: bold;
-    font-style: italic;
-}
+    text.blocklyText.blocklyBubbleText {
+        fill: #fff;
+    }
 
-text.semanticIcon {
-    fill: #fff;
-    font-family: "Icons";
-    font-size: 19px;
+    .blocklyEditableText>text.semanticIcon, .blocklyNonEditableText>text.semanticIcon {
+        fill: #fff;
+        font-family: "Icons";
+        font-size: 19px;
+    }
+    .blocklyEditableText>text.semanticIcon.inverted {
+        fill: #000;
+    }
 }
 
 
@@ -93,6 +112,26 @@ text.semanticIcon {
     color: white;
 }
 
+/*******************************
+        Blockly Toolbox
+*******************************/
+
+.blocklyTreeIcon {
+    visibility: visible;
+}
+
+i.icon.blocklyTreeButton {
+    float: right;
+    line-height: 40px;
+    color: grey;
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: .5s;
+}
+
+.blocklyTreeRow:hover i.icon.blocklyTreeButton {
+    opacity: 1;
+}
 
 /*******************************
         Blockly Flyout
@@ -166,6 +205,7 @@ div.blocklyWidgetDiv.functioneditor {
 
 div.blocklyDropDownDiv {
     z-index: @blocklyDropdownDivZIndex;
+    overflow: hidden;
 }
 
 div.blocklyTooltipDiv {
@@ -199,6 +239,20 @@ text.blocklyCheckbox {
     font-size: 17pt !important;
 }
 
+/* (arcade only) Sets the correct background color for the sprite image field */
+.pxt-renderer.classic-theme {
+    .blocklyNonEditableText > rect.blocklySpriteField,
+    .blocklyNonEditableText > rect.blocklyAnimationField,
+    .blocklyNonEditableText > rect.blocklyTilemapField,
+    .blocklyEditableText > rect.blocklySpriteField,
+    .blocklyEditableText > rect.blocklyAnimationField,
+    .blocklyEditableText > rect.blocklyTilemapField {
+        fill: #dedede;
+        stroke: #898989;
+        stroke-width: 1;
+    }
+
+}
 
 /*******************************
         Blocks
@@ -220,8 +274,10 @@ text.blocklyCheckbox {
 }
 
 
-.blocklyDisabled .blocklyNonEditableText .blocklyBlockBackground {
-    fill-opacity: 0.1 !important;
+.blocklyDisabled {
+    .blocklyNonEditableText .blocklyBlockBackground {
+        fill-opacity: 0.1 !important;
+    }
 }
 
 /*******************************
@@ -268,13 +324,29 @@ text.blocklyCheckbox {
         Comments
 *******************************/
 
-.blocklyCommentForeignObject {
-    overflow: hidden;
+.blocklyDeleteIcon {
+    display: block;
 }
 
-.blocklyMinimalBody {
-    position: static; // override default 'position: fixed' for comment <body> element
-    border: 1px solid #FAF6BD; // match comment color
+.blocklyComment .blocklyTextarea {
+    border: none;
+    color: #575E75;
+}
+
+/*******************************
+        Workspace Search
+*******************************/
+
+.blockly-ws-searching {
+    path.blocklyPath:not(.blockly-ws-search-highlight-pxt) {
+        opacity: 0.6;
+    }
+
+    path.blocklyPath.blockly-ws-search-highlight-pxt.blockly-ws-search-current {
+        stroke: #FFF200;
+        stroke-width: 4px;
+        transition: none;
+    }
 }
 
 /*******************************

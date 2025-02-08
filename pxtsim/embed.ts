@@ -1,4 +1,5 @@
 /// <reference path="../localtypings/pxtparts.d.ts"/>
+/// <reference path="../localtypings/pxtarget.d.ts"/>
 
 namespace pxsim {
     export interface SimulatorRunMessage extends SimulatorMessage {
@@ -9,6 +10,7 @@ namespace pxsim {
         refCountingDebug?: boolean;
         options?: any;
         parts?: string[];
+        builtinParts?: string[];
         partDefinitions?: Map<PartDefinition>
         fnArgs?: any;
         code: string;
@@ -21,6 +23,13 @@ namespace pxsim {
         clickTrigger?: boolean;
         breakOnStart?: boolean;
         storedState?: Map<any>;
+        ipc?: boolean;
+        dependencies?: Map<string>;
+        single?: boolean;
+        traceDisabled?: boolean;
+        activePlayer?: 1 | 2 | 3 | 4 | undefined;
+        theme?: string | pxt.Map<string>;
+        yieldDelay?: number;
     }
 
     export interface SimulatorInstructionsMessage extends SimulatorMessage {
@@ -47,6 +56,7 @@ namespace pxsim {
     export interface SimulatorFileLoadedMessage extends SimulatorMessage {
         type: "fileloaded";
         name: string;
+        // localeInfo NOT userLanguage
         locale: string;
         content?: string;
     }
@@ -73,7 +83,16 @@ namespace pxsim {
     }
     export interface SimulatorBroadcastMessage extends SimulatorMessage {
         broadcast: boolean;
+        toParentIFrameOnly?: boolean;
+        srcFrameIndex?: number;
     }
+
+    export interface SimulatorControlMessage extends SimulatorBroadcastMessage {
+        type: "messagepacket";
+        channel: string;
+        data: Uint8Array;
+    }
+
     export interface SimulatorEventBusMessage extends SimulatorBroadcastMessage {
         type: "eventbus";
         broadcast: true;
@@ -86,6 +105,7 @@ namespace pxsim {
         id: string;
         data: string;
         sim?: boolean;
+        csvType?: undefined | "headers" | "row" | "clear"; // if non-nullish pass to csv view instead
         receivedTime?: number;
     }
     export interface SimulatorBulkSerialMessage extends SimulatorMessage {
@@ -96,7 +116,7 @@ namespace pxsim {
     }
     export interface SimulatorCommandMessage extends SimulatorMessage {
         type: "simulator",
-        command: "modal" | "restart" | "reload" | "setstate" | "focus" | "blur"
+        command: "modal" | "restart" | "reload" | "setstate" | "focus" | "blur" | "single"
         stateKey?: string;
         stateValue?: any;
         header?: string;
@@ -148,6 +168,26 @@ namespace pxsim {
         type: "screenshot";
         data: ImageData;
         delay?: number;
+        modalContext?: string;
+    }
+
+    export interface SimulatorAutomaticThumbnailMessage extends SimulatorMessage {
+        type: "thumbnail";
+        frames: ImageData[];
+    }
+
+    export interface SimulatorAddExtensionsMessage extends SimulatorMessage {
+        type: "addextensions",
+        /**
+         * List of repositories to add
+         */
+        extensions: string[]
+    }
+
+    export interface SimulatorAspectRatioMessage extends SimulatorMessage {
+        type: "aspectratio",
+        value: number,
+        frameid: string
     }
 
     export interface SimulatorRecorderMessage extends SimulatorMessage {
@@ -170,9 +210,9 @@ namespace pxsim {
 
     export interface TutorialStepInfo {
         fullscreen?: boolean;
-        hasHint?: boolean;
         contentMd?: string;
         headerContentMd?: string;
+        hintContentMd?: string;
     }
 
     export interface TutorialLoadedMessage extends TutorialMessage {
@@ -194,7 +234,8 @@ namespace pxsim {
 
     export interface RenderReadyResponseMessage extends SimulatorMessage {
         source: "makecode",
-        type: "renderready"
+        type: "renderready",
+        versions: pxt.TargetVersions
     }
 
     export interface RenderBlocksRequestMessage extends SimulatorMessage {
@@ -220,6 +261,81 @@ namespace pxsim {
         error?: string;
     }
 
+    export interface SetActivePlayerMessage extends SimulatorMessage {
+        type: "setactiveplayer";
+        playerNumber: 1 | 2 | 3 | 4 | undefined;
+    }
+
+    export interface SetSimThemeMessage extends SimulatorMessage {
+        type: "setsimthemecolor";
+        part:
+            | "background-color"
+            | "button-stroke"
+            | "text-color"
+            | "button-fill"
+            | "dpad-fill";
+        color: string;
+    }
+
+    export interface SetMuteButtonStateMessage extends SimulatorMessage {
+        type: "setmutebuttonstate";
+        state: "muted" | "unmuted" | "disabled";
+    }
+
+    export namespace multiplayer {
+        type MessageBase = {
+            type: "multiplayer";
+            origin?: "server" | "client";
+            broadcast?: boolean;
+        };
+
+        export enum IconType {
+            Player = 0,
+            Reaction = 1,
+        }
+
+        export type ImageMessage = MessageBase & {
+            content: "Image";
+            image?: pxsim.RefBuffer; // pxsim.RefBuffer
+            palette: Uint8Array;
+        };
+
+        export type InputMessage = MessageBase & {
+            content: "Button";
+            button: number;
+            clientNumber: number;
+            state: "Pressed" | "Released" | "Held";
+        };
+
+        export type AudioMessage = MessageBase & {
+            content: "Audio";
+            instruction: "playinstructions" | "muteallchannels";
+            soundbuf?: Uint8Array;
+        };
+
+        export type IconMessage = MessageBase & {
+            content: "Icon";
+            icon?: pxsim.RefBuffer; // pxsim.RefBuffer
+            slot: number;
+            iconType: IconType;
+            // 48bytes, [r0,g0,b0,r1,g1,b1,...]
+            palette: Uint8Array;
+        };
+
+        export type ConnectionMessage = MessageBase & {
+            content: "Connection";
+            slot: number;
+            connected: boolean;
+        }
+
+        export type Message =
+            | ImageMessage
+            | AudioMessage
+            | InputMessage
+            | IconMessage
+            | ConnectionMessage;
+    }
+
     export function print(delay: number = 0) {
         function p() {
             try {
@@ -240,7 +356,7 @@ namespace pxsim {
         export function start() {
             window.addEventListener("message", receiveMessage, false);
             frameid = window.location.hash.slice(1)
-            initAppcache();
+            initServiceWorker();
             Runtime.postMessage(<SimulatorReadyMessage>{ type: 'ready', frameid: frameid });
         }
 
@@ -259,7 +375,7 @@ namespace pxsim {
                 case "stopsound": stopSound(); break;
                 case "print": print(); break;
                 case 'recorder': recorder(<SimulatorRecorderMessage>data); break;
-                case "screenshot": Runtime.postScreenshotAsync(<SimulatorScreenshotMessage>data).done(); break;
+                case "screenshot": Runtime.postScreenshotAsync(<SimulatorScreenshotMessage>data); break;
                 case "custom":
                     if (handleCustomMessage)
                         handleCustomMessage((<SimulatorCustomMessage>data));
@@ -274,10 +390,10 @@ namespace pxsim {
                     let simData = data as SimulatorCommandMessage;
                     switch (simData.command) {
                         case "focus":
-                            tickEvent("simulator.focus", {timestamp: simData.timestamp});
+                            tickEvent("simulator.focus", { timestamp: simData.timestamp });
                             break;
                         case "blur":
-                            tickEvent("simulator.blur", {timestamp: simData.timestamp});
+                            tickEvent("simulator.blur", { timestamp: simData.timestamp });
                             break;
                     }
                 default: queue(data); break;
@@ -304,13 +420,18 @@ namespace pxsim {
             if (msg.localizedStrings)
                 pxsim.localization.setLocalizedStrings(msg.localizedStrings);
 
-            runtime = new Runtime(msg);
-            runtime.board.initAsync(msg)
-                .done(() => {
-                    runtime.run((v) => {
-                        pxsim.dumpLivePointers();
-                        Runtime.postMessage({ type: "toplevelcodefinished" })
-                    });
+            const rt = new Runtime(msg);
+            runtime = rt;
+            rt.board.initAsync(msg)
+                .then(() => {
+                    if (rt === runtime) {
+                        rt.run((v) => {
+                            pxsim.dumpLivePointers();
+                            Runtime.postMessage({ type: "toplevelcodefinished" });
+                        });
+                    }
+                    // else: a new runtime was started while this one was still initializing.
+                    // This runtime has already been stopped by the beginning of this function.
                 });
         }
 
@@ -379,13 +500,32 @@ namespace pxsim {
         }
     }
 
-    function initAppcache() {
-        if (typeof window !== 'undefined' && window.applicationCache) {
-            if (window.applicationCache.status === window.applicationCache.UPDATEREADY)
-                reload();
-            window.applicationCache.addEventListener("updateready", () => {
-                if (window.applicationCache.status === window.applicationCache.UPDATEREADY)
-                    reload();
+    function initServiceWorker() {
+        // pxsim is included in both the webapp and the simulator so we need to check if the ---simulator is
+        // present in the window location
+        if ("serviceWorker" in navigator && window.location.href.indexOf("---simulator") !== -1 && !U.isLocalHost()) {
+            // We don't have access to the webconfig in pxtsim so we need to extract the ref from the URL
+            const pathname = window.location.pathname;
+            const ref = pathname.substring(1, pathname.indexOf("---"));
+
+            // Only reload if there is already a service worker installed
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.addEventListener("message", ev => {
+                    const message = ev.data as pxt.ServiceWorkerEvent;
+
+                    // We need to check the ref of the activated service worker so that we don't reload if you have
+                    // index.html and beta open at the same time
+                    if (message && message.type === "serviceworker" && message.state === "activated" && message.ref === ref) {
+                        reload();
+                    }
+                });
+            }
+
+            const serviceWorkerUrl = window.location.href.replace(/---simulator.*$/, "---simserviceworker");
+            navigator.serviceWorker.register(serviceWorkerUrl).then(function (registration) {
+                pxsim.log("Simulator ServiceWorker registration successful with scope: ", registration.scope);
+            }, function (err) {
+                pxsim.log("Simulator ServiceWorker registration failed: ", err);
             });
         }
     }

@@ -1,27 +1,33 @@
-/// <reference path="./monacoFieldEditor.ts" />
+import { MonacoFieldEditor, TextEdit, MonacoFieldEditorHost } from "./monacoFieldEditor";
 
-namespace pxt.editor {
-    const fieldEditorId = "image-editor";
+const fieldEditorId = "image-editor";
 
-    export class MonacoReactFieldEditor implements MonacoFieldEditor {
-        private resolver: (edit: TextEdit) => void;
-        private rejecter: (err?: any) => void;
+export class MonacoReactFieldEditor<U> implements MonacoFieldEditor {
+    private resolver: (edit: TextEdit) => void;
+    private rejecter: (err?: any) => void;
 
-        protected fileType: pxt.editor.FileType;
-        protected editrange: monaco.Range;
-        protected host: MonacoFieldEditorHost;
-        protected fv: pxt.react.FieldEditorView;
+    protected fileType: pxt.editor.FileType;
+    protected editrange: monaco.Range;
+    protected host: MonacoFieldEditorHost;
+    protected fv: pxt.react.FieldEditorView<U>;
 
-        getId() {
-            return fieldEditorId;
-        }
+    getId() {
+        return fieldEditorId;
+    }
 
-        showEditorAsync(fileType: FileType, editrange: monaco.Range, host: MonacoFieldEditorHost): Promise<TextEdit> {
-            this.fileType = fileType;
-            this.editrange = editrange;
-            this.host = host;
+    showEditorAsync(fileType: pxt.editor.FileType, editrange: monaco.Range, host: MonacoFieldEditorHost): Promise<TextEdit> {
+        this.fileType = fileType;
+        this.editrange = editrange;
+        this.host = host;
 
-            this.fv = pxt.react.getFieldEditorView(this.getFieldEditorId(), this.textToValue(host.getText(editrange)), this.getOptions());
+        return this.initAsync().then(() => {
+            const value = this.textToValue(host.getText(editrange));
+
+            if (!value) {
+                return Promise.resolve(null);
+            }
+
+            this.fv = pxt.react.getFieldEditorView(this.getFieldEditorId(), value, this.getOptions());
 
             this.fv.onHide(() => {
                 this.onClosed();
@@ -33,38 +39,42 @@ namespace pxt.editor {
                 this.resolver = resolve;
                 this.rejecter = reject;
             });
-        }
+        });
+    }
 
-        onClosed() {
-            if (this.resolver) {
-                this.resolver({
-                    range: this.editrange,
-                    replacement: this.resultToText(this.fv.getResult())
-                });
+    onClosed() {
+        if (this.resolver) {
+            this.resolver({
+                range: this.editrange,
+                replacement: this.resultToText(this.fv.getResult())
+            });
 
-                this.editrange = undefined;
-                this.resolver = undefined;
-                this.rejecter = undefined;
-            }
+            this.editrange = undefined;
+            this.resolver = undefined;
+            this.rejecter = undefined;
         }
+    }
 
-        dispose() {
-            this.onClosed();
-        }
+    dispose() {
+        this.onClosed();
+    }
 
-        protected textToValue(text: string): any {
-            return text
-        }
+    protected initAsync(): Promise<void> {
+        return Promise.resolve();
+    }
 
-        protected resultToText(result: string): string {
-            return result;
-        }
+    protected textToValue(text: string): U {
+        return null
+    }
 
-        protected getFieldEditorId() {
-            return "";
-        }
-        protected getOptions(): any {
-            return null;
-        }
+    protected resultToText(result: U): string {
+        return result + "";
+    }
+
+    protected getFieldEditorId() {
+        return "";
+    }
+    protected getOptions(): any {
+        return null;
     }
 }

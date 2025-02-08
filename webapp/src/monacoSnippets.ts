@@ -2,6 +2,10 @@ import { BuiltinCategoryDefinition, BlockDefinition, CategoryNameID } from "./to
 
 import * as monaco from "./monaco";
 
+import ToolboxBlockDefinition = pxt.editor.ToolboxBlockDefinition;
+import ToolboxCategoryDefinition = pxt.editor.ToolboxCategoryDefinition;
+import ToolboxDefinition = pxt.editor.ToolboxDefinition;
+
 let _cachedBuiltinCategories: pxt.Map<BuiltinCategoryDefinition> = null;
 function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
     if (!_cachedBuiltinCategories) {
@@ -13,8 +17,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "loops_while",
                     snippetName: "while",
-                    snippet: `while(true) {\n\n}`,
-                    pySnippet: `while True:\n  pass`,
+                    snippet: `while (true) {\n    \n}`,
+                    pySnippet: `while True:\n    pass`,
                     attributes: {
                         blockId: 'device_while',
                         weight: 48,
@@ -24,8 +28,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "loops_for",
                     snippetName: "for",
-                    snippet: `for(let i = 0; i < 5; i++) {\n\n}`,
-                    pySnippet: `for i in range(0, 4):\n  pass`,
+                    snippet: `for (let i = 0; i < 5; i++) {\n    \n}`,
+                    pySnippet: `for i in range(4):\n    pass`,
                     attributes: {
                         blockId: 'pxt_controls_for',
                         weight: 47,
@@ -47,8 +51,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "logic_if",
                     snippetName: "if",
-                    snippet: `if (true) {\n\n}`,
-                    pySnippet: `if True:\n  pass`,
+                    snippet: `if (true) {\n    \n}`,
+                    pySnippet: `if True:\n    pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 49,
@@ -58,8 +62,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "logic_if_else",
                     snippetName: "if else",
-                    snippet: `if (true) {\n\n} else {\n\n}`,
-                    pySnippet: `if True:\n  pass\nelse:\n  pass`,
+                    snippet: `if (true) {\n    \n} else {\n    \n}`,
+                    pySnippet: `if True:\n    pass\nelse:\n    pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 48,
@@ -105,6 +109,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     snippetName: "let",
                     snippet: `let item: number`,
                     pySnippet: `item = 0`,
+                    pySnippetName: `item = 0`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'variables_set',
@@ -249,13 +254,14 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     retType: "number"
                 },
                 {
-                    name: "Math.randomRange",
-                    snippetName: "randomRange",
-                    snippet: `Math.randomRange(0, 10)`,
+                    name: "randint",
+                    snippetName: "randint",
+                    snippet: `randint(0, 10)`,
                     pySnippetName: `randint`,
                     pySnippet: `randint(0, 10)`,
                     attributes: {
                         weight: 65,
+                        blockId: "device_random",
                         jsDoc: lf("Returns a random number between min and max")
                     },
                     retType: "number"
@@ -275,11 +281,11 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "functionDef",
                     snippetName: "function doSomething",
-                    snippet: `function doSomething() {\n\n}`,
+                    snippet: `function doSomething() {\n    \n}`,
                     pySnippetName: "def do_something",
-                    pySnippet: `def do_something():\n  pass`,
+                    pySnippet: `def do_something():\n    pass`,
                     attributes: {
-                        blockId: 'procedures_defnoreturn',
+                        blockId: 'function_definition',
                         jsDoc: lf("Define a function")
                     }
                 },
@@ -290,7 +296,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     pySnippetName: "do_something",
                     pySnippet: `do_something()`,
                     attributes: {
-                        blockId: 'procedures_callnoreturn',
+                        blockId: 'function_call',
                         jsDoc: lf("Call a function")
                     }
                 },
@@ -311,7 +317,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "array_create",
                     snippetName: "create",
-                    snippet: `let ${lf("{id:snippets}list")} = [1, 2, 3];`,
+                    snippet: `let ${lf("{id:snippets}list")} = [1, 2, 3]`,
                     pySnippet: `${lf("{id:snippets}list")} = [1, 2, 3]`,
                     snippetOnly: true,
                     attributes: {
@@ -561,7 +567,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 return true;
             },
             attributes: {
-                advanced: true,
+                advanced: false,
                 weight: -1,
                 icon: "addpackage",
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
@@ -599,6 +605,20 @@ export function getPauseUntil() {
     }
 
     return pauseUntil;
+}
+
+// Map of defined snippets to blockIds, for when multiple
+// blocks (eg "for index" and "repeat") map to the same snippet
+let _blockIdMap: pxt.Map<string[]>;
+export function blockIdMap() {
+    if (!_blockIdMap) {
+        _blockIdMap = {
+            "pxt_controls_for": ["controls_repeat_ext"]
+        }
+        const targetIds = pxt.appTarget.blockIdMap;
+        if (targetIds) Object.keys(targetIds).forEach(id => _blockIdMap[id] = targetIds[id]);
+    }
+    return _blockIdMap;
 }
 
 export function getBuiltinCategory(ns: string) {
@@ -662,7 +682,7 @@ export function clearBuiltinBlockCache() {
     builtinBlockCacheByName = undefined;
 }
 
-export function overrideCategory(ns: string, def: pxt.editor.ToolboxCategoryDefinition) {
+export function overrideCategory(ns: string, def: ToolboxCategoryDefinition) {
     const cat = getBuiltinCategory(ns);
     if (def && cat) {
         if (Object.keys(def).length === 0) {
@@ -705,7 +725,7 @@ export function overrideCategory(ns: string, def: pxt.editor.ToolboxCategoryDefi
     }
 }
 
-function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: number): BlockDefinition {
+function blockFromJson(b: ToolboxBlockDefinition, currentWeight?: number): BlockDefinition {
     return {
         name: b.name,
         snippet: b.snippet,
@@ -725,7 +745,7 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
     }
 }
 
-function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
+function blockToJson(b: BlockDefinition): ToolboxBlockDefinition {
     return {
         name: b.name,
         snippet: b.snippet,
@@ -743,7 +763,7 @@ function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
     }
 }
 
-function categoryToJson(c: BuiltinCategoryDefinition): pxt.editor.ToolboxCategoryDefinition {
+function categoryToJson(c: BuiltinCategoryDefinition): ToolboxCategoryDefinition {
     return {
         name: c.name,
         icon: c.attributes.icon,
@@ -754,7 +774,7 @@ function categoryToJson(c: BuiltinCategoryDefinition): pxt.editor.ToolboxCategor
     }
 }
 
-export function overrideToolbox(def: pxt.editor.ToolboxDefinition) {
+export function overrideToolbox(def: ToolboxDefinition) {
     overrideCategory(CategoryNameID.Loops, def.loops);
     overrideCategory(CategoryNameID.Logic, def.logic);
     overrideCategory(CategoryNameID.Variables, def.variables);
@@ -764,7 +784,7 @@ export function overrideToolbox(def: pxt.editor.ToolboxDefinition) {
     overrideCategory(CategoryNameID.Functions, def.functions);
 }
 
-export function getToolboxDefinition(): pxt.editor.ToolboxDefinition {
+export function getToolboxDefinition(): ToolboxDefinition {
     return {
         loops: categoryToJson(getBuiltinCategory(CategoryNameID.Loops)),
         logic: categoryToJson(getBuiltinCategory(CategoryNameID.Logic)),

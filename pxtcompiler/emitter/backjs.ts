@@ -133,10 +133,12 @@ namespace ts.pxtc {
         "checkSubtype",
         "failedCast",
         "buildResume",
-        "mkVTable"
+        "mkVTable",
+        "bind",
+        "leaveAccessor"
     ]
 
-    export function jsEmit(bin: Binary) {
+    export function jsEmit(bin: Binary, cres: CompileResult) {
         let jssource = "(function (ectx) {\n'use strict';\n"
 
         for (let n of evalIfaceFields) {
@@ -152,7 +154,7 @@ namespace ts.pxtc {
         jssource += "pxsim.setTitle(" + JSON.stringify(bin.getTitle()) + ");\n"
         let cfg: pxt.Map<number> = {}
         let cfgKey: pxt.Map<number> = {}
-        for (let ce of bin.res.configData || []) {
+        for (let ce of cres.configData || []) {
             cfg[ce.key + ""] = ce.value
             cfgKey[ce.name] = ce.key
         }
@@ -185,8 +187,8 @@ namespace ts.pxtc {
         bin.usedClassInfos.forEach(info => {
             jssource += vtableToJs(info)
         })
-        if (bin.res.breakpoints)
-            jssource += `\nconst breakpoints = setupDebugger(${bin.res.breakpoints.length}, [${bin.globals.filter(c => c.isUserVariable).map(c => `"${c.uniqueName()}"`).join(",")}])\n`
+        if (cres.breakpoints)
+            jssource += `\nconst breakpoints = setupDebugger(${cres.breakpoints.length}, [${bin.globals.filter(c => c.isUserVariable).map(c => `"${c.uniqueName()}"`).join(",")}])\n`
 
         jssource += `\nreturn ${bin.procs[0] ? bin.procs[0].label() : "null"}\n})\n`
 
@@ -219,7 +221,7 @@ s.pc = -1;
         }
         writeRaw(`
 while (true) {
-if (yieldSteps-- < 0 && maybeYield(s, step, r0)) return null;
+if (yieldSteps-- < 0 && maybeYield(s, step, r0) || runtime !== pxsim.runtime) return null;
 switch (step) {
   case 0:
 `)
@@ -274,6 +276,9 @@ switch (step) {
                     if (s.lblNumUses > 0)
                         writeRaw(`  case ${s.lblId}:`)
                     break;
+                case ir.SK.Comment:
+                    writeRaw(`// ${s.expr.data}`)
+                    break
                 case ir.SK.Breakpoint:
                     emitBreakpoint(s)
                     break;
@@ -287,15 +292,20 @@ switch (step) {
         if (proc.perfCounterNo) {
             writeRaw(`__this.stopPerfCounter(${proc.perfCounterNo});\n`)
         }
-        write(`return leave(s, r0)`)
+
+        if (proc.isGetter())
+            write(`return leaveAccessor(s, r0)`)
+        else
+            write(`return leave(s, r0)`)
 
         writeRaw(`  default: oops()`)
         writeRaw(`} } }`)
         let info = nodeLocationInfo(proc.action) as FunctionLocationInfo
         info.functionName = proc.getName()
         info.argumentNames = proc.args && proc.args.map(a => a.getName());
-
         writeRaw(`${proc.label()}.info = ${JSON.stringify(info)}`)
+        if (proc.isGetter())
+            writeRaw(`${proc.label()}.isGetter = true;`)
         if (proc.isRoot)
             writeRaw(`${proc.label()}.continuations = [ ${asyncContinuations.join(",")} ]`)
 
@@ -330,19 +340,26 @@ function ${id}(s) {
             let id = s.breakpointInfo.id
             let lbl: number;
             write(`s.lastBrkId = ${id};`)
-            if (bin.options.trace) {
+
+            if (bin.breakpoints) {
+                lbl = ++lblIdx
+                let brkCall = `return breakpoint(s, ${lbl}, ${id}, r0);`
+                if (s.breakpointInfo.isDebuggerStmt) {
+                    write(brkCall)
+                }
+                else {
+                    write(`if ((breakpoints[0] && isBreakFrame(s)) || breakpoints[${id}]) ${brkCall}`)
+                    if (bin.trace) {
+                        write(`else return trace(${id}, s, ${lbl}, ${proc.label()}.info);`)
+                    }
+                }
+            }
+            else if (bin.trace) {
                 lbl = ++lblIdx
                 write(`return trace(${id}, s, ${lbl}, ${proc.label()}.info);`)
             }
             else {
-                if (!bin.options.breakpoints)
-                    return;
-                lbl = ++lblIdx
-                let brkCall = `return breakpoint(s, ${lbl}, ${id}, r0);`
-                if (s.breakpointInfo.isDebuggerStmt)
-                    write(brkCall)
-                else
-                    write(`if ((breakpoints[0] && isBreakFrame(s)) || breakpoints[${id}]) ${brkCall}`)
+                return;
             }
             writeRaw(`  case ${lbl}:`)
         }
@@ -438,7 +455,7 @@ function ${id}(s) {
 
         // result in R0
         function emitExpr(e: ir.Expr): void {
-            //console.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
+            //pxt.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
 
             switch (e.exprKind) {
                 case EK.JmpValue:
@@ -540,7 +557,7 @@ function ${id}(s) {
                     write(`if ((${args[0]}) && (${args[0]}).vtable) {`)
                 }
                 if (topExpr.callingConvention == ir.CallingConvention.Promise) {
-                    write(`(function(cb) { ${text}.done(cb) })(buildResume(s, ${loc}));`)
+                    write(`(function(cb) { ${text}.then(cb) })(buildResume(s, ${loc}));`)
                 } else {
                     write(`setupResume(s, ${loc});`)
                     write(`${text};`)
@@ -590,7 +607,7 @@ function ${id}(s) {
                 write(`${frameRef} = ${id}(s);`)
             }
 
-            //console.log("PROCCALL", topExpr.toString())
+            //pxt.log("PROCCALL", topExpr.toString())
             topExpr.args.forEach((a, i) => {
                 let arg = `arg${i}`
                 if (isLambda) {
@@ -604,32 +621,45 @@ function ${id}(s) {
 
             let callIt = `s.pc = ${lblId}; return ${frameRef};`
 
+            if (procid.callLocationIndex != null) {
+                callIt = `s.callLocIdx = ${procid.callLocationIndex}; ${callIt}`
+            }
+
             if (procid.ifaceIndex != null) {
                 U.assert(callproc == null)
-                let isSet = false
                 const ifaceFieldName = bin.ifaceMembers[procid.ifaceIndex]
-                U.assert(!!ifaceFieldName)
-                if (procid.mapMethod) {
-                    write(`if (!${frameRef}.arg0.vtable.iface) {`)
-                    let args = topExpr.args.map((a, i) => `${frameRef}.arg${i}`)
-                    args.splice(1, 0, JSON.stringify(ifaceFieldName))
-                    write(`  s.retval = ${shimToJs(procid.mapMethod)}ByString(${args.join(", ")});`)
-                    write(`} else {`)
-                    if (/Set/.test(procid.mapMethod))
-                        isSet = true
+                U.assert(!!ifaceFieldName, `no name for ${procid.ifaceIndex}`)
+
+                write(`if (!${frameRef}.arg0.vtable.iface) {`)
+                let args = topExpr.args.map((a, i) => `${frameRef}.arg${i}`)
+                args.splice(1, 0, JSON.stringify(ifaceFieldName))
+                const accessor = `pxsim_pxtrt.map${procid.isSet ? "Set" : "Get"}ByString`
+                if (procid.noArgs)
+                    write(`  s.retval = ${accessor}(${args.join(", ")});`)
+                else {
+                    U.assert(!procid.isSet)
+                    write(`  setupLambda(${frameRef}, ${accessor}(${args.slice(0, 2).join(", ")}), ${topExpr.args.length});`)
+                    write(`  ${callIt}`)
                 }
-                write(`${frameRef}.fn = ${frameRef}.arg0.vtable.iface["${isSet ? "set/" : ""}${ifaceFieldName}"];`)
+                write(`} else {`)
+
+                write(`  ${frameRef}.fn = ${frameRef}.arg0.vtable.iface["${procid.isSet ? "set/" : ""}${ifaceFieldName}"];`)
                 let fld = `${frameRef}.arg0.fields["${ifaceFieldName}"]`
-                if (isSet) {
-                    write(`if (${frameRef}.fn === null) { ${fld} = ${frameRef}.arg1; }`)
-                    write(`else if (${frameRef}.fn === undefined) { failedCast(${frameRef}.arg0) }`)
+                if (procid.isSet) {
+                    write(`  if (${frameRef}.fn === null) { ${fld} = ${frameRef}.arg1; }`)
+                    write(`  else if (${frameRef}.fn === undefined) { failedCast(${frameRef}.arg0) } `)
+                } else if (procid.noArgs) {
+                    write(`  if (${frameRef}.fn == null) { s.retval = ${fld}; }`)
+                    write(`  else if (!${frameRef}.fn.isGetter) { s.retval = bind(${frameRef}); }`)
                 } else {
-                    write(`if (${frameRef}.fn == null) { s.retval = ${fld}; }`)
+                    write(`  if (${frameRef}.fn == null) { setupLambda(${frameRef}, ${fld}, ${topExpr.args.length}); ${callIt} }`)
+                    // this is tricky - we need to do two calls, first to the accessor
+                    // and then on the returned lambda - this is handled by leaveAccessor() runtime
+                    // function
+                    write(`  else if (${frameRef}.fn.isGetter) { ${frameRef}.stage2Call = true; ${callIt}; }`)
                 }
-                write(`else { ${callIt} }`)
-                if (procid.mapMethod) {
-                    write(`}`)
-                }
+                write(` else { ${callIt} }`)
+                write(`}`)
                 callIt = ""
             } else if (procid.virtualIndex == -1) {
                 // lambda call

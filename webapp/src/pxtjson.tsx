@@ -6,6 +6,9 @@ import * as core from "./core";
 import * as data from "./data";
 
 import Util = pxt.Util;
+import { fireClickOnEnter } from "./util";
+
+import IProjectView = pxt.editor.IProjectView;
 
 export class Editor extends srceditor.Editor {
     config: pxt.PackageConfig = {} as any;
@@ -14,7 +17,7 @@ export class Editor extends srceditor.Editor {
 
     private nameInput: sui.Input;
 
-    constructor(public parent: pxt.editor.IProjectView) {
+    constructor(public parent: IProjectView) {
         super(parent);
 
         this.editSettingsText = this.editSettingsText.bind(this);
@@ -42,7 +45,7 @@ export class Editor extends srceditor.Editor {
         return false
     }
 
-    save() {
+    save(stayInEditor?: boolean) {
         const c = this.config
         this.isSaving = true;
         if (!c.name) {
@@ -52,7 +55,7 @@ export class Editor extends srceditor.Editor {
             return;
         }
         const f = pkg.mainEditorPkg().lookupFile("this/" + pxt.CONFIG_NAME);
-        f.setContentAsync(JSON.stringify(this.config, null, 4) + "\n").then(() => {
+        f.setContentAsync(pxt.Package.stringifyConfig(c)).then(() => {
             pkg.mainPkg.config.name = c.name;
             this.parent.setState({ projectName: c.name });
             this.parent.forceUpdate()
@@ -60,7 +63,7 @@ export class Editor extends srceditor.Editor {
             this.isSaving = false;
             this.changeMade = true;
             // switch to previous coding experience
-            this.parent.openPreviousEditor();
+            if (!stayInEditor) this.parent.openPreviousEditor();
             core.resetFocus();
         })
     }
@@ -114,12 +117,16 @@ export class Editor extends srceditor.Editor {
                     delete this.config.yotta;
             }
         }
-        // trigger update            
-        this.save();
+        // trigger update
+        this.save(true);
     }
 
     private handleNameInputRef = (c: sui.Input) => {
         this.nameInput = c;
+    }
+
+    private saveOnClick = (e: React.MouseEvent) => {
+        this.save();
     }
 
     display(): JSX.Element {
@@ -133,14 +140,14 @@ export class Editor extends srceditor.Editor {
 
         return (
             <div className="ui content">
-                <h3 className="ui small header">
+                <div className="ui small header">
                     <div className="content">
-                        <sui.Button title={lf("Go back")} tabIndex={0} onClick={this.goBack} onKeyDown={sui.fireClickOnEnter}>
+                        <sui.Button autoFocus title={lf("Go back")} tabIndex={0} onClick={this.goBack} onKeyDown={fireClickOnEnter}>
                             <sui.Icon icon="arrow left" />
                             <span className="ui text landscape only">{lf("Go back")}</span>
                         </sui.Button>
                     </div>
-                </h3>
+                </div>
                 <div className="ui segment form text">
                     <sui.Input ref={this.handleNameInputRef} id={"fileNameInput"} label={lf("Name")} ariaLabel={lf("Type a name for your project")} value={c.name || ''} onChange={this.setFileName} autoComplete={false} />
                     {userConfigs.map(uc =>
@@ -151,7 +158,7 @@ export class Editor extends srceditor.Editor {
                             applyUserConfig={this.applyUserConfig} />
                     )}
                     <sui.Field>
-                        <sui.Button text={lf("Save")} className={`green ${this.isSaving ? 'disabled' : ''}`} onClick={this.save} />
+                        <sui.Button text={lf("Save")} className={`green ${this.isSaving ? 'disabled' : ''}`} onClick={this.saveOnClick} />
                         <sui.Button text={lf("Edit Settings As text")} onClick={this.editSettingsText} />
                     </sui.Field>
                 </div>
@@ -169,7 +176,7 @@ export class Editor extends srceditor.Editor {
     }
 
     getCurrentSource() {
-        return JSON.stringify(this.config, null, 4) + "\n"
+        return pxt.Package.stringifyConfig(this.config);
     }
 
     acceptsFile(file: pkg.File) {
@@ -198,7 +205,7 @@ export class Editor extends srceditor.Editor {
     }
 
     unloadFileAsync(): Promise<void> {
-        if (this.changeMade) {
+        if (this.changeMade && !this.parent.state?.home) {
             return this.parent.reloadHeaderAsync();
         }
         return Promise.resolve();
@@ -236,7 +243,7 @@ class UserConfigCheckbox extends data.Component<UserConfigCheckboxProps, {}> {
 
         return <sui.Checkbox
             key={`userconfig-${uc.description}`}
-            inputLabel={uc.description}
+            inputLabel={pxt.Util.rlf(uc.description)}
             checked={isChecked}
             onChange={this.applyUserConfig} />
     }

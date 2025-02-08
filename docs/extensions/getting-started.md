@@ -4,6 +4,16 @@ This guide describes a simple setup that requires nothing, but a web browser.
 We have another guide, if you want to
 [use command line tools](/extensions/getting-started/vscode).
 
+### ~ hint
+
+#### Making an extension
+
+Watch this overview video on making your own MakeCode extension.
+
+https://youtu.be/XSskpMEHYlo
+
+### ~
+
 ## Step 1: Design blocks in the editor
 
 It is easiest to tinker and design your blocks from the editor itself. 
@@ -13,9 +23,9 @@ Use the [custom blocks feature](/defining-blocks) for this purpose.
 
 You will need to get a [GitHub](https://github.com) account and create a GitHub repository. At this time, other repository hosting solutions (GitLab, Bitbucket, etc.) are not supported.
 
-From the main editor screen, go to the gear wheel and **Extensions**. Click on **GitHub login**
-at the bottom of the list
-and follow prompts to generate a personal access token (make sure to select the **repo** checkbox). 
+Create a new project from the home screen. In the editor, click on the **GitHub** button next to the
+**Save Project** window and button. You'll then be prompted to sign in to GitHub (if you don't already
+have a GitHub account, you can create one by clicking the link on the sign in page).
 Once logged in, the Import dialog 
 on the home screen should have an option to create
 a new GitHub repository or clone an existing one. Follow it.

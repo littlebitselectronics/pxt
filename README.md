@@ -2,9 +2,6 @@
 
 * [Try out the editors in your browser...](https://makecode.com)
 
-[![Build Status](https://travis-ci.org/microsoft/pxt.svg?branch=master)](https://travis-ci.org/microsoft/pxt) 
-[![Community Discord](https://img.shields.io/discord/448979533891371018.svg)](https://aka.ms/makecodecommunity)
-
 Microsoft MakeCode is based on the open source project [Microsoft Programming Experience Toolkit (PXT)](https://github.com/microsoft/pxt). ``Microsoft MakeCode`` is the name in the user-facing editors, ``PXT`` is used in all the GitHub sources.
 
 PXT is a framework for creating special-purpose programming experiences for
@@ -23,7 +20,7 @@ More info:
 * [About](https://makecode.com/about)
 * [Documentation](https://makecode.com/docs)
 
-Examples of Editors built with PXT:
+Examples of Editors built with MakeCode:
 
 * https://makecode.microbit.org
 * https://arcade.makecode.com
@@ -58,7 +55,7 @@ If you run `npm i` afterwards (in either the target or pxt), you might need to r
 
 ## Build
 
-First, install [Node](https://nodejs.org/en/): minimum version 8. 
+First, install [Node](https://nodejs.org/en/): minimum version 8.
 
 To build the PXT command line tools:
 
@@ -73,10 +70,35 @@ Then install the `pxt` command line tool (only need to do it once):
 npm install -g pxt
 ```
 
+Then install `gulp` (only need to do it once):
+```
+npm install -g gulp
+```
+
 After this you can run `pxt` from anywhere within the build tree.
 
 To start the local web server, run `pxt serve` from within the root
 of an app target (e.g. pxt-microbit). PXT will open the editor in your default web browser.
+
+If you are developing against pxt, you can run `gulp watch` from within the root of the
+pxt repository to watch for changes and rebuild.
+
+```
+gulp watch
+```
+
+If you are working on the CLI exclusively,
+
+```
+gulp watchCli
+```
+
+If you don't need to build the suite of associated webapps (skillmap, multiplayer, etc.), you can skip them and speed up your build a bit:
+
+```
+gulp --no-webapps
+```
+
 
 ### Icons
 
@@ -91,6 +113,17 @@ If you're having trouble with display of the icon you created, try:
 npm install -g svgo
 svgo svgicons/myicon.svg
 ```
+
+### Shared Styling
+
+When adding a CSS color or other style element that will be shared across editor targets (e.g. micro:bit, Arcade) and sub-applications (a.k.a. "CRAs", like skillmap, teachertool, etc.). Declare a CSS variable for it in `theme/themepacks.less`:
+
+1. Add the new variable to the `:root` pseudo-class. Choose a reasonable default value according to the guidlines in the file.
+2. Add the new variable to all theme classes defined in that file. At the time of this writing, only `theme-highcontrast` is defined. Choose a value that works well for the given theme.
+3. Add the new variable to the theme overrides for each target. This will be done in the target repo's `theme/themepacks.less` file (e.g. pxt-microbit, pxt-arcade).
+
+Variables declared this way will be available to CRAs at runtime, and they will be initialized with the override values defined by the target in which they're running.
+
 
 ### Documentation Highlighting
 

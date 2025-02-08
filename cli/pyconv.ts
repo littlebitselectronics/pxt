@@ -412,7 +412,7 @@ namespace py {
     }
     export interface Constant extends Expr {
         kind: "Constant";
-        value: any; // ??? 
+        value: any; // ???
     }
 
     // the following expression can appear in assignment context
@@ -453,7 +453,7 @@ namespace py {
 }
 
 
-/* tslint:disable:no-trailing-whitespace */
+/* eslint-disable no-trailing-spaces */
 const convPy = `
 import ast
 import sys
@@ -470,7 +470,7 @@ def to_json(val):
         for attr_name in dir(val):
             if not attr_name.startswith("_"):
                 js[attr_name] = to_json(getattr(val, attr_name))
-        return js    
+        return js
     if isinstance(val, (bytearray, bytes)):
         return [x for x in val]
     raise Exception("unhandled: %s (type %s)" % (val, type(val)))
@@ -480,7 +480,7 @@ for fn in @files@:
     js[fn] = to_json(ast.parse(open(fn, "r").read()))
 print(json.dumps(js))
 `
-/* tslint:enable:no-trailing-whitespace */
+/* eslint-enable no-trailing-spaces */
 
 const nameMap: Map<string> = {
     "Expr": "ExprStmt",
@@ -1443,7 +1443,6 @@ let funMap: Map<FunOverride> = {
     "ustruct.calcsize": { n: "pins.packedSize", t: tpNumber },
     "pins.I2CDevice.read_into": { n: ".readInto", t: tpVoid },
     "bool": { n: "!!", t: tpBoolean },
-    "Array.index": { n: ".indexOf", t: tpNumber },
     "time.sleep": { n: "pause", t: tpVoid, scale: 1000 }
 }
 
@@ -1481,9 +1480,7 @@ const exprMap: Map<(v: py.Expr) => B.JsNode> = {
                     else {
                         let ee = elts.shift()
                         let et = ee ? expr(ee) : B.mkText("???")
-                        /* tslint:disable:no-invalid-template-strings */
                         res.push(B.mkText("${"), et, B.mkText("}"))
-                        /* tslint:enable:no-invalid-template-strings */
                     }
                     return ""
                 })

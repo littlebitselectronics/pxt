@@ -40,8 +40,12 @@ namespace ts.pxtc {
                         break;
                     case SyntaxKind.Identifier:
                         const decl: Declaration = getDecl(child);
-                        if (decl && decl.getSourceFile().fileName !== "main.ts" && decl.kind == SyntaxKind.VariableDeclaration) {
-                            pxtInfo(child).flags |= PxtNodeFlags.IsGlobalIdentifier;
+                        if (decl && decl.getSourceFile().fileName !== pxt.MAIN_TS && decl.kind == SyntaxKind.VariableDeclaration) {
+                            const info = pxtInfo(child);
+                            info.flags |= PxtNodeFlags.IsGlobalIdentifier;
+                            if (!info.commentAttrs) {
+                                info.commentAttrs = parseComments(decl);
+                            }
                         }
                         break;
 
@@ -112,7 +116,9 @@ namespace ts.pxtc {
                     case SK.SetAccessor:
                     case SK.MethodDeclaration:
                     case SK.MethodSignature:
-                        isMethod = true
+                        if (!isStatic(decl)) {
+                            isMethod = true
+                        }
                         break;
                     default:
                         break;

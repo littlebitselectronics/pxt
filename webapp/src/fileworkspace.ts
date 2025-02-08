@@ -1,5 +1,5 @@
 import * as core from "./core";
-import * as electron from "./electron";
+import * as pxteditor from "../../pxteditor";
 
 import U = pxt.Util;
 import Cloud = pxt.Cloud;
@@ -24,6 +24,9 @@ export function setApiAsync(f: (path: string, data?: any) => Promise<any>) {
 function getAsync(h: Header) {
     return apiAsync("pkg/" + h.path)
         .then((resp: pxt.FsPkg) => {
+            if (!resp?.files) {
+                return undefined;
+            }
             let r: pxt.workspace.File = {
                 header: h,
                 text: {},
@@ -39,15 +42,13 @@ function getAsync(h: Header) {
         })
 }
 
-const delText = {}
-
 function setAsync(h: Header, prevVersion: pxt.workspace.Version, text?: ScriptText): Promise<pxt.workspace.Version> {
     let pkg: pxt.FsPkg = {
         files: [],
         config: null,
         header: h,
         path: h.path,
-        isDeleted: text === delText
+        isDeleted: h.isDeleted
     }
 
     if (text) {
@@ -84,7 +85,8 @@ function setAsync(h: Header, prevVersion: pxt.workspace.Version, text?: ScriptTe
 }
 
 function deleteAsync(h: Header, prevVer: any) {
-    return setAsync(h, prevVer, delText)
+    h.isDeleted = true;
+    return setAsync(h, prevVer, {});
 }
 
 async function listAsync(): Promise<Header[]> {
@@ -94,7 +96,7 @@ async function listAsync(): Promise<Header[]> {
             let time = pkg.files.map(f => f.mtime)
             time.sort((a, b) => b - a)
             let modTime = Math.round(time[0] / 1000) || U.nowSeconds()
-            pkg.header = pxt.workspace.freshHeader(pkg.config.name, modTime)
+            pkg.header = pxteditor.workspace.freshHeader(pkg.config.name, modTime)
             if (pkg.config.preferredEditor)
                 pkg.header.editor = pkg.config.preferredEditor
             pkg.header.path = pkg.path

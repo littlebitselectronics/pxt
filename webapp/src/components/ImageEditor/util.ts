@@ -1,4 +1,4 @@
-import { ImageState, Bitmap } from "./store/bitmap";
+import { EditState } from "./toolDefinitions";
 
 export const DRAG_RADIUS = 3;
 
@@ -95,6 +95,18 @@ export function clientCoord(ev: PointerEvent | MouseEvent | TouchEvent): ClientC
         return te.changedTouches[0];
     }
     return (ev as PointerEvent | MouseEvent);
+}
+
+/**
+ * Similar to fireClickOnEnter, but interactions limited to enter key / ignores
+ * space bar.
+ */
+export function fireClickOnlyOnEnter(e: React.KeyboardEvent<HTMLElement>): void {
+    const charCode = (typeof e.which == "number") ? e.which : e.keyCode;
+    if (charCode === 13 /** enter key **/) {
+        e.preventDefault();
+        (e.currentTarget as HTMLElement).click();
+    }
 }
 
 export interface GestureTarget {
@@ -289,10 +301,10 @@ function isRightClick(ev: MouseEvent | PointerEvent | TouchEvent) {
 export interface Color { r: number, g: number, b: number, a?: number }
 
 
-export function imageStateToBitmap(state: ImageState) {
-    const base = Bitmap.fromData(state.bitmap);
-    if (state.floatingLayer) {
-        const floating = Bitmap.fromData(state.floatingLayer)
+export function imageStateToBitmap(state: pxt.sprite.ImageState) {
+    const base = pxt.sprite.Bitmap.fromData(state.bitmap).copy();
+    if (state.floating && state.floating.bitmap) {
+        const floating = pxt.sprite.Bitmap.fromData(state.floating.bitmap);
         floating.x0 = state.layerOffsetX || 0;
         floating.y0 = state.layerOffsetY || 0;
 
@@ -300,4 +312,66 @@ export function imageStateToBitmap(state: ImageState) {
     }
 
     return base;
+}
+
+export function imageStateToTilemap(state: pxt.sprite.ImageState) {
+    const base = pxt.sprite.Tilemap.fromData(state.bitmap).copy();
+    if (state.floating && state.floating.bitmap) {
+        const floating = pxt.sprite.Tilemap.fromData(state.floating.bitmap);
+        floating.x0 = state.layerOffsetX || 0;
+        floating.y0 = state.layerOffsetY || 0;
+
+        base.apply(floating, true);
+    }
+
+    return base;
+}
+
+export function applyBitmapData(bitmap: pxt.sprite.BitmapData, data: pxt.sprite.BitmapData, x0: number = 0, y0: number = 0): pxt.sprite.BitmapData {
+    if (!bitmap || !data) return bitmap;
+    const base = pxt.sprite.Bitmap.fromData(bitmap);
+    const layer = pxt.sprite.Bitmap.fromData(data);
+    layer.x0 = x0;
+    layer.y0 = y0;
+    base.apply(layer, true);
+    return base.data();
+}
+
+
+export interface TilemapPatch {
+    map: string;
+    layers: string[];
+    tiles: string[];
+}
+
+export function createTilemapPatchFromFloatingLayer(editState: EditState, tileset: pxt.TileSet): TilemapPatch {
+    if (!editState.floating) return undefined;
+
+    const tilemap = pxt.sprite.Tilemap.fromData(editState.floating.image.data());
+    const copyTilemap = new pxt.sprite.Tilemap(tilemap.width, tilemap.height);
+    const layers = editState.floating.overlayLayers ?
+        editState.floating.overlayLayers.map(bitmap => pxt.sprite.base64EncodeBitmap(bitmap.data())) : [];
+
+    let referencedTiles: pxt.Tile[] = [];
+    for (let x = 0; x < tilemap.width; x++) {
+        for (let y = 0; y < tilemap.height; y++) {
+            const tile = tileset.tiles[tilemap.get(x, y)]
+            const index = referencedTiles.indexOf(tile);
+
+            if (index === -1) {
+                copyTilemap.set(x, y, referencedTiles.length);
+                referencedTiles.push(tile);
+            }
+            else {
+                copyTilemap.set(x, y, index);
+            }
+        }
+    }
+
+
+    return {
+        map: pxt.sprite.hexEncodeTilemap(copyTilemap),
+        layers,
+        tiles: referencedTiles.map(t => pxt.sprite.base64EncodeBitmap(t.bitmap))
+    };
 }

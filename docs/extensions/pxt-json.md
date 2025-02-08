@@ -5,11 +5,13 @@ is described by the `pxt.json` file. To show a real example, here is the [pxt.js
 
 The `pxt.json` is described by the interface `PackageConfig` in [pxtpackage.d.ts](https://github.com/microsoft/pxt/blob/master/localtypings/pxtpackage.d.ts#L15-L43):
 
-## ~ hint
+### ~ hint
+
+#### Package terminology
 
 **Packages** are now referred to as **extensions**. The use of the _package_ name in identifiers implies _extension_.
 
-## ~
+### ~
 
 ```typescript-ignore
 interface PackageConfig {
@@ -34,6 +36,8 @@ interface PackageConfig {
     installedVersion?: string;
     targetVersions?: TargetVersions; // versions of the target/pxt the extension was compiled against
 
+    fileDependencies?: Map<string>; // exclude certain files if dependencies are not fulfilled
+    
     testFiles?: string[];
     testDependencies?: Map<string>;
     simFiles?: string[];
@@ -106,7 +110,68 @@ the online editor.
 They usually contain unit tests for extension.
 
 Similarly, dependencies from `testDependencies` are only included when compiled
-as top-level.
+as top-level. The ``testDependencies`` can be added for multiple targets
+and will only be added if they can be resolved.
+
+## File dependencies
+
+While not very common,
+in some extensions certain functionality should be only enabled when another
+extension is already present in the project.
+For example, a `weather` sensor package may have code for streaming weather
+data over radio, but that should be only enabled when there's already the `radio`
+extension in the project (to avoid problems on boards without radio, or when
+Bluetooth disables radio).
+Another solution to this problem is to create a new package `weather-radio`,
+which depends on `weather` and `radio`.
+This is advisable, when the additional functionality is sizable, otherwise
+it's better to keep the number of packages down.
+
+Example configuration:
+```typescript-ignore
+  ...
+  "files": [
+      "weather-reading.ts",
+      "weather-radio.ts",
+      "weather-jacdac.ts", 
+      "jd-helper.ts",
+      "README.md"
+  ],
+  "fileDependencies": {
+      "weather-radio.ts": "radio",
+      "weather-jacdac.ts": "jacdac",
+      "jd-helper.ts": "jacdac"
+  },
+  ...
+```
+
+Here, the file `weather-radio.ts` will be only included when `radio` is referenced in
+the project, and files `weather-jacdac.ts` and `jd-helper.ts` will be only included when
+`jacdac` is present.
+
+Typically, you would add `radio` and `jacdac` as `testDependencies`, so you can see
+the entire extension in the editor.
+There is no point in adding them as regular `dependencies` - that would negate the
+effects of `fileDependencies` and always include both the dependencies and files.
+
+In addition to package names, you can also use `target:microbit` or similar
+to indicate that the file should be only included when compiling for a specific MakeCode
+editor (other options include `target:maker` and `target:arcade`).
+
+Finally, boolean expressions are allowed, using `!`, `&&` and `||` operators.
+Parentheses are not allowed, and operator precedence is the same as in C or JavaScript
+(`!` binds tighter than `&&`, which binds tighter than `||`).
+
+```typescript-ignore
+  ...
+  "fileDependencies": {
+      "weather-radio.ts": "!bluetooth && target:microbit",
+      "weather-buttons.ts": "target:microbit && arcade-controls || target:arcade"
+  },
+  ...
+```
+
+In future, we may allow things like `"radio >= 1.2.3"`.
 
 ## C++ dependencies
 
@@ -119,3 +184,47 @@ C++ code doesn't change and re-compilation (and thus cloud round-trip) is not re
 
 [adafruit]: https://github.com/microsoft/pxt-adafruit
 [common-packages]: https://github.com/microsoft/pxt-common-packages
+
+## Setting C++ constants for DAL config - yotta
+
+Constants defined to form part of the `config.h` file for the the DAL platform used in the build are set in the `"yotta"` section. The `config` type is either `codal` or `microbit-dal`:
+
+CODAL example:
+
+```json
+    "yotta": {
+        "config": {
+            "codal": {
+                "component_count": 64,
+                "dmesg_buffer_size": 1024
+            }
+        }
+    }
+```
+
+micro:bit DAL example:
+
+```json
+    "yotta": {
+        "config": {
+            "microbit-dal": {
+                "bluetooth": {
+                    "enabled": 1
+                }
+            }
+        }
+    }
+```
+
+If not referring to a specific DAL platform, define simple `cpp` constants like this:
+
+```json
+    "yotta": {
+        "config": {
+            "DEVICE_USB": 1,
+            "DEVICE_MOUSE": 1
+        }
+    }
+```
+
+See this [sample repo](https://github.com/lancaster-university/microbit-samples) for `config.json` examples of setting various hardware device constants.

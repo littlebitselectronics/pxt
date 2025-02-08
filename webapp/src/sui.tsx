@@ -5,6 +5,9 @@ import * as ReactTooltip from 'react-tooltip';
 
 import * as data from "./data";
 import * as core from "./core";
+import * as auth from "./auth";
+import { fireClickOnEnter } from "./util";
+import { focusLastActive } from "../../react-common/components/util";
 
 export const appElement = document.getElementById('content');
 
@@ -13,13 +16,15 @@ export interface UiProps {
     iconClass?: string;
     text?: string;
     textClass?: string;
-    children?: any;
+    children?: React.ReactNode;
     className?: string;
     role?: string;
     title?: string;
     ariaLabel?: string;
+    ariaHidden?: boolean;
     tabIndex?: number;
     rightIcon?: boolean;
+    inverted?: boolean;
 }
 
 export type SIZES = 'mini' | 'tiny' | 'small' | 'medium' | 'large' | 'big' | 'huge' | 'massive';
@@ -33,24 +38,16 @@ export function cx(classes: string[]): string {
 }
 
 function genericClassName(cls: string, props: UiProps, ignoreIcon: boolean = false): string {
-    return `${cls} ${ignoreIcon ? '' : props.icon && props.text ? 'icon icon-and-text' : props.icon ? 'icon' : ""} ${props.className || ""}`;
+    return `${cls} ${ignoreIcon ? '' : props.icon && props.text ? 'icon icon-and-text' : props.icon ? 'icon' : ""} ${props.inverted ? 'inverted' : ''} ${props.className || ""}`;
 }
 
-function genericContent(props: UiProps) {
+export function genericContent(props: UiProps) {
     let retVal = [
         props.icon ? (<Icon key='iconkey' icon={props.icon + (props.text ? " icon-and-text " : "") + (props.iconClass ? " " + props.iconClass : '')} />) : null,
         props.text ? (<span key='textkey' className={'ui text' + (props.textClass ? ' ' + props.textClass : '')}>{props.text}</span>) : null,
     ]
     if (props.icon && props.rightIcon) retVal = retVal.reverse();
     return retVal;
-}
-
-export function fireClickOnEnter(e: React.KeyboardEvent<HTMLElement>): void {
-    const charCode = core.keyCodeFromEvent(e);
-    if (charCode === core.ENTER_KEY || charCode === core.SPACE_KEY) {
-        e.preventDefault();
-        (e.currentTarget as HTMLElement).click();
-    }
 }
 
 export class UIElement<T, S> extends data.Component<T, S> {
@@ -70,6 +67,13 @@ export interface DropdownProps extends UiProps {
     title?: string;
     id?: string;
     onChange?: (v: string) => void;
+    onClick?: () => boolean;    // Return 'true' to toggle open/close
+
+    titleContent?: React.ReactNode;
+    displayAbove?: boolean;
+    displayRight?: boolean;
+    displayLeft?: boolean;
+    dataTooltip?: string;
 }
 
 export interface DropdownState {
@@ -87,10 +91,13 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         this.setState({ open: false });
     }
 
-    toggle() {
+    toggle(focusFirst?: boolean) {
         if (this.state.open) {
             this.hide();
         } else {
+            if (focusFirst) {
+                this.focusFirst = true;
+            }
             this.show();
         }
     }
@@ -100,7 +107,7 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         el.focus();
     }
 
-    private blur(el: HTMLElement) {
+    private setInactive(el: HTMLElement) {
         if (this.isActive(el)) {
             pxt.BrowserUtils.removeClass(el, "active");
         }
@@ -123,76 +130,29 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             const child = menu.childNodes[i] as HTMLElement;
             // Remove separators
             if (pxt.BrowserUtils.containsClass(child, "divider")) continue;
-            // Check if item is intended for mobile only views
-            if (pxt.BrowserUtils.containsClass(child, "mobile") && !pxt.BrowserUtils.isMobile()) continue;
+            // Check if item is visible. Some items are intended for mobile only views.
+            if (!child.offsetParent) continue;
             children.push(child);
         }
         return children;
     }
 
     isChildFocused() {
-        const children = this.getChildren();
-        for (let i = 0; i < children.length; i++) {
-            if (document.activeElement === children[i]) return true;
-        }
-        return false;
+        const menu = this.refs["menu"] as HTMLElement;
+        return menu.contains(document.activeElement);
     }
 
-    private navigateToNextElement = (e: KeyboardEvent, prev: HTMLElement, next: HTMLElement) => {
-        const dropdown = this.refs["dropdown"] as HTMLElement;
-        const charCode = core.keyCodeFromEvent(e);
-        const current = e.currentTarget as HTMLElement;
-        if (charCode === 40 /* Down arrow */) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (next) {
-                this.focus(next);
-            }
-        } else if (charCode === 38 /* Up arrow */) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (prev) {
-                this.focus(prev);
-            } else {
-                // Prev is undefined, go to dropdown
-                dropdown.focus();
-                this.setState({ open: false });
-            }
-        } else if (charCode === core.SPACE_KEY || charCode === core.ENTER_KEY) {
-            // Trigger click
-            e.preventDefault();
-            e.stopPropagation();
-            current.click();
+    handleFocusCapture = (e: React.FocusEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement;
+        if (target && this.getChildren().includes(target)) {
+            this.setActive(target);
         }
     }
 
-    componentDidMount() {
-        const children = this.getChildren();
-        for (let i = 0; i < children.length; i++) {
-            const prev = i > 0 ? children[i - 1] as HTMLElement : undefined;
-            const child = children[i] as HTMLElement;
-            const next = i < children.length ? children[i + 1] as HTMLElement : undefined;
-
-            child.addEventListener('keydown', (e) => {
-                this.navigateToNextElement(e, prev, next);
-            })
-
-            child.addEventListener('focus', (e: FocusEvent) => {
-                this.setActive(child);
-            })
-            child.addEventListener('blur', (e: FocusEvent) => {
-                this.blur(child);
-            })
-
-            if (i == children.length - 1) {
-                // set tab on last child to clear focus
-                child.addEventListener('keydown', (e) => {
-                    const charCode = core.keyCodeFromEvent(e);
-                    if (!e.shiftKey && charCode === core.TAB_KEY) {
-                        this.hide();
-                    }
-                })
-            }
+    handleBlurCapture = (e: React.FocusEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement;
+        if (target && this.getChildren().includes(target)) {
+            this.setInactive(target);
         }
     }
 
@@ -252,7 +212,8 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
     }
 
     private handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        this.toggle();
+        if (!this.props.onClick || this.props.onClick())
+            this.toggle();
         e.stopPropagation()
     }
 
@@ -290,21 +251,60 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         }, 1);
     }
 
+    protected captureMouseEvent = (e: React.MouseEvent) => {
+        e.stopPropagation();
+    }
+
     private focusFirst: boolean;
     private handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        const dropdown = this.refs["dropdown"] as HTMLElement;
+        const children = this.getChildren();
+        const activeElementIndex = children.findIndex(el => this.isActive(el));
+        const activeChild = children[activeElementIndex];
+        const prev = activeElementIndex > 0 ? children[activeElementIndex - 1] as HTMLElement : undefined;
+        const next = activeElementIndex < children.length ? children[activeElementIndex + 1] as HTMLElement : undefined;
         const charCode = core.keyCodeFromEvent(e);
-        if (charCode === 40 /* Down arrow key */) {
+        if (charCode === 40 /* Down arrow */) {
             e.preventDefault();
-            this.focusFirst = true;
-            this.show();
+            e.stopPropagation();
+            // Show dropdown menu if not open
+            if (!this.state.open) {
+                this.focusFirst = true;
+                this.show();
+            }
+            if (next) {
+                this.focus(next);
+            }
+        } else if (charCode === 38 /* Up arrow */) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (prev) {
+                this.focus(prev);
+            } else {
+                // Prev is undefined, go to dropdown
+                dropdown.focus();
+                this.hide();
+            }
         } else if (charCode === core.SPACE_KEY || charCode === core.ENTER_KEY) {
+            // Trigger click on menu item or dropdown
             e.preventDefault();
-            this.toggle();
+            e.stopPropagation();
+            if (activeChild) {
+                activeChild.click();
+            } else {
+                this.toggle(true);
+            }
+        } else if (activeElementIndex === children.length - 1 && !e.shiftKey && charCode === core.TAB_KEY) {
+            if (activeChild) {
+                this.setInactive(activeChild)
+            }
+            this.hide();
         }
     }
 
     renderCore() {
-        const { disabled, title, role, icon, className, children } = this.props;
+        const { disabled, title, role, icon, className, titleContent, children,
+            displayAbove, displayLeft, displayRight, dataTooltip } = this.props;
         const { open } = this.state;
 
         const aria = {
@@ -324,28 +324,149 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             'dropdown',
             icon ? 'icon' : '',
             className || '',
+            displayAbove ? 'menuAbove' : '',
+            displayRight ? 'menuRight' : '',
+            displayLeft ? "menuLeft" : '',
+            disabled ? "disabled" : ''
         ]);
         const menuClasses = cx([
             'menu',
             open ? 'visible transition' : ''
         ])
+
         return (
             <div role="listbox" ref="dropdown" title={title} {...aria}
                 id={this.props.id}
                 className={classes}
+                data-tooltip={dataTooltip}
                 onMouseDown={this.handleMouseDown}
                 onClick={this.handleClick}
                 onKeyDown={this.handleKeyDown}
                 onFocus={this.handleFocus}
                 onBlur={this.handleBlur}
+                onBlurCapture={this.handleBlurCapture}
+                onFocusCapture={this.handleFocusCapture}
                 tabIndex={0}
             >
-                {genericContent(this.props)}
+                {titleContent ? titleContent : genericContent(this.props)}
                 <div ref="menu" {...menuAria} className={menuClasses}
-                    role="menu">
+                    role="menu"
+                    onMouseDown={this.captureMouseEvent}
+                    onClick={this.captureMouseEvent}
+                >
                     {children}
                 </div>
             </div>);
+    }
+}
+
+export interface ExpandableMenuProps {
+    title?: string;
+    onShow?: () => void;
+    onHide?: () => void;
+    children?: React.ReactNode;
+}
+
+export interface ExpandableMenuState {
+    expanded?: boolean;
+}
+
+export class ExpandableMenu extends UIElement<ExpandableMenuProps, ExpandableMenuState> {
+    hide = () => {
+        this.setState({ expanded: false });
+        const { onHide } = this.props;
+        if (onHide)
+            onHide();
+    }
+
+    show = () => {
+        this.setState({ expanded: true });
+        const { onShow } = this.props;
+        if (onShow)
+            onShow();
+    }
+
+    toggleExpanded = () => {
+        const { expanded } = this.state;
+
+        if (expanded) {
+            this.hide();
+        } else {
+            this.show();
+        }
+    }
+
+    render() {
+        const { title, children } = this.props;
+        const { expanded } = this.state
+
+        return (<div className="expandable-menu">
+            <Link
+                className="no-select menu-header"
+                icon={`no-select chevron ${expanded ? "down" : "right"}`}
+                text={title}
+                ariaExpanded={expanded}
+                onClick={this.toggleExpanded}
+                role="button" />
+            {expanded && <div className="expanded-items">
+                {children}
+            </div> }
+        </div>);
+    }
+}
+
+export interface SelectProps {
+    options: SelectItem[];
+    onChange?: (value: string) => void;
+    "aria-label"?: string;
+    label?: string;
+}
+
+export interface SelectState {
+    selected?: string;
+}
+
+export interface SelectItem {
+    value: string | number;
+    display?: string;
+}
+
+export class Select extends UIElement<SelectProps, SelectState> {
+    constructor(props: SelectProps) {
+        super(props);
+        const { options } = props;
+        this.state = {
+            selected: options[0] && (options[0].value + "")
+        };
+    }
+
+    handleOnChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
+        const { onChange } = this.props;
+        this.setState({
+            selected: ev.target.value
+        });
+
+        if (onChange) {
+            onChange(ev.target.value);
+        }
+    }
+
+    render() {
+        const { options, label, "aria-label": ariaLabel } = this.props;
+        const { selected } = this.state;
+
+        return (<div>
+            { label && `${label} ` }
+            <select value={selected} className="ui dropdown" onChange={this.handleOnChange} aria-label={ariaLabel} >
+                {options.map(opt =>
+                    opt && <option
+                        aria-selected={selected === opt.value}
+                        value={opt.value}
+                        key={opt.value}
+                    >{opt.display || opt.value}</option>
+                )}
+            </select>
+        </div>);
     }
 }
 
@@ -356,7 +477,10 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
 export interface ItemProps extends UiProps {
     active?: boolean;
     value?: string;
-    onClick?: () => void;
+    onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+    onMouseDown?: (e: any) => void;
+    onMouseUp?: (e: any) => void;
+    onMouseLeave?: (e: any) => void;
     onKeyDown?: (e: React.KeyboardEvent<HTMLElement>) => void;
 }
 
@@ -365,18 +489,26 @@ export class Item extends data.Component<ItemProps, {}> {
         const {
             text,
             title,
-            ariaLabel
+            ariaLabel,
+            ariaHidden
         } = this.props;
 
         return (
             <div className={genericClassName("ui item link", this.props, true) + ` ${this.props.active ? 'active' : ''}`}
                 role={this.props.role}
-                aria-label={ariaLabel || title || text}
+                aria-label={(!this.props.role || this.props.role === "presentation") ? "" : ariaLabel || title || text}
+                aria-selected={this.props.active}
+                aria-hidden={ariaHidden}
                 title={title || text}
                 tabIndex={this.props.tabIndex || 0}
                 key={this.props.value}
                 data-value={this.props.value}
                 onClick={this.props.onClick}
+                onMouseDown={this.props.onMouseDown}
+                onTouchStart={this.props.onMouseDown}
+                onMouseUp={this.props.onMouseUp}
+                onTouchEnd={this.props.onMouseUp}
+                onMouseLeave={this.props.onMouseLeave}
                 onKeyDown={this.props.onKeyDown || fireClickOnEnter}>
                 {genericContent(this.props)}
                 {this.props.children}
@@ -484,7 +616,9 @@ export interface LinkProps extends ButtonProps {
 export class Link extends StatelessUIElement<LinkProps> {
     renderCore() {
         return (
-            <a className={genericClassName("ui", this.props) + " " + (this.props.disabled ? "disabled" : "")}
+            <a className={genericClassName("ui", this.props)
+                + (this.props.loading ? " loading" : "")
+                + (this.props.disabled ? " disabled" : "")}
                 id={this.props.id}
                 href={this.props.href}
                 target={this.props.target}
@@ -507,7 +641,7 @@ export class Link extends StatelessUIElement<LinkProps> {
 }
 
 export function helpIconLink(url: string, title: string) {
-    return <Link href={url} icon="help circle" target="_blank" role="button" title={title} />
+    return <Link className="help-link" href={url} icon="help circle" target="_blank" role="link" title={title} />
 }
 
 ///////////////////////////////////////////////////////////
@@ -545,6 +679,7 @@ export interface InputProps {
     placeholder?: string;
     disabled?: boolean;
     onChange?: (v: string) => void;
+    onEnter?: () => void;
     lines?: number;
     readOnly?: boolean;
     copy?: boolean;
@@ -558,6 +693,7 @@ export interface InputProps {
 
 export interface InputState {
     value: string;
+    copied?: boolean;
 }
 
 export class Input extends data.Component<InputProps, InputState> {
@@ -570,6 +706,7 @@ export class Input extends data.Component<InputProps, InputState> {
         this.copy = this.copy.bind(this);
         this.handleClick = this.handleClick.bind(this);
         this.handleChange = this.handleChange.bind(this);
+        this.handleEnterPressed = this.handleEnterPressed.bind(this);
     }
 
     componentDidMount() {
@@ -580,7 +717,7 @@ export class Input extends data.Component<InputProps, InputState> {
         }
     }
 
-    componentWillReceiveProps(newProps: InputProps) {
+    UNSAFE_componentWillReceiveProps(newProps: InputProps) {
         this.setState({ value: newProps.value });
     }
 
@@ -589,8 +726,9 @@ export class Input extends data.Component<InputProps, InputState> {
     }
 
     copy() {
+        this.setState({ copied: false });
         const p = this.props
-        const el = ReactDOM.findDOMNode(this);
+        const el = ReactDOM.findDOMNode(this) as Element;
 
         if (!p.lines || p.lines == 1) {
             const inp = el.getElementsByTagName("input")[0] as HTMLInputElement;
@@ -605,7 +743,9 @@ export class Input extends data.Component<InputProps, InputState> {
         try {
             const success = document.execCommand("copy");
             pxt.debug('copy: ' + success);
+            this.setState({ copied: !!success });
         } catch (e) {
+            this.setState({ copied: false });
         }
     }
 
@@ -618,49 +758,62 @@ export class Input extends data.Component<InputProps, InputState> {
     handleChange(e: React.ChangeEvent<any>) {
         const newValue = (e.target as any).value;
         if (!this.props.readOnly && (!this.state || this.state.value !== newValue)) {
-            this.setState({ value: newValue })
+            this.setState({ value: newValue, copied: false })
         }
         if (this.props.onChange) {
             this.props.onChange(newValue);
         }
     }
 
+    handleEnterPressed(e: React.KeyboardEvent) {
+        const charCode = core.keyCodeFromEvent(e);
+        if (charCode === core.ENTER_KEY) {
+            const { onEnter } = this.props;
+            if (onEnter) {
+                e.preventDefault();
+                onEnter();
+            }
+        }
+    }
+
     renderCore() {
-        let p = this.props
-        let copyBtn = p.copy && document.queryCommandSupported('copy')
-            ? <Button className="ui right labeled primary icon button" text={lf("Copy")} icon="copy" onClick={this.copy} />
+        const p = this.props;
+        const { copy, error, ariaLabel, id, label, inputLabel, lines, autoFocus, placeholder, readOnly, autoComplete } = p;
+        const { value, copied } = this.state;
+        const copyBtn = copy && document.queryCommandSupported('copy')
+            ? <Button className={`ui right labeled ${copied ? "green" : "primary"} icon button`} text={copied ? lf("Copied!") : lf("Copy")} icon="copy" onClick={this.copy} />
             : null;
-        const { error } = this.props;
-        const { value } = this.state;
 
         return (
-            <Field ariaLabel={p.ariaLabel} htmlFor={p.id} label={p.label}>
-                <div className={"ui input" + (p.inputLabel ? " labelled" : "") + (p.copy ? " action fluid" : "") + (p.disabled ? " disabled" : "")}>
-                    {p.inputLabel ? (<div className="ui label">{p.inputLabel}</div>) : ""}
-                    {!p.lines || p.lines == 1 ? <input
+            <Field ariaLabel={ariaLabel} htmlFor={id} label={label}>
+                <div className={"ui input" + (p.inputLabel ? " labelled" : "") + (copy ? " action fluid" : "") + (p.disabled ? " disabled" : "")}>
+                    {inputLabel ? (<div className="ui label">{inputLabel}</div>) : ""}
+                    {!lines || lines == 1 ? <input
                         ref='inputField'
-                        autoFocus={p.autoFocus}
-                        id={p.id}
+                        autoFocus={autoFocus}
+                        id={id}
                         className={p.class || ""}
                         type={p.type || "text"}
-                        placeholder={p.placeholder} value={value || ''}
-                        readOnly={!!p.readOnly}
+                        placeholder={placeholder} value={value || ''}
+                        readOnly={!!readOnly}
                         onClick={this.handleClick}
                         onChange={this.handleChange}
-                        autoComplete={p.autoComplete ? "" : "off"}
-                        autoCorrect={p.autoComplete ? "" : "off"}
-                        autoCapitalize={p.autoComplete ? "" : "off"}
-                        spellCheck={p.autoComplete}
+                        onKeyDown={this.handleEnterPressed}
+                        autoComplete={autoComplete ? "" : "off"}
+                        autoCorrect={autoComplete ? "" : "off"}
+                        autoCapitalize={autoComplete ? "" : "off"}
+                        spellCheck={autoComplete}
                     />
                         : <textarea
-                            id={p.id}
-                            className={"ui input " + (p.class || "") + (p.inputLabel ? " labelled" : "")}
-                            rows={p.lines}
-                            placeholder={p.placeholder}
+                            id={id}
+                            className={"ui input " + (p.class || "") + (inputLabel ? " labelled" : "")}
+                            rows={lines}
+                            placeholder={placeholder}
                             value={value || ''}
-                            readOnly={!!p.readOnly}
+                            readOnly={!!readOnly}
                             onClick={this.handleClick}
-                            onChange={this.handleChange}>
+                            onChange={this.handleChange}
+                            onKeyDown={this.handleEnterPressed}>
                         </textarea>}
                     {copyBtn}
                 </div>
@@ -718,7 +871,7 @@ export interface IconProps extends UiProps {
     onKeyDown?: () => void;
 }
 
-export const Icon: React.StatelessComponent<IconProps> = (props: IconProps) => {
+export const Icon: React.FunctionComponent<IconProps> = (props: IconProps) => {
     const { icon, className, onClick, onKeyDown, children, ...rest } = props;
     return <i className={`icon ${icon} ${className ? className : ''}`}
         onClick={onClick}
@@ -773,6 +926,7 @@ export interface MenuItemProps {
     ariaControls?: string;
     id?: string;
     tabIndex?: number;
+    dataTooltip?: string;
 }
 
 export class MenuItem extends data.Component<MenuItemProps, {}> {
@@ -801,7 +955,8 @@ export class MenuItem extends data.Component<MenuItemProps, {}> {
             position,
             ariaControls,
             id,
-            tabIndex
+            tabIndex,
+            dataTooltip
         } = this.props;
 
         const classes = cx([
@@ -823,6 +978,7 @@ export class MenuItem extends data.Component<MenuItemProps, {}> {
         return (
             <div
                 id={id}
+                key={id}
                 tabIndex={tabIndex != null ? tabIndex : -1}
                 className={classes}
                 onClick={this.handleClick}
@@ -831,6 +987,7 @@ export class MenuItem extends data.Component<MenuItemProps, {}> {
                 aria-controls={ariaControls}
                 aria-selected={active}
                 aria-label={`${content || name}`}
+                data-tooltip={dataTooltip}
             >
                 {icon ? <Icon icon={icon} /> : undefined}
                 {content || name}
@@ -960,17 +1117,21 @@ export class Menu extends data.Component<MenuProps, MenuState> {
 ///////////////////////////////////////////////////////////
 
 export interface ModalButton {
-    label: string;
+    label?: string;
+    title?: string;
     icon?: string; // defaults to "checkmark"
     className?: string; // defaults "positive"
     onclick?: () => (Promise<void> | void);
     resolveVal?: number;
     url?: string;
+    urlButton?: boolean;
     fileName?: string;
     loading?: boolean;
     disabled?: boolean;
     approveButton?: boolean;
     labelPosition?: "left" | "right";
+    ariaLabel?: string;
+    noCloseOnClick?: boolean;
 }
 
 export interface ModalProps extends ReactModal.Props {
@@ -989,6 +1150,7 @@ export interface ModalProps extends ReactModal.Props {
     longer?: boolean;
 
     header?: string;
+    headerIcon?: string;
     headerClass?: string;
     description?: string;
 
@@ -997,20 +1159,23 @@ export interface ModalProps extends ReactModal.Props {
 
     helpUrl?: string;
     headerActions?: JSX.Element[];
+    actions?: JSX.Element[];
     buttons?: ModalButton[];
     onPositionChanged?: Function;
     allowResetFocus?: boolean;
     modalDidOpen?: (ref: HTMLElement) => void;
     overlayClassName?: string;
+    dontRestoreFocus?: boolean;
 }
 
 interface ModalState {
     marginTop?: number;
     scrolling?: boolean;
     mountClasses?: string;
+    previouslyFocused?: Element;
 }
 
-export class Modal extends React.Component<ModalProps, ModalState> {
+export class Modal extends data.Component<ModalProps, ModalState> {
 
     private id: string;
     private animationRequestId: any;
@@ -1019,6 +1184,7 @@ export class Modal extends React.Component<ModalProps, ModalState> {
         super(props);
         this.id = ts.pxtc.Util.guidGen();
         this.state = {
+            previouslyFocused: document.activeElement
         }
 
         this.onRequestClose = this.onRequestClose.bind(this);
@@ -1045,6 +1211,12 @@ export class Modal extends React.Component<ModalProps, ModalState> {
 
     componentWillUnmount() {
         cancelAnimationFrame(this.animationRequestId);
+        if (!this.props.dontRestoreFocus) {
+            let toFocus = this.state.previouslyFocused as HTMLElement;
+            if (toFocus) {
+                focusLastActive(toFocus);
+            }
+        }
     }
 
     setPositionAndClassNames = () => {
@@ -1095,10 +1267,10 @@ export class Modal extends React.Component<ModalProps, ModalState> {
         onClose();
     }
 
-    render() {
+    renderCore() {
         const { isOpen, size, longer, basic, className,
             onClose, closeIcon, children, onKeyDown,
-            header, headerClass, headerActions, helpUrl, description,
+            header, headerIcon, headerClass, headerActions, helpUrl, description,
             closeOnDimmerClick, closeOnDocumentClick, closeOnEscape,
             shouldCloseOnEsc, shouldCloseOnOverlayClick, shouldFocusAfterRender, overlayClassName, ...rest } = this.props;
         const { marginTop, scrolling, mountClasses } = this.state;
@@ -1115,14 +1287,14 @@ export class Modal extends React.Component<ModalProps, ModalState> {
             'modal transition visible active',
             className
         ]);
+        const hc = this.getData<boolean>(auth.HIGHCONTRAST);
         const portalClassName = cx([
-            core.highContrast ? 'hc' : '',
+            hc ? 'hc' : '',
             mountClasses
         ])
         const aria = {
             labelledby: header ? this.id + 'title' : undefined,
-            describedby: (!isFullscreen && description) ? this.id + 'description' : this.id + 'desc',
-            modal: 'true'
+            describedby: (!isFullscreen && description) ? this.id + 'description' : this.id + 'desc'
         }
         const customStyles = {
             content: {
@@ -1139,9 +1311,11 @@ export class Modal extends React.Component<ModalProps, ModalState> {
             overlayClassName={`ui page modals dimmer transition ${overlayClassName} ${isOpen ? 'visible active' : ''}`}
             className={classes}
             style={customStyles}
+            role="dialog"
             aria={aria} {...rest}>
             {header || showBack || helpUrl ? <div id={this.id + 'title'} className={"header " + (headerClass || "")}>
-                <span className="header-title" style={{ margin: `0 ${helpUrl ? '-20rem' : '0'} 0 ${showBack ? '-20rem' : '0'}` }}>{header}</span>
+                {headerIcon && <Icon icon={headerIcon} />}
+                <h3 className="header-title" style={{ margin: `0 ${helpUrl ? '-20rem' : '0'} 0 ${showBack ? '-20rem' : '0'}` }}>{header}</h3>
                 {showBack ? <div className="header-close">
                     <Button className="back-button large" title={lf("Go back")} onClick={onClose} tabIndex={0} onKeyDown={fireClickOnEnter}>
                         <Icon icon="arrow left" />
@@ -1150,7 +1324,7 @@ export class Modal extends React.Component<ModalProps, ModalState> {
                 </div> : undefined}
                 {helpUrl ?
                     <div className="header-help">
-                        <a className={`ui icon help-button`} href={helpUrl} target="_docs" role="button" aria-label={lf("Help on {0} dialog", header)}>
+                        <a className={`ui icon help-button`} href={helpUrl} target="_docs" role="link" aria-label={lf("Help on {0} dialog", header)} title={lf("Help on {0} dialog", header)}>
                             <Icon icon="help" />
                         </a>
                     </div>
@@ -1161,15 +1335,17 @@ export class Modal extends React.Component<ModalProps, ModalState> {
             <div id={this.id + 'desc'} className={`${longer ? 'scrolling' : ''} ${headerActions ? 'has-actions' : ''} content`}>
                 {children}
             </div>
-            {!isFullscreen && this.props.buttons && this.props.buttons.length > 0 ?
+            {!isFullscreen && (this.props.actions && this.props.actions.length || this.props.buttons && this.props.buttons.length) ?
                 <div className="actions">
-                    {this.props.buttons.map(action =>
+                    {this.props.actions?.map((action, i) => <div key={`action_left_${i}`} className="left-action">{action}</div>)}
+                    {this.props.buttons?.map(action =>
                         action.url ?
                             <Link
                                 key={`action_${action.label}`}
                                 icon={action.icon}
                                 text={action.label}
-                                className={`ui button approve ${action.icon ? 'icon right labeled' : ''} ${action.className || ''} ${action.loading ? "loading disabled" : ""} ${action.disabled ? "disabled" : ""}`}
+                                title={action.title || action.label}
+                                className={`ui button approve ${action.icon ? 'icon right' : ''} ${(action.label && !action.urlButton) ? 'labeled' : ''} ${action.className || ''} ${action.loading ? "loading disabled" : ""} ${action.disabled ? "disabled" : ""}`}
                                 href={action.url}
                                 target={!action.fileName ? '_blank' : undefined}
                                 download={action.fileName ? pxt.Util.htmlEscape(action.fileName) : undefined}
@@ -1194,7 +1370,7 @@ class ModalButtonElement extends data.PureComponent<ModalButton, {}> {
     }
 
     handleClick() {
-        if (!this.props.disabled)
+        if (!this.props.disabled && this.props.onclick)
             this.props.onclick();
     }
 
@@ -1206,7 +1382,9 @@ class ModalButtonElement extends data.PureComponent<ModalButton, {}> {
             labelPosition={action.labelPosition}
             className={`approve ${action.icon ? `icon ${action.labelPosition ? action.labelPosition : 'right'} labeled` : ''} ${action.className || ''} ${action.loading ? "loading disabled" : ""} ${action.disabled ? "disabled" : ""}`}
             onClick={this.handleClick}
-            onKeyDown={fireClickOnEnter} />
+            onKeyDown={fireClickOnEnter}
+            ariaLabel={this.props.ariaLabel ? this.props.ariaLabel : this.props.label}
+            title={this.props.title}/>
     }
 }
 
@@ -1253,6 +1431,7 @@ export class Dimmer extends UIElement<DimmerProps, DimmerState> {
             shouldCloseOnOverlayClick={closable}
             onRequestClose={onClose}
             overlayClassName={portalClasses}
+            role="dialog"
             {...rest}>
             {children}
         </ReactModal>
@@ -1372,6 +1551,7 @@ export class ProgressCircle extends React.Component<ProgressCircleProps, {}> {
 
 export interface PlainCheckboxProps {
     label: string;
+    isChecked?: boolean;
     onChange: (v: boolean) => void;
 }
 
@@ -1383,7 +1563,7 @@ export class PlainCheckbox extends data.Component<PlainCheckboxProps, PlainCheck
     constructor(props: PlainCheckboxProps) {
         super(props);
         this.state = {
-            isChecked: false
+            isChecked: this.props.isChecked
         }
         this.setCheckedBit = this.setCheckedBit.bind(this);
     }

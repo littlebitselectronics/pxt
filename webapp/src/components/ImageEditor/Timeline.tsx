@@ -1,16 +1,16 @@
 import * as React from "react";
 import { connect } from "react-redux";
 
-import { ImageEditorStore } from "./store/imageReducer";
+import { ImageEditorStore, AnimationState } from "./store/imageReducer";
 import { dispatchChangeCurrentFrame, dispatchNewFrame, dispatchDuplicateFrame, dispatchDeleteFrame, dispatchMoveFrame } from "./actions/dispatch";
 
-import { ImageState, Bitmap } from "./store/bitmap";
 import { TimelineFrame } from "./TimelineFrame";
 import { bindGestureEvents, ClientCoordinates } from "./util";
+import { Button } from "../../../../react-common/components/controls/Button";
 
 interface TimelineProps {
     colors: string[];
-    frames: ImageState[];
+    frames: pxt.sprite.ImageState[];
     currentFrame: number;
     interval: number;
     previewAnimating: boolean;
@@ -29,10 +29,11 @@ interface TimelineState {
 
 export class TimelineImpl extends React.Component<TimelineProps, TimelineState> {
     protected handlers: (() => void)[] = [];
-    protected canvas: HTMLCanvasElement;
     protected frameScroller: HTMLDivElement;
     protected scrollOffset = 0;
     protected dragEnd = false;
+    protected animHandler: any;
+    protected lastTimestamp: number;
 
     constructor(props: TimelineProps) {
         super(props);
@@ -44,7 +45,7 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
         const { isMovingFrame, dropPreviewIndex } = this.state;
 
         let renderFrames = frames.slice();
-        let dragFrame: ImageState;
+        let dragFrame: pxt.sprite.ImageState;
 
         if (isMovingFrame) {
             dragFrame = frames[currentFrame];
@@ -54,7 +55,7 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
         }
 
         return (
-            <div className="image-editor-timeline">
+            <div className={`image-editor-timeline ${pxt.BrowserUtils.isEdge() ? 'edge' : ''}`}>
                 <div className="image-editor-timeline-preview" >
                     <TimelineFrame frames={previewAnimating ? frames : [frames[currentFrame]]} colors={colors} interval={interval} animating={true} />
                 </div>
@@ -83,9 +84,12 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
                                     deleteFrame={this.deleteFrame} />
                             </div>
                         }
-                        <div className="image-editor-timeline-frame collapsed" role="button" onClick={this.newFrame}>
-                            <span className="ms-Icon ms-Icon--Add" />
-                        </div>
+                        <Button
+                            className="image-editor-button add-frame-button toggle"
+                            title={lf("Add new frame")}
+                            onClick={this.newFrame}
+                            leftIcon="ms-Icon ms-Icon--Add"
+                        />
                     </div>
                 </div>
             </div>
@@ -93,12 +97,11 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
     }
 
     componentDidMount() {
-        this.canvas = this.refs["preview-canvas"] as HTMLCanvasElement;
         this.frameScroller = this.refs["frame-scroller-ref"] as HTMLDivElement;
-        this.redraw();
 
         let last: number;
         let isScroll = false;
+        let offsetY = 0;
         bindGestureEvents(this.frameScroller, {
             onClick: coord => {
                 this.dragEnd = false;
@@ -107,11 +110,18 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
                 last = coord.clientY;
                 pxt.BrowserUtils.addClass(this.frameScroller, "scrolling");
 
-                const parent = this.frameScroller.getBoundingClientRect();
-                const scrollY = coord.clientY - parent.top;
+                let index = -1;
 
-                const unit = this.frameScroller.firstElementChild.getBoundingClientRect().height;
-                const index = Math.floor(scrollY / unit);
+                for (let i = 0; i < this.frameScroller.childElementCount; i++) {
+                    const el = this.frameScroller.children.item(i);
+
+                    const rect = el.getBoundingClientRect();
+                    if (coord.clientY >= rect.top && coord.clientY <= rect.bottom) {
+                        index = i;
+                        offsetY = coord.clientY - rect.top;
+                        break;
+                    }
+                }
 
                 isScroll = index !== this.props.currentFrame;
             },
@@ -137,7 +147,7 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
                     }
                 }
                 else {
-                    this.updateDragDrop(coord);
+                    this.updateDragDrop(coord, offsetY);
                 }
             },
             onDragEnd: () => {
@@ -178,10 +188,6 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
         });
     }
 
-    componentDidUpdate() {
-        this.redraw();
-    }
-
     protected clickHandler(index: number) {
         if (!this.handlers[index]) this.handlers[index] = () => {
             const { currentFrame, dispatchChangeCurrentFrame } = this.props;
@@ -208,51 +214,59 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
         else dispatchNewFrame();
     }
 
-    protected redraw() {
-        if (!this.canvas) return;
-
-        const { frames, currentFrame } = this.props;
-
-        const imageState = frames[currentFrame];
-
-        this.canvas.height = imageState.bitmap.height;
-        this.canvas.width = imageState.bitmap.width;
-
-        const bitmap = Bitmap.fromData(imageState.bitmap);
-        this.drawBitmap(bitmap);
-
-        if (imageState.floatingLayer) {
-            const floating = Bitmap.fromData(imageState.floatingLayer);
-            this.drawBitmap(floating, imageState.layerOffsetX, imageState.layerOffsetY, true);
+    protected updateDragDrop(coord: ClientCoordinates, offsetY: number) {
+        if (this.animHandler) {
+            cancelAnimationFrame(this.animHandler);
+            this.animHandler = undefined;
         }
-    }
+        else {
+            this.lastTimestamp = undefined;
+        }
 
-    protected drawBitmap(bitmap: Bitmap, x0 = 0, y0 = 0, transparent = false) {
-        const { colors } = this.props;
+        const parent = this.frameScroller.getBoundingClientRect();
+        const scrollY = coord.clientY - parent.top - offsetY;
 
-        const context = this.canvas.getContext("2d");
-        context.imageSmoothingEnabled = false;
-        for (let x = 0; x < bitmap.width; x++) {
-            for (let y = 0; y < bitmap.height; y++) {
-                const index = bitmap.get(x, y);
+        const buttonBBox = this.frameScroller.lastElementChild.getBoundingClientRect().height
+        const unit = (parent.height - buttonBBox) / this.props.frames.length;
+        const index = Math.floor(scrollY / unit);
 
-                if (index) {
-                    context.fillStyle = colors[index];
-                    context.fillRect(x + x0, y + y0, 1, 1);
-                }
-                else {
-                    if (!transparent) context.clearRect(x + x0, y + y0, 1, 1);
-                }
+        const SCROLL_RANGE = 80;
+        const MIN_SPEED_DY = 100;
+        const MAX_SPEED_DY = 500;
+
+        const container = this.frameScroller.parentElement.getBoundingClientRect();
+        const maxScroll = parent.height - container.height;
+
+        if (maxScroll > 0) {
+            if (Math.abs(container.top - coord.clientY) < SCROLL_RANGE) {
+                this.animHandler = requestAnimationFrame(timestamp => {
+                    if (!this.state.isMovingFrame || this.frameScroller.parentElement.scrollTop <= 0) return;
+
+                    const dt = timestamp - (this.lastTimestamp || timestamp);
+                    this.lastTimestamp = timestamp;
+
+                    const scale = 1 - (Math.abs(container.top - coord.clientY) / SCROLL_RANGE);
+
+                    const dy = (MIN_SPEED_DY + scale * (MAX_SPEED_DY - MIN_SPEED_DY)) * (dt / 1000);
+                    this.frameScroller.parentElement.scrollTop = Math.max(0, this.frameScroller.parentElement.scrollTop - dy);
+                    this.updateDragDrop(coord, offsetY);
+                });
+            }
+            else if (Math.abs(container.bottom - coord.clientY) < SCROLL_RANGE) {
+                this.animHandler = requestAnimationFrame(timestamp => {
+                    if (!this.state.isMovingFrame || this.frameScroller.parentElement.scrollTop >= maxScroll) return;
+
+                    const dt = timestamp - (this.lastTimestamp || timestamp);
+                    this.lastTimestamp = timestamp;
+
+                    const scale = 1 - (Math.abs(container.bottom - coord.clientY) / SCROLL_RANGE);
+
+                    const dy = (MIN_SPEED_DY + scale * (MAX_SPEED_DY - MIN_SPEED_DY)) * (dt / 1000);
+                    this.frameScroller.parentElement.scrollTop = Math.min(maxScroll, this.frameScroller.parentElement.scrollTop + dy);
+                    this.updateDragDrop(coord, offsetY);
+                });
             }
         }
-    }
-
-    protected updateDragDrop(coord: ClientCoordinates) {
-        const parent = this.frameScroller.getBoundingClientRect();
-        const scrollY = coord.clientY - parent.top;
-
-        const unit = this.frameScroller.firstElementChild.getBoundingClientRect().height;
-        const index = Math.floor(scrollY / unit);
 
         if (!this.state.isMovingFrame) {
             this.setState({
@@ -264,12 +278,15 @@ export class TimelineImpl extends React.Component<TimelineProps, TimelineState> 
             const floating = this.refs["floating-frame"] as HTMLDivElement;
             floating.style.top = scrollY + "px";
 
-            this.setState({ dropPreviewIndex: index });
+            if (this.state.dropPreviewIndex !== index) {
+                this.setState({ dropPreviewIndex: index });
+            }
         }
     }
 }
 
-function mapStateToProps({ present: state, editor }: ImageEditorStore, ownProps: any) {
+function mapStateToProps({ store: { present }, editor }: ImageEditorStore, ownProps: any) {
+    let state = present as AnimationState;
     if (!state) return {};
     return {
         frames: state.frames,

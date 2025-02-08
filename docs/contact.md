@@ -16,7 +16,7 @@ Let's get you to the right place.
 ### Minecraft
 
 - For help on setting up MakeCode and Minecraft, follow the [setup guide](https://minecraft.makecode.com/setup).
-- Running into issues with Code Connection, MakeCode for Minecraft, or Minecraft Education Edition? Post your question on [Minecraft EE Tech Support](https://education.minecraft.net/technical-support).
+- Running into issues with Code Connection, MakeCode for Minecraft, or Minecraft Education Edition? Post your question on [Minecraft EE Tech Support](https://educommunity.minecraft.net/hc).
 
 ### Arcade
 
@@ -45,9 +45,7 @@ Discuss a topic or look for an answer to a question on the [MakeCode Forum](http
 
 - Think you've found a bug that affects the entire MakeCode platform? File your issue [here](https://github.com/microsoft/pxt/issues/new?labels=bug).
 - Have an idea you'd like to share with us? File a feature request [here](https://github.com/microsoft/pxt/issues/new?labels=enhancement).
-- Want to speak directly to the team? Ask your question on
-    - Forum https://forum.makecode.com/
-    - Discord [![Join the Discord channel at https://aka.ms/makecodecommunity](https://img.shields.io/badge/discord-join%20chat-blue.svg?)](https://aka.ms/makecodecommunity)
+- Want to speak directly to the team? Ask your question on our forum https://forum.makecode.com/
 
 ## Contact the MakeCode team
 

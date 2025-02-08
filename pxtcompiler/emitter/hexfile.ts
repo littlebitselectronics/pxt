@@ -27,21 +27,60 @@ namespace ts.pxtc {
 
     */
 
-    // TODO should be internal
-    export namespace hex {
-        let funcInfo: pxt.Map<FuncInfo> = {};
-        let hex: string[];
-        let jmpStartAddr: number;
-        let jmpStartIdx: number;
-        let bytecodePaddingSize: number;
-        let bytecodeStartAddr: number;
-        let elfInfo: pxt.elf.Info;
-        export let bytecodeStartAddrPadded: number;
-        let bytecodeStartIdx: number;
-        let asmLabels: pxt.Map<boolean> = {};
+    export namespace hexfile {
+        const defaultPageSize = 0x400;
+
+        // this is for inline assembly
         export let asmTotalSource: string = "";
-        export const defaultPageSize = 0x400;
-        export let commBase = 0;
+        let asmLabels: pxt.Map<boolean> = {};
+
+        let cachedCtxs: ParsedHex[] = []
+
+        interface ParsedHex {
+            sha: string;
+            funcInfo: pxt.Map<FuncInfo>;
+            hexlines: string[];
+
+            codePaddingSize: number;
+            codeStartAddrPadded: number;
+            codeStartAddr: number;
+            codeStartIdx: number;
+
+            commBase: number;
+
+            jmpStartAddr: number;
+            jmpStartIdx: number;
+
+            elfInfo: pxt.elf.Info;
+            espInfo: pxt.esp.Image;
+        }
+
+        function emptyCtx(): ParsedHex {
+            return {
+                commBase: 0,
+                funcInfo: {},
+                codeStartIdx: -1,
+                codePaddingSize: 0,
+                sha: null,
+                codeStartAddrPadded: undefined,
+                hexlines: undefined,
+                jmpStartAddr: undefined,
+                jmpStartIdx: undefined,
+                codeStartAddr: undefined,
+                elfInfo: undefined,
+                espInfo: undefined,
+            }
+        }
+
+        let ctx: ParsedHex = emptyCtx()
+
+        export function getCommBase() {
+            return ctx.commBase
+        }
+
+        export function getStartAddress() {
+            return ctx.codeStartAddrPadded
+        }
 
         // utility function
         function swapBytes(str: string) {
@@ -50,34 +89,6 @@ namespace ts.pxtc {
             for (; i < str.length; i += 2)
                 r = str[i] + str[i + 1] + r
             assert(i == str.length)
-            return r
-        }
-
-        export function hexDump(bytes: ArrayLike<number>, startOffset = 0) {
-            function toHex(n: number, len = 8) {
-                let r = n.toString(16)
-                while (r.length < len) r = "0" + r
-                return r
-            }
-            let r = ""
-            for (let i = 0; i < bytes.length; i += 16) {
-                r += toHex(startOffset + i) + ": "
-                let t = ""
-                for (let j = 0; j < 16; j++) {
-                    if ((j & 3) == 0) r += " "
-                    let v = bytes[i + j]
-                    if (v == null) {
-                        r += "   "
-                        continue
-                    }
-                    r += toHex(v, 2) + " "
-                    if (32 <= v && v < 127)
-                        t += String.fromCharCode(v)
-                    else
-                        t += "."
-                }
-                r += " " + t + "\n"
-            }
             return r
         }
 
@@ -94,6 +105,7 @@ namespace ts.pxtc {
                     return ""
                 })
                 let code =
+                    ".object inlineasm\n" +
                     ".section code\n" +
                     "@stackmark func\n" +
                     "@scope user" + asmIdx++ + "\n" +
@@ -104,7 +116,7 @@ namespace ts.pxtc {
             }
         }
 
-        function parseHexBytes(bytes: string): number[] {
+        export function parseHexBytes(bytes: string): number[] {
             bytes = bytes.replace(/^[\s:]/, "")
             if (!bytes) return []
             let outp: number[] = []
@@ -117,13 +129,14 @@ namespace ts.pxtc {
             return outp
         }
 
-        function parseHexRecord(bytes: string) {
+        export function parseHexRecord(bytes: string) {
             let b = parseHexBytes(bytes)
             return {
                 len: b[0],
                 addr: (b[1] << 8) | b[2],
                 type: b[3],
-
+                data: b.slice(4, b.length - 1),
+                checksum: b[b.length - 1]
             }
         }
 
@@ -147,74 +160,133 @@ namespace ts.pxtc {
             }
         }
 
-        export function encodeVTPtr(ptr: number, opts: CompileOptions) {
-            let vv = ptr >> opts.target.vtableShift
-            assert(vv < 0xffff)
-            assert(vv << opts.target.vtableShift == ptr)
-            return vv
-        }
+        // see PXT_EXPORTData
+        const pointerListMarker = "0108010842424242010801083ed8e98d"
 
-        export function setupFor(opts: CompileTarget, extInfo: ExtensionInfo, hexinfo: pxtc.HexInfo) {
-            if (isSetupFor(extInfo))
-                return;
+        export function setupFor(opts: CompileTarget, extInfo: ExtensionInfo) {
+            ctx = cachedCtxs.find(c => c.sha == extInfo.sha)
+
+            if (ctx)
+                return
+
+            ctx = emptyCtx()
+            if (cachedCtxs.length > 10)
+                cachedCtxs = []
+            cachedCtxs.push(ctx)
 
             let funs: FuncInfo[] = extInfo.functions;
 
-            commBase = extInfo.commBase || 0
+            ctx.commBase = extInfo.commBase || 0
 
-            currentSetup = extInfo.sha;
-            currentHexInfo = hexinfo;
+            ctx.sha = extInfo.sha;
 
-            hex = hexinfo.hex;
+            const hexlines = extInfo.hexinfo.hex
+            ctx.hexlines = hexlines
 
             if (target.nativeType == pxtc.NATIVE_TYPE_VM) {
-                bytecodeStartIdx = -1
-                bytecodeStartAddr = 0
-                bytecodeStartAddrPadded = 0
-                bytecodePaddingSize = 0
+                ctx.codeStartAddr = 0
+                ctx.codeStartAddrPadded = 0
 
-                jmpStartAddr = -1
-                jmpStartIdx = -1
+                ctx.jmpStartAddr = -1
+                ctx.jmpStartIdx = -1
 
                 for (let f of funs) {
-                    funcInfo[f.name] = f
+                    ctx.funcInfo[f.name] = f
                     f.value = 0xffffff
+                }
+
+                if (target.useESP) {
+                    const img = pxt.esp.parseB64(hexlines)
+                    const marker = U.fromHex(pointerListMarker)
+                    const hasMarker = (buf: Uint8Array, off: number) => {
+                        for (let i = 0; i < marker.length; ++i)
+                            if (buf[off + i] != marker[i])
+                                return false
+                        return true
+                    }
+                    const droms = img.segments.filter(s => s.isDROM)
+                    U.assert(droms.length == 1)
+                    let found = false
+                    const drom = droms[0]
+
+                    ctx.codeStartAddr = drom.addr + drom.data.length
+                    ctx.codeStartAddrPadded = (ctx.codeStartAddr + 0xff) & ~0xff
+                    ctx.codePaddingSize = ctx.codeStartAddrPadded - ctx.codeStartAddr
+
+                    pxt.debug(`user code start: 0x${ctx.codeStartAddrPadded.toString(16)}; dromlen=${drom.data.length} pad=${ctx.codePaddingSize}`)
+
+                    for (let off = 0; off < drom.data.length; off += 0x20) {
+                        if (hasMarker(drom.data, off)) {
+                            found = true
+                            off += marker.length
+                            const ptroff = off
+                            for (let ptr of extInfo.vmPointers || []) {
+                                if (ptr == "0") continue
+                                ptr = ptr.replace(/^&/, "")
+                                ctx.funcInfo[ptr] = {
+                                    name: ptr,
+                                    argsFmt: [],
+                                    value: pxt.HF2.read32(drom.data, off)
+                                }
+                                off += 4
+                            }
+                            // store the start of code address at PXT_EXPORTData[4]
+                            pxt.HF2.write32(drom.data, ptroff, ctx.codeStartAddrPadded)
+                            break
+                        }
+                    }
+                    U.assert(found || (extInfo.vmPointers || []).length == 0)
+                    ctx.espInfo = img
+
+                    ctx.codeStartAddrPadded = 0 // still use .startaddr 0 in asm - that binary is position independent
                 }
 
                 return
             }
 
-            patchSegmentHex(hex)
+            if (hexlines.length <= 2) {
+                const bytes = U.fromHex(hexlines[0])
+                if (bytes[2] <= 0x02 && bytes[3] == 0x60) {
+                    const off = 0x60000000
+                    const page = 0x1000
+                    const endpadded = (bytes.length + page - 1) & ~(page - 1)
+                    // it looks we got a bin file
+                    ctx.elfInfo = {
+                        template: bytes,
+                        imageMemStart: off + endpadded,
+                        imageFileStart: endpadded,
+                        phOffset: -1000, // don't patch ph-offset in BIN file
+                    }
+                } else {
+                    ctx.elfInfo = pxt.elf.parse(bytes)
+                }
+                ctx.codeStartAddr = ctx.elfInfo.imageMemStart
+                ctx.codeStartAddrPadded = ctx.elfInfo.imageMemStart
 
-            if (hex.length <= 2) {
-                elfInfo = pxt.elf.parse(U.fromHex(hex[0]))
-                bytecodeStartIdx = -1
-                bytecodeStartAddr = elfInfo.imageMemStart
-                bytecodeStartAddrPadded = elfInfo.imageMemStart
-                bytecodePaddingSize = 0
-
-                let jmpIdx = hex[0].indexOf("0108010842424242010801083ed8e98d")
+                let jmpIdx = hexlines[0].indexOf(pointerListMarker)
                 if (jmpIdx < 0)
                     oops("no jmp table in elf")
 
-                jmpStartAddr = jmpIdx / 2
-                jmpStartIdx = -1
+                ctx.jmpStartAddr = jmpIdx / 2
+                ctx.jmpStartIdx = -1
 
-                let ptrs = hex[0].slice(jmpIdx + 32, jmpIdx + 32 + funs.length * 8 + 16)
+                let ptrs = hexlines[0].slice(jmpIdx + 32, jmpIdx + 32 + funs.length * 8 + 16)
                 readPointers(ptrs)
                 checkFuns()
                 return
             }
 
+            patchSegmentHex(hexlines)
+
             let i = 0;
             let upperAddr = "0000"
             let lastAddr = 0
             let lastIdx = 0
-            bytecodeStartAddr = 0
+            ctx.codeStartAddr = 0
 
             let hitEnd = () => {
-                if (!bytecodeStartAddr) {
-                    let bytes = parseHexBytes(hex[lastIdx])
+                if (!ctx.codeStartAddr) {
+                    let bytes = parseHexBytes(hexlines[lastIdx])
                     let missing = (0x10 - ((lastAddr + bytes[0]) & 0xf)) & 0xf
                     if (missing)
                         if (bytes[2] & 0xf) {
@@ -223,67 +295,72 @@ namespace ts.pxtc {
                             for (let i = 0; i < missing; ++i)
                                 newline.push(0x00)
                             lastIdx++
-                            hex.splice(lastIdx, 0, hexBytes(newline))
-                            bytecodeStartAddr = next + missing
+                            hexlines.splice(lastIdx, 0, hexBytes(newline))
+                            ctx.codeStartAddr = next + missing
                         } else {
                             if (bytes[0] != 0x10) {
                                 bytes.pop() // checksum
                                 bytes[0] = 0x10;
                                 while (bytes.length < 20)
                                     bytes.push(0x00)
-                                hex[lastIdx] = hexBytes(bytes)
+                                hexlines[lastIdx] = hexBytes(bytes)
                             }
-                            bytecodeStartAddr = lastAddr + 16
+                            ctx.codeStartAddr = lastAddr + 16
                         }
                     else {
-                        bytecodeStartAddr = lastAddr + bytes[0]
+                        ctx.codeStartAddr = lastAddr + bytes[0]
                     }
 
-                    bytecodeStartIdx = lastIdx + 1
+                    ctx.codeStartIdx = lastIdx + 1
                     const pageSize = flashCodeAlign(opts)
-                    bytecodeStartAddrPadded = (bytecodeStartAddr & ~(pageSize - 1)) + pageSize
-                    const paddingBytes = bytecodeStartAddrPadded - bytecodeStartAddr
+                    ctx.codeStartAddrPadded = (ctx.codeStartAddr & ~(pageSize - 1)) + pageSize
+                    const paddingBytes = ctx.codeStartAddrPadded - ctx.codeStartAddr
                     assert((paddingBytes & 0xf) == 0)
-                    bytecodePaddingSize = paddingBytes
+                    ctx.codePaddingSize = paddingBytes
                 }
             }
 
-            for (; i < hex.length; ++i) {
-                let m = /:02000004(....)/.exec(hex[i])
+
+            for (; i < hexlines.length; ++i) {
+                let m = /:02000004(....)/.exec(hexlines[i])
                 if (m) {
                     upperAddr = m[1]
                 }
-                m = /^:..(....)00/.exec(hex[i])
+                m = /^:..(....)00/.exec(hexlines[i])
                 if (m) {
                     let newAddr = parseInt(upperAddr + m[1], 16)
+                    if (!opts.flashUsableEnd && lastAddr && newAddr - lastAddr > 64 * 1024)
+                        hitEnd()
                     if (opts.flashUsableEnd && newAddr >= opts.flashUsableEnd)
                         hitEnd()
                     lastIdx = i
                     lastAddr = newAddr
                 }
 
-                if (/^:00000001/.test(hex[i]))
+                if (/^:00000001/.test(hexlines[i]))
                     hitEnd()
 
                 // random magic number, which marks the beginning of the array of function pointers in the .hex file
                 // it is defined in pxt-microbit-core
-                m = /^:10....000108010842424242010801083ED8E98D/.exec(hex[i])
+                m = /^:10....000108010842424242010801083ED8E98D/.exec(hexlines[i])
                 if (m) {
-                    jmpStartAddr = lastAddr
-                    jmpStartIdx = i
+                    ctx.jmpStartAddr = lastAddr
+                    ctx.jmpStartIdx = i
                 }
             }
 
-            if (!jmpStartAddr)
+            pxt.debug(`code start: ${ctx.codeStartAddrPadded}, jmptbl: ${ctx.jmpStartAddr}`)
+
+            if (!ctx.jmpStartAddr)
                 oops("No hex start")
 
-            if (!bytecodeStartAddr)
+            if (!ctx.codeStartAddr)
                 oops("No hex end")
 
-            funcInfo = {};
+            ctx.funcInfo = {};
 
-            for (let i = jmpStartIdx + 1; i < hex.length; ++i) {
-                let m = /^:..(....)00(.{4,})/.exec(hex[i]);
+            for (let i = ctx.jmpStartIdx + 1; i < hexlines.length; ++i) {
+                let m = /^:..(....)00(.{4,})/.exec(hexlines[i]);
                 if (!m) continue;
 
                 readPointers(m[2])
@@ -302,7 +379,7 @@ namespace ts.pxtc {
                     s = s.slice(step)
                     let inf = funs.shift()
                     if (!inf) break;
-                    funcInfo[inf.name] = inf;
+                    ctx.funcInfo[inf.name] = inf;
                     if (!value) {
                         U.oops("No value for " + inf.name + " / " + hexb)
                     }
@@ -352,12 +429,12 @@ namespace ts.pxtc {
         }
 
         export function lookupFunc(name: string) {
-            return funcInfo[name]
+            return ctx.funcInfo[name]
         }
 
         export function lookupFunctionAddr(name: string) {
             if (name == "_pxt_comm_base")
-                return commBase
+                return ctx.commBase
             let inf = lookupFunc(name)
             if (inf)
                 return inf.value
@@ -365,16 +442,16 @@ namespace ts.pxtc {
         }
 
         export function hexTemplateHash() {
-            let sha = currentSetup ? currentSetup.slice(0, 16) : ""
+            let sha = ctx.sha ? ctx.sha.slice(0, 16) : ""
             while (sha.length < 16) sha += "0"
             return sha.toUpperCase()
         }
 
         export function hexPrelude() {
-            return `    .startaddr 0x${bytecodeStartAddrPadded.toString(16)}\n`
+            return `    .startaddr 0x${ctx.codeStartAddrPadded.toString(16)}\n`
         }
 
-        function hexBytes(bytes: number[]) {
+        export function hexBytes(bytes: number[]) {
             let chk = 0
             let r = ":"
             bytes.forEach(b => chk += b)
@@ -383,142 +460,22 @@ namespace ts.pxtc {
             return r.toUpperCase();
         }
 
-        // constant strings in the binary are 4-byte aligned, and marked
-        // with "@PXT@:" at the beginning - this 6 byte string needs to be
-        // replaced with proper reference count (0xfffe to indicate read-only
-        // flash location), string virtual table, and the length of the string
-        function patchString(bytes: ArrayLike<number>) {
-            let stringVT = [0xfe, 0xff, 0x01, 0x00]
-            assert(stringVT.length == 4)
-            // @PXT
-            if (!(bytes[0] == 0x40 && bytes[1] == 0x50 && bytes[2] == 0x58 && bytes[3] == 0x54))
-                oops();
-            // @:
-            if (bytes[5] == 0x3a) {
-                let isString = false
-                let isBuffer = false
-                if (bytes[4] == 0x40) isString = true
-                else if (bytes[4] == 0x23) isBuffer = true
-                else return null
-
-                let vt = lookupFunctionAddr(isString ? "pxt::string_inline_ascii_vt" : "pxt::buffer_vt")
-                let headerBytes = new Uint8Array(6)
-
-                if (!vt) oops("missing vt: " + isString)
-                vt ^= 1
-                if (vt & 3) oops("Unaligned vt: " + vt)
-
-                pxt.HF2.write32(headerBytes, 0, vt)
-
-                let len = 0
-                if (isString)
-                    while (6 + len < bytes.length) {
-                        if (bytes[6 + len] == 0)
-                            break
-                        len++
-                    }
-                if (6 + len >= bytes.length)
-                    U.oops("constant string too long!")
-                pxt.HF2.write16(headerBytes, 4, len)
-                return headerBytes
-                //console.log("patch file: @" + addr + ": " + U.toHex(patchV))
-            }
-            return null
-        }
-
-        function applyPatches(f: UF2.BlockFile, binfile: Uint8Array = null) {
-            let patchAt = (b: Uint8Array, i: number,
-                readMore: () => Uint8Array) => {
-                // @PXT
-                if (b[i] == 0x40 && b[i + 1] == 0x50 && b[i + 2] == 0x58 && b[i + 3] == 0x54) {
-                    return patchString(readMore())
-                }
-                return null
-            }
-
-            if (binfile) {
-                for (let i = 0; i < binfile.length - 8; i += 4) {
-                    let patchV = patchAt(binfile, i, () => binfile.slice(i, i + 200))
-                    if (patchV)
-                        U.memcpy(binfile, i, patchV)
-                }
-            } else {
-                for (let bidx = 0; bidx < f.blocks.length; ++bidx) {
-                    let b = f.blocks[bidx]
-                    let upper = f.ptrs[bidx] << 8
-                    for (let i = 32; i < 32 + 256; i += 4) {
-                        let addr = upper + i - 32
-                        let patchV = patchAt(b, i, () => UF2.readBytesFromFile(f, addr, 200))
-                        if (patchV)
-                            UF2.writeBytes(f, addr, patchV)
-                    }
-                }
-            }
-        }
-
-        function applyHexPatches(myhex: string[]) {
-            const marker = "40505854" // @PXT
-            for (let i = 0; i < myhex.length; ++i) {
-                let idx = myhex[i].indexOf(marker)
-                if (idx > 0) {
-                    let off = (idx - 9) >> 1
-                    let bytes = readHex(myhex, i, off, 200)
-                    let patch = patchString(bytes)
-                    if (patch)
-                        writeHex(myhex, i, off, patch)
-                }
-            }
-        }
-
-        function writeHex(myhex: string[], lineNo: number, offsetInLine: number, patch: ArrayLike<number>) {
-            let src = 0
-            while (src < patch.length) {
-                let parsedLine = parseHexBytes(myhex[lineNo])
-                parsedLine.pop() // pop the checksum
-                if (parsedLine[3] == 0x00) {
-                    // if data
-                    let pos = 4 + offsetInLine
-                    let len = parsedLine.length - pos
-                    for (let i = 0; i < len; ++i)
-                        if (src < patch.length)
-                            parsedLine[pos++] = patch[src++]
-                    myhex[lineNo] = hexBytes(parsedLine)
-                }
-                lineNo++
-                offsetInLine = 0
-            }
-        }
-
-        function readHex(myhex: string[], lineNo: number, offsetInLine: number, len: number) {
-            let outp: number[] = []
-            while (outp.length < len) {
-                let b = parseHexBytes(myhex[lineNo])
-                b.pop() // pop the checksum
-                if (b[3] == 0x00) {
-                    // if data
-                    let data = b.slice(4 + offsetInLine)
-                    U.pushRange(outp, data)
-                }
-                lineNo++
-                offsetInLine = 0
-            }
-            return outp
-        }
-
         export function patchHex(bin: Binary, buf: number[], shortForm: boolean, useuf2: boolean) {
-            let myhex = hex.slice(0, bytecodeStartIdx)
+            let myhex = ctx.hexlines.slice(0, ctx.codeStartIdx)
 
-            let sizeEntry = (buf.length * 2 + 7) >> 3
+            if (!bin.target.useESP) {
+                let sizeEntry = (buf.length * 2 + 7) >> 3
 
-            assert(sizeEntry < 64000, "program too large, bytes: " + buf.length * 2)
+                assert(sizeEntry < 64000, "program too large, bytes: " + buf.length * 2)
 
-            // store the size of the program (in 64 bit words)
-            buf[17] = sizeEntry
-            // store commSize
-            buf[20] = bin.commSize
+                // store the size of the program (in 64 bit words)
+                buf[17] = sizeEntry
+                // store commSize
+                buf[20] = bin.commSize
+            }
 
             let zeros: number[] = []
-            for (let i = 0; i < bytecodePaddingSize >> 1; ++i)
+            for (let i = 0; i < ctx.codePaddingSize >> 1; ++i)
                 zeros.push(0)
             buf = zeros.concat(buf)
 
@@ -535,24 +492,23 @@ namespace ts.pxtc {
             }
 
             // 0x4210 is the version number matching pxt-microbit-core
-            let hd = [0x4210, 0, bytecodeStartAddrPadded & 0xffff, bytecodeStartAddrPadded >>> 16]
+            let hd = [0x4210, 0, ctx.codeStartAddrPadded & 0xffff, ctx.codeStartAddrPadded >>> 16]
             let tmp = hexTemplateHash()
             for (let i = 0; i < 4; ++i)
                 hd.push(parseInt(swapBytes(tmp.slice(i * 4, i * 4 + 4)), 16))
 
             let uf2 = useuf2 ? UF2.newBlockFile(target.uf2Family) : null
 
-            if (elfInfo) {
+            if (ctx.elfInfo) {
                 let prog = new Uint8Array(buf.length * 2)
                 for (let i = 0; i < buf.length; ++i) {
                     pxt.HF2.write16(prog, i * 2, buf[i])
                 }
-                let resbuf = pxt.elf.patch(elfInfo, prog)
+                let resbuf = pxt.elf.patch(ctx.elfInfo, prog)
                 for (let i = 0; i < hd.length; ++i)
-                    pxt.HF2.write16(resbuf, i * 2 + jmpStartAddr, hd[i])
-                applyPatches(null, resbuf)
-                if (uf2) {
-                    let bn = bin.options.name || "pxt"
+                    pxt.HF2.write16(resbuf, i * 2 + ctx.jmpStartAddr, hd[i])
+                if (uf2 && !bin.target.switches.rawELF) {
+                    let bn = bin.name || "pxt"
                     bn = bn.replace(/[^a-zA-Z0-9\-\.]+/g, "_")
                     uf2.filename = "Projects/" + bn + ".elf"
                     UF2.writeBytes(uf2, 0, resbuf);
@@ -561,10 +517,29 @@ namespace ts.pxtc {
                 return [U.uint8ArrayToString(resbuf)]
             }
 
+            if (ctx.espInfo) {
+                const img = pxt.esp.cloneStruct(ctx.espInfo)
+                const drom = img.segments.find(s => s.isDROM)
+                let ptr = drom.data.length
+                const trg = new Uint8Array((ptr + buf.length * 2 + 0xff) & ~0xff)
+                trg.set(drom.data)
+                for (let i = 0; i < buf.length; ++i) {
+                    pxt.HF2.write16(trg, ptr, buf[i])
+                    ptr += 2
+                }
+                drom.data = trg
+                const resbuf = pxt.esp.toBuffer(img)
+                if (uf2) {
+                    UF2.writeBytes(uf2, 0, resbuf)
+                    saveSourceToUF2(uf2, bin)
+                    return [UF2.serializeFile(uf2)]
+                }
+                return [U.uint8ArrayToString(resbuf)]
+            }
+
             if (uf2) {
                 UF2.writeHex(uf2, myhex)
-                applyPatches(uf2)
-                UF2.writeBytes(uf2, jmpStartAddr, nextLine(hd, jmpStartIdx).slice(4))
+                UF2.writeBytes(uf2, ctx.jmpStartAddr, nextLine(hd, ctx.jmpStartIdx).slice(4))
                 if (bin.checksumBlock) {
                     let bytes: number[] = []
                     for (let w of bin.checksumBlock)
@@ -572,8 +547,7 @@ namespace ts.pxtc {
                     UF2.writeBytes(uf2, bin.target.flashChecksumAddr, bytes)
                 }
             } else {
-                applyHexPatches(myhex)
-                myhex[jmpStartIdx] = hexBytes(nextLine(hd, jmpStartAddr))
+                myhex[ctx.jmpStartIdx] = hexBytes(nextLine(hd, ctx.jmpStartAddr))
                 if (bin.checksumBlock) {
                     U.oops("checksum block in HEX not implemented yet")
                 }
@@ -583,7 +557,7 @@ namespace ts.pxtc {
 
             if (shortForm) myhex = []
 
-            let addr = bytecodeStartAddr;
+            let addr = ctx.codeStartAddr;
             let upper = (addr - 16) >> 16
             while (ptr < buf.length) {
                 if (uf2) {
@@ -599,29 +573,27 @@ namespace ts.pxtc {
             }
 
             if (!shortForm) {
-                let app = hex.slice(bytecodeStartIdx)
+                let app = ctx.hexlines.slice(ctx.codeStartIdx)
                 if (uf2)
                     UF2.writeHex(uf2, app)
                 else
                     Util.pushRange(myhex, app)
             }
 
+            if (!uf2 && bin.target.moveHexEof) {
+                while (!myhex[myhex.length - 1])
+                    myhex.pop()
+                if (myhex[myhex.length - 1] == ":00000001FF")
+                    myhex.pop()
+            }
+
             if (bin.packedSource) {
                 if (uf2) {
-                    addr = (uf2.currPtr + 0x1000) & ~0xff
-                    let buf = new Uint8Array(256)
-                    for (let ptr = 0; ptr < bin.packedSource.length; ptr += 256) {
-                        for (let i = 0; i < 256; ++i)
-                            buf[i] = bin.packedSource.charCodeAt(ptr + i)
-                        UF2.writeBytes(uf2, addr, buf, UF2.UF2_FLAG_NOFLASH)
-                        addr += 256
-                    }
+                    saveSourceToUF2(uf2, bin)
                 } else {
-                    upper = 0x2000
-                    addr = 0
-                    myhex.push(hexBytes([0x02, 0x00, 0x00, 0x04, upper >> 8, upper & 0xff]))
+                    let addr = 0
                     for (let i = 0; i < bin.packedSource.length; i += 16) {
-                        let bytes = [0x10, (addr >> 8) & 0xff, addr & 0xff, 0]
+                        let bytes = [0x10, (addr >> 8) & 0xff, addr & 0xff, 0x0E]
                         for (let j = 0; j < 16; ++j) {
                             bytes.push((bin.packedSource.charCodeAt(i + j) || 0) & 0xff)
                         }
@@ -631,11 +603,55 @@ namespace ts.pxtc {
                 }
             }
 
+            if (!uf2 && bin.target.moveHexEof)
+                myhex.push(":00000001FF")
+
             if (uf2)
                 return [UF2.serializeFile(uf2)]
             else
                 return myhex;
         }
+    }
+
+    function saveSourceToUF2(uf2: UF2.BlockFile, bin: Binary) {
+        if (!bin.packedSource)
+            return
+        let addr = (uf2.currPtr + 0x1000) & ~0xff
+        let buf = new Uint8Array(256)
+        for (let ptr = 0; ptr < bin.packedSource.length; ptr += 256) {
+            for (let i = 0; i < 256; ++i)
+                buf[i] = bin.packedSource.charCodeAt(ptr + i)
+            UF2.writeBytes(uf2, addr, buf, UF2.UF2_FLAG_NOFLASH)
+            addr += 256
+        }
+    }
+
+    export function hexDump(bytes: ArrayLike<number>, startOffset = 0) {
+        function toHex(n: number, len = 8) {
+            let r = n.toString(16)
+            while (r.length < len) r = "0" + r
+            return r
+        }
+        let r = ""
+        for (let i = 0; i < bytes.length; i += 16) {
+            r += toHex(startOffset + i) + ": "
+            let t = ""
+            for (let j = 0; j < 16; j++) {
+                if ((j & 3) == 0) r += " "
+                let v = bytes[i + j]
+                if (v == null) {
+                    r += "   "
+                    continue
+                }
+                r += toHex(v, 2) + " "
+                if (32 <= v && v < 127)
+                    t += String.fromCharCode(v)
+                else
+                    t += "."
+            }
+            r += " " + t + "\n"
+        }
+        return r
     }
 
     export function asmline(s: string) {
@@ -667,6 +683,7 @@ namespace ts.pxtc {
         for (let data of Object.keys(bin.doubles)) {
             let lbl = bin.doubles[data]
             bin.otherLiterals.push(`
+.object ${lbl}
 .balign 4
 ${lbl}: ${snippets.obj_header("pxt::number_vt")}
         .hex ${data}
@@ -748,7 +765,7 @@ ${lbl}: ${snippets.obj_header("pxt::number_vt")}
     }
 
 
-    export function vtableToAsm(info: ClassInfo, opts: CompileOptions, bin: Binary) {
+    export function vtableToAsm(info: ClassInfo, opts: CompileOptions, bin: Binary, res: CompileResult) {
         /*
         uint16_t numbytes;
         ValType objectType;
@@ -766,7 +783,8 @@ ${lbl}: ${snippets.obj_header("pxt::number_vt")}
 
         let ptrSz = target.shortPointers ? ".short" : ".word"
         let s = `
-        .balign ${1 << opts.target.vtableShift}
+        .object ${info.id}_VT
+        .balign 4
 ${info.id}_VT:
         .short ${info.allfields.length * 4 + 4}  ; size in bytes
         .byte ${pxt.ValTypeObject}, ${pxt.VTABLE_MAGIC} ; magic
@@ -806,7 +824,8 @@ ${info.id}_IfaceVT:
         let offsets: pxt.Map<number> = {}
         for (let e of info.itable) {
             offsets[e.idx + ""] = offset
-            descs += `  .short ${e.idx}, ${e.info} ; ${e.name}\n`
+            const desc = !e.proc ? 0 : e.proc.isGetter() ? 1 : 2
+            descs += `  .short ${e.idx}, ${desc} ; ${e.name}\n`
             descs += `  .word ${e.proc ? e.proc.vtLabel() + "@fn" : e.info}\n`
             offset += descSize
             if (e.setProc) {
@@ -839,13 +858,18 @@ ${info.id}_IfaceVT:
         "GC"
     ]
 
-
-    function serialize(bin: Binary, opts: CompileOptions) {
-        let asmsource = `; start
-${hex.hexPrelude()}
+    function asmHeader(bin: Binary) {
+        return `; start
+${hexfile.hexPrelude()}
     .hex 708E3B92C615A841C49866C975EE5197 ; magic number
-    .hex ${hex.hexTemplateHash()} ; hex template hash
-    .hex 0000000000000000 ; @SRCHASH@
+    .hex ${hexfile.hexTemplateHash()} ; hex template hash
+    .hex 873266330af9dbdb ; replaced in binary by program hash
+`
+    }
+
+
+    function serialize(bin: Binary, opts: CompileOptions, res: CompileResult) {
+        let asmsource = `
     .short ${bin.globalsWords}   ; num. globals
     .short 0 ; patched with number of 64 bit words resulting from assembly
     .word _pxt_config_data
@@ -871,21 +895,25 @@ ${hex.hexPrelude()}
         helpers.emitHelpers()
         asmsource += "\n" + helpers.getAssembly() + "\n"
 
-        asmsource += hex.asmTotalSource // user-supplied asm
+        asmsource += hexfile.asmTotalSource // user-supplied asm
 
         asmsource += "_code_end:\n\n"
 
         U.iterMap(bin.codeHelpers, (code, lbl) => {
-            asmsource += `    .section code\n${lbl}:\n${code}\n`
+            asmsource +=
+                `    .section code\n` +
+                `    .object _code_helper_${lbl}\n` +
+                `${lbl}:\n` +
+                `${code}\n`
         })
         asmsource += snippets.arithmetic()
         asmsource += "_helpers_end:\n\n"
 
         bin.usedClassInfos.forEach(info => {
-            asmsource += vtableToAsm(info, opts, bin)
+            asmsource += vtableToAsm(info, opts, bin, res)
         })
 
-        asmsource += `\n.balign 4\n_pxt_iface_member_names:\n`
+        asmsource += `\n.balign 4\n.object _pxt_iface_member_names\n_pxt_iface_member_names:\n`
         asmsource += `    .word ${bin.ifaceMembers.length}\n`
         let idx = 0
         for (let d of bin.ifaceMembers) {
@@ -895,8 +923,8 @@ ${hex.hexPrelude()}
         asmsource += `    .word 0\n`
         asmsource += "_vtables_end:\n\n"
 
-        asmsource += `\n.balign 4\n_pxt_config_data:\n`
-        const cfg = bin.res.configData || []
+        asmsource += `\n.balign 4\n.object _pxt_config_data\n_pxt_config_data:\n`
+        const cfg = res.configData || []
         // asmsource += `    .word ${cfg.length}, 0 ; num. entries`
         for (let d of cfg) {
             asmsource += `    .word ${d.key}, ${d.value}  ; ${d.name}=${d.value}\n`
@@ -906,7 +934,7 @@ ${hex.hexPrelude()}
         emitStrings(snippets, bin)
         asmsource += bin.otherLiterals.join("")
 
-        asmsource += `\n.balign 4\n.section code\n_pxt_perf_counters:\n`
+        asmsource += `\n.balign 4\n.section code\n.object _perf_counters\n_pxt_perf_counters:\n`
         asmsource += `    .word ${perfCounters.length}\n`
         let strs = ""
         for (let i = 0; i < perfCounters.length; ++i) {
@@ -919,12 +947,6 @@ ${hex.hexPrelude()}
         asmsource += "_literals_end:\n"
 
         return asmsource
-    }
-
-    function patchSrcHash(bin: Binary, src: string) {
-        let sha = U.sha256(src)
-        bin.sourceHash = sha
-        return src.replace(/\n.*@SRCHASH@\n/, "\n    .hex " + sha.slice(0, 16).toUpperCase() + " ; program hash\n")
     }
 
     export function processorInlineAssemble(target: CompileTarget, src: string) {
@@ -953,9 +975,12 @@ ${hex.hexPrelude()}
         if (target.switches.noPeepHole)
             b.disablePeepHole = true
 
-        b.lookupExternalLabel = hex.lookupFunctionAddr;
+        if (target.switches.size)
+            b.codeSizeStats = true
+
+        b.lookupExternalLabel = hexfile.lookupFunctionAddr;
         b.normalizeExternalLabel = s => {
-            let inf = hex.lookupFunc(s)
+            let inf = hexfile.lookupFunc(s)
             if (inf) return inf.name;
             return s
         }
@@ -980,8 +1005,8 @@ ${hex.hexPrelude()}
 
             if (userErrors) {
                 //TODO
-                console.log(U.lf("errors in inline assembly"))
-                console.log(userErrors)
+                pxt.log(U.lf("errors in inline assembly"))
+                pxt.log(userErrors)
                 throw new Error(b.errors[0].message)
             } else {
                 throw new Error(b.errors[0].message)
@@ -1020,6 +1045,7 @@ ${hex.hexPrelude()}
 
         return `
     .balign 16
+    .object _stored_program
 _stored_program: .hex ${res}
 `
     }
@@ -1045,10 +1071,17 @@ _stored_program: .hex ${res}
         return res
     }
 
-    export function processorEmit(bin: Binary, opts: CompileOptions, cres: CompileResult) {
-        let src = serialize(bin, opts)
-        src = patchSrcHash(bin, src)
-        let sourceAtTheEnd = false
+    function assembleAndPatch(src: string, bin: Binary, opts: CompileOptions, cres: CompileResult) {
+        const dummy = opts.extinfo.disabledDeps
+        if (dummy) {
+            src =
+                `${hexfile.hexPrelude()}\n` +
+                `; compilation disabled on this variant due to ${opts.extinfo.disabledDeps}\n` +
+                `.hex 718E3B92C615A841C49866C975EE5197\n` +
+                `.string "${opts.extinfo.disabledDeps}"`
+        } else {
+            src = asmHeader(bin) + src
+        }
         if (opts.embedBlob) {
             bin.packedSource = packSource(opts.embedMeta, ts.pxtc.decodeBase64(opts.embedBlob))
             // TODO more dynamic check for source size
@@ -1057,18 +1090,19 @@ _stored_program: .hex ${res}
                 bin.packedSource = null // no need to append anymore
             }
         }
-        let checksumWords = 8
-        let pageSize = hex.flashCodeAlign(opts.target)
-        if (opts.target.flashChecksumAddr) {
+        const checksumWords = 8
+        const pageSize = hexfile.flashCodeAlign(opts.target)
+
+        if (!dummy && opts.target.flashChecksumAddr) {
             let k = 0
             while (pageSize > (1 << k)) k++;
-            let endMarker = parseInt(bin.sourceHash.slice(0, 8), 16)
-            let progStart = hex.bytecodeStartAddrPadded / pageSize
+            let endMarker = parseInt(hexfile.hexTemplateHash().slice(8, 16), 16)
+            const progStart = hexfile.getStartAddress() / pageSize
             endMarker = (endMarker & 0xffffff00) | k
             let templBeg = 0
             let templSize = progStart
             // we exclude the checksum block from the template
-            if (opts.target.flashChecksumAddr < hex.bytecodeStartAddrPadded) {
+            if (opts.target.flashChecksumAddr < hexfile.getStartAddress()) {
                 templBeg = Math.ceil((opts.target.flashChecksumAddr + 32) / pageSize)
                 templSize -= templBeg
             }
@@ -1084,19 +1118,25 @@ __flash_checksums:
     .word ${endMarker} ; end marker
     ; template region
     .short ${templBeg}, ${templSize}
-    .word 0x${hex.hexTemplateHash().slice(0, 8)}
+    .word 0x${hexfile.hexTemplateHash().slice(0, 8)}
     ; user region
     .short ${progStart}, 0xffff
-    .word 0x${bin.sourceHash.slice(0, 8)}
+    .hex 87326633 ; replaced later
     .word 0x0 ; terminator
 `
         }
-        bin.writeFile(pxtc.BINARY_ASM, src)
-        let res = assemble(opts.target, bin, src)
+        const prefix = opts.extinfo.outputPrefix || ""
+        bin.writeFile(prefix + pxtc.BINARY_ASM, src)
+        const res = assemble(opts.target, bin, src)
         if (res.thumbFile.commPtr)
-            bin.commSize = res.thumbFile.commPtr - hex.commBase
+            bin.commSize = res.thumbFile.commPtr - hexfile.getCommBase()
         if (res.src)
-            bin.writeFile(pxtc.BINARY_ASM, res.src)
+            bin.writeFile(prefix + pxtc.BINARY_ASM, res.src)
+
+        if (dummy) {
+            writeOutput()
+            return
+        }
 
         const cfg = cres.configData || []
 
@@ -1110,82 +1150,113 @@ __flash_checksums:
                 c += `    ${e.key}, 0x${e.value.toString(16)}, // ${e.name}\n`
             }
             c += "    0, 0\n};\n"
-            bin.writeFile("config.c", c)
+            bin.writeFile(prefix + "config.c", c)
         }
 
         if (res.buf) {
+            const buf = res.buf
+            let binbuf = ""
+            for (let i = 0; i < buf.length; ++i)
+                binbuf += String.fromCharCode(buf[i] & 0xff, buf[i] >> 8)
+            const sha = U.sha256(binbuf).slice(0, 16)
+            const shawords = U.range(4).map(k => parseInt(sha.slice(k * 2, k * 2 + 2), 16))
+            U.assert(buf[12] == 0x3287)
+            for (let i = 0; i < shawords.length; ++i)
+                buf[12 + i] = shawords[i]
+
             if (opts.target.flashChecksumAddr) {
                 let pos = res.thumbFile.lookupLabel("__flash_checksums") / 2
-                U.assert(pos == res.buf.length - checksumWords * 2)
-                let chk = res.buf.slice(res.buf.length - checksumWords * 2)
-                res.buf.splice(res.buf.length - checksumWords * 2, checksumWords * 2)
-                let len = Math.ceil(res.buf.length * 2 / pageSize)
+                U.assert(pos == buf.length - checksumWords * 2)
+                let chk = buf.slice(buf.length - checksumWords * 2)
+                buf.splice(buf.length - checksumWords * 2, checksumWords * 2)
+                let len = Math.ceil(buf.length * 2 / pageSize)
+                U.assert(chk[chk.length - 4] == 0x3287)
+                chk[chk.length - 4] = shawords[0]
+                chk[chk.length - 3] = shawords[1]
                 chk[chk.length - 5] = len
                 bin.checksumBlock = chk;
             }
+            writeOutput();
+        }
+
+        if (!cres.procDebugInfo) {
+            for (let bkpt of cres.breakpoints) {
+                let lbl = U.lookup(res.thumbFile.getLabels(), "__brkp_" + bkpt.id)
+                if (lbl != null)
+                    bkpt.binAddr = lbl
+            }
+
+            for (let proc of bin.procs) {
+                proc.fillDebugInfo(res.thumbFile)
+            }
+
+            cres.procDebugInfo = bin.procs.map(p => p.debugInfo)
+
+            if (bin.target.switches.size) {
+                const csv: string[] = []
+                // "filename,line,name,type,size\n"
+                for (const proc of bin.procs) {
+                    const info = ts.pxtc.nodeLocationInfo(proc.action)
+                    const line = [
+                        info.fileName.replace("pxt_modules/", ""),
+                        getDeclName(proc.action),
+                        proc.debugInfo.size,
+                        "function",
+                        info.line + 1
+                    ]
+                    csv.push(toCSV(line))
+                }
+                csv.sort()
+                csv.unshift("filename,name,size,type,line")
+                bin.writeFile(prefix + "size.csv", csv.join("\n"))
+            }
+        }
+
+        function writeOutput() {
             if (!pxt.isOutputText(target)) {
-                const myhex = ts.pxtc.encodeBase64(hex.patchHex(bin, res.buf, false, !!target.useUF2)[0])
-                bin.writeFile(pxt.outputName(target), myhex)
-            } else {
-                const myhex = hex.patchHex(bin, res.buf, false, false).join("\r\n") + "\r\n"
-                bin.writeFile(pxt.outputName(target), myhex)
+                const myhex = ts.pxtc.encodeBase64(hexfile.patchHex(bin, res.buf, false, !!target.useUF2)[0]);
+                bin.writeFile(prefix + pxt.outputName(target), myhex);
+            }
+            else {
+                const myhex = hexfile.patchHex(bin, res.buf, false, false).join("\r\n") + "\r\n";
+                bin.writeFile(prefix + pxt.outputName(target), myhex);
             }
         }
-
-        for (let bkpt of cres.breakpoints) {
-            let lbl = U.lookup(res.thumbFile.getLabels(), "__brkp_" + bkpt.id)
-            if (lbl != null)
-                bkpt.binAddr = lbl
-        }
-
-        for (let proc of bin.procs) {
-            proc.fillDebugInfo(res.thumbFile)
-        }
-
-        cres.procDebugInfo = bin.procs.map(p => p.debugInfo)
     }
 
-    export let validateShim = hex.validateShim;
-
-    export function f4EncodeImg(w: number, h: number, bpp: number, getPix: (x: number, y: number) => number) {
-        const header = [
-            0x87, bpp,
-            w & 0xff, w >> 8,
-            h & 0xff, h >> 8,
-            0, 0
-        ]
-        let r = header.map(hex2).join("")
-        let ptr = 4
-        let curr = 0
-        let shift = 0
-
-        let pushBits = (n: number) => {
-            curr |= n << shift
-            if (shift == 8 - bpp) {
-                r += hex2(curr)
-                ptr++
-                curr = 0
-                shift = 0
-            } else {
-                shift += bpp
-            }
-        }
-
-        for (let i = 0; i < w; ++i) {
-            for (let j = 0; j < h; ++j)
-                pushBits(getPix(i, j))
-            while (shift != 0)
-                pushBits(0)
-            if (bpp > 1) {
-                while (ptr & 3)
-                    pushBits(0)
-            }
-        }
-
-        return r
-
-        function hex2(n: number) {
-            return ("0" + n.toString(16)).slice(-2)
-        }
+    function toCSV(elts: (string | number)[]) {
+        return elts.map(s => `"${s}"`).join(",")
     }
+
+    export function processorEmit(bin: Binary, opts: CompileOptions, cres: CompileResult) {
+        const src = serialize(bin, opts, cres)
+
+        const opts0 = U.flatClone(opts)
+        // normally, this would already have been done, but if the main variant
+        // is disabled, another variant may be set up
+        hexfile.setupFor(opts.target, opts.extinfo || emptyExtInfo())
+        assembleAndPatch(src, bin, opts, cres)
+        if (!cres.builtVariants) {
+            cres.builtVariants = [];
+        }
+        cres.builtVariants.push(opts.extinfo?.appVariant);
+
+        const otherVariants = opts0.otherMultiVariants || []
+        if (otherVariants.length)
+            try {
+                for (let other of otherVariants) {
+                    const localOpts = U.flatClone(opts0)
+                    localOpts.extinfo = other.extinfo
+                    other.target.isNative = true
+                    localOpts.target = other.target
+                    hexfile.setupFor(localOpts.target, localOpts.extinfo)
+                    assembleAndPatch(src, bin, localOpts, cres)
+                    cres.builtVariants.push(other.extinfo?.appVariant);
+                }
+            } finally {
+                hexfile.setupFor(opts0.target, opts0.extinfo)
+            }
+    }
+
+    export let validateShim = hexfile.validateShim;
 }

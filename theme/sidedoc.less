@@ -20,6 +20,10 @@
   width: 0;
 }
 
+code.hljs {
+    background: none;
+}
+
 #sidedocsbar {
   position: absolute;
   right: 1rem;
@@ -44,7 +48,7 @@
     opacity: 1;
     width: @sideBarWidth;
     top: calc(@mainMenuHeight + 1rem);
-    padding-bottom: calc(@mainMenuHeight + @editorToolsCollapsedHeight + 2rem);
+    height: ~"calc(100% - @{mainMenuHeight} - @{editorToolsCollapsedHeight} - 2rem)";
 }
 
 .sideDocs #sidedocsframe-wrapper {
@@ -81,6 +85,28 @@
 #sidedocsbar .ui.link .icon {
   cursor: pointer;
   font-size: @h3;
+}
+
+/* Sidedocs in Monaco editor */
+.sideDocs.editorlang-text {
+    #sidedocs {
+        width: 50%!important;
+        min-width: 18rem;
+    }
+
+    #sidedocsframe, #sidedocsframe-wrapper {
+        width: 100%!important;
+    }
+
+    #sidedocstoggle {
+        right: calc(~'50% - 0.5rem')!important;
+    }
+
+    @media only screen and (max-width: 36rem) {
+        #sidedocstoggle {
+            right: 17rem!important;
+        }
+    }
 }
 
 /* Large Monitor */
@@ -121,10 +147,10 @@
 @media only screen and (max-width: @largestTabletScreen) {
     .sideDocs #sidedocs {
         top: calc(@mobileMenuHeight + 1rem);
-        padding-bottom: calc(@mobileMenuHeight + @editorToolsHeight + 2rem);
+        height: ~"calc(100% - @{mobileMenuHeight} - @{editorToolsHeight} - 2rem)";
     }
     .sideDocs.collapsedEditorTools #sidedocs, .sideDocs.hideEditorFloats #sidedocs {
-        padding-bottom: calc(@mobileMenuHeight + @editorToolsCollapsedHeight + 2rem);
+        height: ~"calc(100% - @{mobileMenuHeight} - @{editorToolsCollapsedHeight} - 2rem)";
     }
 }
 
@@ -141,9 +167,9 @@
 @media only screen and (max-height: @tallEditorBreakpoint) and (min-width: @largestMobileScreen) {
     .sideDocs #sidedocs {
         top: calc(@thinMenuHeight + 1rem);
-        padding-bottom: calc(@thinMenuHeight + @editorToolsHeight + 2rem);
+        height: ~"calc(100% - @{thinMenuHeight} - @{editorToolsHeight} - 2rem)";
     }
     .sideDocs.collapsedEditorTools #sidedocs, .sideDocs.hideEditorFloats #sidedocs {
-        padding-bottom: calc(@thinMenuHeight + @editorToolsCollapsedHeight + 2rem);
+        height: ~"calc(100% - @{thinMenuHeight} - @{editorToolsCollapsedHeight} - 2rem)";
     }
 }

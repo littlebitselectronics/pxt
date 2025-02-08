@@ -14,6 +14,9 @@ namespace pxt {
         RefMap = 8,
         RefMImage = 9, // microbit-specific
         MMap = 10, // linux, mostly ev3
+        BoxedString_SkipList = 11, // used by VM bytecode representation only
+        BoxedString_ASCII = 12, // ditto
+        ZPin = 13,
         User0 = 16,
     }
 }
@@ -31,30 +34,6 @@ namespace pxt.HF2 {
         ADAFRUIT = 0x239A,
         NXP = 0x0D28, // aka Freescale, KL26 etc
     }
-
-
-    export interface TalkArgs {
-        cmd: number;
-        data?: Uint8Array;
-    }
-
-    export interface PacketIO {
-        sendPacketAsync(pkt: Uint8Array): Promise<void>;
-        onData: (v: Uint8Array) => void;
-        onError: (e: Error) => void;
-        onEvent: (v: Uint8Array) => void;
-        error(msg: string): any;
-        reconnectAsync(): Promise<void>;
-        disconnectAsync(): Promise<void>;
-        isSwitchingToBootloader?: () => void;
-
-        // these are implemneted by HID-bridge
-        talksAsync?(cmds: TalkArgs[]): Promise<Uint8Array[]>;
-        sendSerialAsync?(buf: Uint8Array, useStdErr: boolean): Promise<void>;
-        onSerial?: (v: Uint8Array, isErr: boolean) => void;
-    }
-
-    export let mkPacketIOAsync: () => Promise<pxt.HF2.PacketIO>
 
     // see https://github.com/microsoft/uf2/blob/master/hf2.md for full spec
     export const HF2_CMD_BININFO = 0x0001 // no arguments
@@ -136,6 +115,13 @@ namespace pxt.HF2 {
     export const HF2_STATUS_EXEC_ERR = 0x02
     export const HF2_STATUS_EVENT = 0x80
 
+
+    export const HF2_CMD_JDS_CONFIG = 0x0020
+    export const HF2_CMD_JDS_SEND = 0x0021
+    export const HF2_EV_JDS_PACKET = 0x800020
+
+    export const CUSTOM_EV_JACDAC = "jacdac"
+
     // the eventId is overlayed on the tag+status; the mask corresponds
     // to the HF2_STATUS_EVENT above
     export const HF2_EV_MASK = 0x800000
@@ -174,8 +160,6 @@ namespace pxt.HF2 {
         return res
     }
 
-
-
     export interface BootloaderInfo {
         Header: string;
         Parsed: {
@@ -198,15 +182,20 @@ namespace pxt.HF2 {
             pxt.debug("HF2: " + msg)
     }
 
-    export class Wrapper {
+    export class Wrapper implements pxt.packetio.PacketIOWrapper {
+        private initialized = false;
         private cmdSeq = U.randomUint32();
-        constructor(public io: PacketIO) {
+
+        constructor(public readonly io: pxt.packetio.PacketIO) {
             let frames: Uint8Array[] = []
+            io.onDeviceConnectionChanged = connect =>
+                this.disconnectAsync()
+                    .then(() => connect && this.reconnectAsync());
             io.onSerial = (b, e) => this.onSerial(b, e)
             io.onData = buf => {
                 let tp = buf[0] & HF2_FLAG_MASK
                 let len = buf[0] & 63
-                //console.log(`msg tp=${tp} len=${len}`)
+                //pxt.log(`msg tp=${tp} len=${len}`)
                 let frame = new Uint8Array(len)
                 U.memcpy(frame, 0, buf, 1, len)
                 if (tp & HF2_FLAG_SERIAL_OUT) {
@@ -257,9 +246,13 @@ namespace pxt.HF2 {
                 }
                 //this.msgs.pushError(err)
             }
+            this.onEvent(HF2_EV_JDS_PACKET, buf => {
+                this.onCustomEvent(CUSTOM_EV_JACDAC, buf)
+            })
         }
 
         private lock = new U.PromiseQueue();
+        flashing = false;
         rawMode = false;
         infoRaw: string;
         info: BootloaderInfo;
@@ -270,12 +263,17 @@ namespace pxt.HF2 {
         bootloaderMode = false;
         reconnectTries = 0;
         autoReconnect = false;
+        icon = pxt.appTarget.appTheme.downloadDialogTheme?.deviceIcon || "usb";
         msgs = new U.PromiseBuffer<Uint8Array>()
         eventHandlers: pxt.Map<(buf: Uint8Array) => void> = {}
+        jacdacAvailable = false
 
         onSerial = (buf: Uint8Array, isStderr: boolean) => { };
+        onCustomEvent = (type: string, payload: Uint8Array) => { };
+        onConnectionChanged = () => { };
 
         private resetState() {
+            this.initialized = false
             this.lock = new U.PromiseQueue()
             this.info = null
             this.infoRaw = null
@@ -291,17 +289,35 @@ namespace pxt.HF2 {
             this.eventHandlers[id + ""] = f
         }
 
-        reconnectAsync(first = false): Promise<void> {
+        sendCustomEventAsync(type: string, payload: Uint8Array): Promise<void> {
+            if (type == CUSTOM_EV_JACDAC)
+                if (this.jacdacAvailable)
+                    return this.talkAsync(HF2_CMD_JDS_SEND, payload)
+                        .then(() => { })
+                else
+                    return Promise.resolve() // ignore
+            return Promise.reject(new Error("invalid custom event type"))
+        }
+
+        isConnected(): boolean {
+            return this.io.isConnected() && this.initialized
+        }
+
+        isConnecting(): boolean {
+            return this.io.isConnecting() || (this.io.isConnected() && !this.initialized)
+        }
+
+        reconnectAsync(): Promise<void> {
             this.resetState()
-            if (first) return this.initAsync()
             log(`reconnect raw=${this.rawMode}`);
+
             return this.io.reconnectAsync()
                 .then(() => this.initAsync())
                 .catch(e => {
                     if (this.reconnectTries < 5) {
                         this.reconnectTries++
                         log(`error ${e.message}; reconnecting attempt #${this.reconnectTries}`)
-                        return Promise.delay(500)
+                        return U.delay(500)
                             .then(() => this.reconnectAsync())
                     } else {
                         throw e
@@ -426,10 +442,20 @@ namespace pxt.HF2 {
                 })
         }
 
-        reflashAsync(blocks: pxtc.UF2.Block[]) {
+        isFlashing(): boolean {
+            return !!this.flashing;
+        }
+
+        reflashAsync(resp: pxtc.CompileResult): Promise<void> {
             log(`reflash`)
-            return this.flashAsync(blocks)
-                .then(() => Promise.delay(100))
+            U.assert(pxt.appTarget.compile.useUF2);
+            const f = resp.outfiles[pxtc.BINARY_UF2]
+            const blocks = pxtc.UF2.parseFile(pxt.Util.stringToUint8Array(atob(f)))
+            this.flashing = true;
+            return this.io.reconnectAsync()
+                .then(() => this.flashAsync(blocks))
+                .then(() => U.delay(100))
+                .finally(() => this.flashing = false)
                 .then(() => this.reconnectAsync())
         }
 
@@ -509,8 +535,11 @@ namespace pxt.HF2 {
         }
 
         private initAsync() {
-            if (this.rawMode)
+            if (this.rawMode) {
+                this.initialized = true
                 return Promise.resolve()
+            }
+
             return Promise.resolve()
                 .then(() => this.talkAsync(HF2_CMD_BININFO))
                 .then(binfo => {
@@ -523,7 +552,7 @@ namespace pxt.HF2 {
                     return this.talkAsync(HF2_CMD_INFO)
                 })
                 .then(buf => {
-                    this.infoRaw = U.fromUTF8(U.uint8ArrayToString(buf));
+                    this.infoRaw = pxt.Util.fromUTF8Array(buf);
                     pxt.debug("Info: " + this.infoRaw)
                     let info = {} as any
                     ("Header: " + this.infoRaw).replace(/^([\w\-]+):\s*([^\n\r]*)/mg,
@@ -545,20 +574,33 @@ namespace pxt.HF2 {
                         }
                     log(`Board-ID: ${this.info.BoardID} v${this.info.Parsed.Version} f${this.info.Parsed.Features}`)
                 })
+                .then(() => this.talkAsync(HF2_CMD_JDS_CONFIG, new Uint8Array([1]))
+                    .then(() => {
+                        this.jacdacAvailable = true
+                    }, _err => {
+                        this.jacdacAvailable = false
+                    }))
                 .then(() => {
                     this.reconnectTries = 0
+                    this.initialized = true
+                    this.io.onConnectionChanged()
                 })
         }
 
     }
 
+    export function mkHF2PacketIOWrapper(io: pxt.packetio.PacketIO): pxt.packetio.PacketIOWrapper {
+        pxt.debug(`packetio: wrapper hf2`)
+        return new Wrapper(io);
+    }
+
     export type ReadAsync = (addr: number, len: number) => Promise<ArrayLike<number>>
-    function readChecksumBlockAsync(readWordsAsync: ReadAsync): Promise<pxtc.hex.ChecksumBlock> {
+    function readChecksumBlockAsync(readWordsAsync: ReadAsync): Promise<pxtc.ChecksumBlock> {
         if (!pxt.appTarget.compile.flashChecksumAddr)
-            return Promise.resolve(null as pxtc.hex.ChecksumBlock)
+            return Promise.resolve(null as pxtc.ChecksumBlock)
         return readWordsAsync(pxt.appTarget.compile.flashChecksumAddr, 12)
             .then(buf => {
-                let blk = pxtc.hex.parseChecksumBlock(buf)
+                let blk = pxtc.parseChecksumBlock(buf)
                 if (!blk)
                     return null
                 return readWordsAsync(blk.endMarkerPos, 1)
@@ -576,7 +618,7 @@ namespace pxt.HF2 {
         if (!pxt.appTarget.compile.flashChecksumAddr)
             return Promise.resolve(blocks)
         let blBuf = pxtc.UF2.readBytes(blocks, pxt.appTarget.compile.flashChecksumAddr, 12 * 4)
-        let blChk = pxtc.hex.parseChecksumBlock(blBuf)
+        let blChk = pxtc.parseChecksumBlock(blBuf)
         if (!blChk)
             return Promise.resolve(blocks)
         return readChecksumBlockAsync(readWordsAsync)

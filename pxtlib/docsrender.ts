@@ -1,7 +1,10 @@
 /// <reference path='../localtypings/pxtarget.d.ts' />
+/// <reference path='../localtypings/dompurify.d.ts' />
 /// <reference path="commonutil.ts"/>
+/// <reference path="./logger.ts" />
 
 namespace pxt.docs {
+    // eslint-disable-next-line no-var
     declare var require: any;
     import U = pxtc.Util;
 
@@ -22,9 +25,13 @@ namespace pxt.docs {
         "activities": "<!-- activities -->",
         "explicitHints": "<!-- hints -->",
         "flyoutOnly": "<!-- flyout -->",
+        "hideToolbox": "<!-- hideToolbox -->",
         "hideIteration": "<!-- iter -->",
         "codeStart": "<!-- start -->",
-        "codeStop": "<!-- stop -->"
+        "codeStop": "<!-- stop -->",
+        "autoOpen": "<!-- autoOpen -->",
+        "autoexpandOff": "<!-- autoexpandOff -->",
+        "preferredEditor": "<!-- preferredEditor -->"
     }
 
     function replaceAll(replIn: string, x: string, y: string) {
@@ -84,6 +91,12 @@ namespace pxt.docs {
         if (typeof marked !== "undefined") return marked;
         if (typeof require === "undefined") return undefined;
         return require("marked") as typeof marked;
+    }
+
+    export let requireDOMSanitizer = () => {
+        if (typeof DOMPurify !== "undefined") return DOMPurify.sanitize;
+        if (typeof require === "undefined") return undefined;
+        return (require("DOMPurify") as typeof DOMPurify).sanitize;
     }
 
     export interface RenderData {
@@ -198,7 +211,7 @@ namespace pxt.docs {
                     return true
                 }
             }
-            if (d.filepath && !!m.path && d.filepath.indexOf(m.path) == 0) {
+            if (d.filepath && !!m.path && d.filepath == m.path) {
                 tocPath.push(m)
                 return true
             }
@@ -285,9 +298,20 @@ namespace pxt.docs {
             params["drivename"] = html2Quote(theme.driveDisplayName);
         if (theme.homeUrl)
             params["homeurl"] = html2Quote(theme.homeUrl);
+
+
         params["targetid"] = theme.id || "???";
         params["targetname"] = theme.name || "Microsoft MakeCode";
-        params["targetlogo"] = theme.docsLogo ? `<img aria-hidden="true" role="presentation" class="ui ${theme.logoWide ? "small" : "mini"} image" src="${theme.docsLogo}" />` : ""
+        params["docsheader"] = theme.docsHeader || "Documentation";
+        params["orgtitle"] = "MakeCode";
+
+        const docsLogo = theme.docsLogo && U.htmlEscape(theme.docsLogo);
+        const orgLogo = (theme.organizationWideLogo || theme.organizationLogo) && U.htmlEscape(theme.organizationWideLogo || theme.organizationLogo);
+        const orglogomobile = theme.organizationLogo && U.htmlEscape(theme.organizationLogo)
+        params["targetlogo"] = docsLogo ? `<img aria-hidden="true" role="presentation" class="ui ${theme.logoWide ? "small" : "mini"} image" src="${docsLogo}" />` : ""
+        params["orglogo"] = orgLogo ? `<img aria-hidden="true" role="presentation" class="ui image" src="${orgLogo}" />` : ""
+        params["orglogomobile"] = orglogomobile ? `<img aria-hidden="true" role="presentation" class="ui image" src="${orglogomobile}" />` : ""
+
         let ghURLs = d.ghEditURLs || []
         if (ghURLs.length) {
             let ghText = `<p style="margin-top:1em">\n`
@@ -360,6 +384,8 @@ namespace pxt.docs {
             "printBtn",
             "breadcrumb",
             "targetlogo",
+            "orglogo",
+            "orglogomobile",
             "github",
             "JSON",
             "appstoremeta",
@@ -393,13 +419,46 @@ namespace pxt.docs {
 
     export function setupRenderer(renderer: marked.Renderer) {
         renderer.image = function (href: string, title: string, text: string) {
-            let out = '<img class="ui image" src="' + href + '" alt="' + text + '"';
-            if (title) {
-                out += ' title="' + title + '"';
+            const endpointName="makecodeprodmediaeastus-usea";
+            if (href.startsWith("youtube:")) {
+                let out = '<div class="tutorial-video-embed"><iframe class="yt-embed" src="https://www.youtube.com/embed/' + href.split(":").pop()
+                    + '" title="' + text + '" frameborder="0" ' + 'allowFullScreen ' + 'allow="autoplay; picture-in-picture"></iframe></div>';
+                return out;
+
+            } else if (href.startsWith("azuremedia:")) {
+
+                let videoID = href.split(":")[1];
+                const flagsSplit = videoID.split("?");
+                let startTime: string;
+                let endTime: string;
+
+                if (flagsSplit[1]) {
+                    videoID = flagsSplit[0];
+                    const passedParameters = flagsSplit[1];
+                    startTime = /start(?:time)?=(\d+)/i.exec(passedParameters)?.[1];
+                    endTime = /end(?:time)?=(\d+)/i.exec(passedParameters)?.[1];
+                }
+                const url = new URL(`https://${endpointName}.streaming.media.azure.net/${videoID}/manifest(format=mpd-time-csf).mpd`)
+                if (startTime) {
+                    url.hash = `t=${startTime}`;
+                    url.searchParams.append("startTime", startTime);
+                }
+                if (endTime) {
+                    url.searchParams.append("endTime", endTime);
+                }
+                let out = `<div class="tutorial-video-embed"><video class="ams-embed" controls src="${url.toString()}" /></div>`;
+                return out;
+
+            } else {
+                let out = '<img class="ui image" src="' + href + '" alt="' + text + '"';
+                if (title) {
+                    out += ' title="' + title + '"';
+                }
+                out += ' loading="lazy"';
+                out += (this as any).options.xhtml ? '/>' : '>';
+                return out;
             }
-            out += ' loading="lazy"';
-            out += (this as any).options.xhtml ? '/>' : '>';
-            return out;
+
         }
         renderer.listitem = function (text: string): string {
             const m = /^\s*\[( |x)\]/i.exec(text);
@@ -412,12 +471,16 @@ namespace pxt.docs {
             if (m) {
                 text = m[1]
                 id = m[2]
-            } else {
-                id = raw.toLowerCase().replace(/[^\w]+/g, '-')
             }
             // remove tutorial macros
             if (text)
-                text = text.replace(/@(fullscreen|unplugged)/g, '');
+                text = text.replace(/@(fullscreen|unplugged|showdialog|showhint)/gi, '');
+            // remove brackets for hiding step title
+            if (text.match(/\{([\s\S]+)\}/))
+                text = text.match(/\{([\s\S]+)\}/)[1].trim()
+            if (id === "") {
+                id = text.toLowerCase().replace(/[^\w]+/g, '-')
+            }
             return `<h${level} id="${(this as any).options.headerPrefix}${id}">${text}</h${level}>`
         }
     }
@@ -503,6 +566,8 @@ namespace pxt.docs {
             const html = linkRenderer.call(renderer, href, title, text);
             return html.replace(/^<a /, `<a ${target ? `target="${target}"` : ''} rel="nofollow noopener" `);
         };
+
+        let sanitizer = requireDOMSanitizer();
         markedInstance.setOptions({
             renderer: renderer,
             gfm: true,
@@ -510,6 +575,7 @@ namespace pxt.docs {
             breaks: false,
             pedantic: false,
             sanitize: true,
+            sanitizer: sanitizer,
             smartLists: true,
             smartypants: true
         });
@@ -851,13 +917,15 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
             return null
 
         const markedInstance = pxt.docs.requireMarked();
+        const sanitizer = requireDOMSanitizer();
         const options = {
             renderer: new markedInstance.Renderer(),
             gfm: true,
             tables: false,
             breaks: false,
             pedantic: false,
-            sanitize: false,
+            sanitize: true,
+            sanitizer: sanitizer,
             smartLists: false,
             smartypants: false
         };
@@ -890,7 +958,7 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                 case "text":
                     let lastTocEntry = currentStack[currentStack.length - 1]
                     if (token.text.indexOf("[") >= 0) {
-                        token.text.replace(/^\[(.*)\]\((.*)\)$/i, function (full: string, name: string, path: string) {
+                        token.text.replace(/\[(.*?)\]\((.*?)\)/i, function (full: string, name: string, path: string) {
                             lastTocEntry.name = name;
                             lastTocEntry.path = path.replace('.md', '');
                         });
@@ -972,7 +1040,7 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
             let r = augmentDocs(a, b).trim()
             c = c.trim()
             if (r != c) {
-                console.log(`*** Template:\n${a}\n*** Input:\n${b}\n*** Expected:\n${c}\n*** Output:\n${r}`)
+                pxt.log(`*** Template:\n${a}\n*** Input:\n${b}\n*** Expected:\n${c}\n*** Output:\n${r}`)
                 throw new Error("augment docs test fail")
             }
         }

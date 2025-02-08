@@ -1,4 +1,5 @@
 import { rangeToSelection } from "./monaco";
+import { fixIndentationInRange } from "./monacopyhelper";
 
 // This file adds a feature to Monaco I (dz) call "Edit Amendments".
 // EditAmendments are used by the auto-complete system as a work around for limitations in Monaco.
@@ -18,7 +19,7 @@ import { rangeToSelection } from "./monaco";
 //      And there's no way I've found to remove the "player." prefix.
 //      Note that we don't have this issue in typescript because of inline callbacks:
 //          player.on_chat(() => {
-//          
+//
 //          })
 //      So the system basically sticks a json payload at the end of the snippet insertion:
 //          player.on_chat#AMENDMENT{behavior: "replaceLine", insertText: "def on_chat_handler(): ..." }
@@ -77,8 +78,8 @@ function scanForEditAmendment(e: monaco.editor.IModelContentChangedEvent): EditA
     let textAndAmendment = change.text.split(amendmentMarker)
     if (textAndAmendment.length != 2) {
         // Useful for debugging:
-        // console.error("Incorrect text ammendment: ")
-        // console.dir(change)
+        // pxt.error("Incorrect text ammendment: ")
+        // pxt.dir(change)
         return null
     }
     let preText = textAndAmendment[0]
@@ -86,8 +87,8 @@ function scanForEditAmendment(e: monaco.editor.IModelContentChangedEvent): EditA
     let amendment = pxt.U.jsonTryParse(amendmentStr) as EditAmendment
     if (!amendment) {
         // Useful for debugging:
-        // console.error("Incorrect text ammendment JSON: ")
-        // console.dir(amendmentStr)
+        // pxt.error("Incorrect text ammendment JSON: ")
+        // pxt.dir(amendmentStr)
         return null
     }
     return Object.assign({
@@ -96,16 +97,25 @@ function scanForEditAmendment(e: monaco.editor.IModelContentChangedEvent): EditA
 }
 
 function applyAmendment(amendment: EditAmendmentInstance, editor: monaco.editor.IStandaloneCodeEditor) {
+    const model = editor.getModel();
+
     const MAX_COLUMN_LENGTH = 99999 // clunky way to select a whole line
     setTimeout(() => { // see top of file comments about why use setTimeout
         // determine where to apply
-        let amendRange = Object.assign({}, amendment.range)
+        let amendRange = amendment.range
         if (amendment.behavior === "replaceLine") {
-            amendRange.endColumn = MAX_COLUMN_LENGTH
-            amendRange.startColumn = 1
+            amendRange = {
+                ...amendRange,
+                endColumn: MAX_COLUMN_LENGTH,
+                startColumn: 1
+            };
         } else {
             let _: never = amendment.behavior;
         }
+
+        const corrected = fixIndentationInRange(model, model.validateRange(amendRange), amendment.insertText)[0];
+        amendment.range = corrected.range;
+        amendment.insertText = corrected.text;
 
         // determine selection range after applying
         let afterRange: monaco.Range | null = null;
@@ -123,17 +133,16 @@ function applyAmendment(amendment: EditAmendmentInstance, editor: monaco.editor.
             }
         }
 
-        const model = editor.getModel();
 
         // remove the amendment so it doesn't appear in the undo stack
-        let reverseRange = Object.assign({}, amendment.range)
-        reverseRange.endColumn = MAX_COLUMN_LENGTH
+        let reverseRange = {
+            ...amendment.range,
+            endColumn: MAX_COLUMN_LENGTH
+        }
         let undoEdits: monaco.editor.IIdentifiedSingleEditOperation[] = [{
-            identifier: { major: 0, minor: 0 },
             range: model.validateRange(reverseRange),
             text: "",
-            forceMoveMarkers: false,
-            isAutoWhitespaceEdit: false
+            forceMoveMarkers: false
         }]
         model.applyEdits(undoEdits)
 
@@ -147,11 +156,9 @@ function applyAmendment(amendment: EditAmendmentInstance, editor: monaco.editor.
 
             // apply the amendment
             let edits: monaco.editor.IIdentifiedSingleEditOperation[] = [{
-                identifier: { major: 0, minor: 0 },
                 range: model.validateRange(amendRange),
                 text: amendment.insertText,
-                forceMoveMarkers: true,
-                isAutoWhitespaceEdit: true
+                forceMoveMarkers: true
             }]
             model.pushEditOperations(editor.getSelections(), edits, inverseOp => [rangeToSelection(inverseOp[0].range)])
         }, 0);

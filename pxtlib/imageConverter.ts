@@ -36,19 +36,8 @@ namespace pxt {
                 return [(v >> 0) & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, 0xff]
             }
 
-
             if (!this.palette) {
-                let arrs = pxt.appTarget.runtime.palette.map(htmlColorToBytes);
-
-                // Set the alpha for transparency at index 0
-                arrs[0][3] = 0;
-                this.palette = new Uint8Array(arrs.length * 4)
-                for (let i = 0; i < arrs.length; ++i) {
-                    this.palette[i * 4 + 0] = arrs[i][0]
-                    this.palette[i * 4 + 1] = arrs[i][1]
-                    this.palette[i * 4 + 2] = arrs[i][2]
-                    this.palette[i * 4 + 3] = arrs[i][3]
-                }
+                this.setPalette(pxt.appTarget.runtime.palette.map(htmlColorToBytes));
             }
 
             if (magic == 0xe1) {
@@ -57,6 +46,19 @@ namespace pxt {
 
             const scaleFactor = ((pxt.BrowserUtils.isEdge() || pxt.BrowserUtils.isIE()) && w < 100 && h < 100) ? 3 : 1;
             return this.genColor(data, w, h, scaleFactor);
+        }
+
+        // p: [[r,g,b,a?], [r,g,b,a?], ...]
+        setPalette(paletteArrays: number[][]) {
+            // Set the alpha for transparency at index 0
+            paletteArrays[0][3] = 0;
+            this.palette = new Uint8Array(paletteArrays.length * 4);
+            for (let i = 0; i < paletteArrays.length; ++i) {
+                this.palette[i * 4 + 0] = paletteArrays[i][0];
+                this.palette[i * 4 + 1] = paletteArrays[i][1];
+                this.palette[i * 4 + 2] = paletteArrays[i][2];
+                this.palette[i * 4 + 3] = paletteArrays[i][3];
+            }
         }
 
         genMonochrome(data: string, w: number, h: number) {
@@ -137,6 +139,7 @@ namespace pxt {
 
             let inP = 4
             let outP = bmpHeaderSize
+            let isTransparent = true;
 
             for (let x = 0; x < w; x++) {
                 let high = false;
@@ -147,6 +150,7 @@ namespace pxt {
                 let colorStart = high ? (((v >> 4) & 0xf) << 2) : ((v & 0xf) << 2);
 
                 for (let y = 0; y < h; y++) {
+                    if (v) isTransparent = false;
                     bmp[outP] = this.palette[colorStart]
                     bmp[outP + 1] = this.palette[colorStart + 1]
                     bmp[outP + 2] = this.palette[colorStart + 2]
@@ -163,6 +167,12 @@ namespace pxt {
                     }
                 }
 
+                if (isTransparent) {
+                    // If all pixels are completely transparent, browsers won't render the image properly;
+                    // set one pixel to be slightly opaque to fix that
+                    bmp[bmpHeaderSize + 3] = 1;
+                }
+
                 if (x % intScale === intScale - 1) {
                     if (!(height % 2)) --inP;
                     while (inP & 3) inP++
@@ -174,5 +184,32 @@ namespace pxt {
 
             return "data:image/bmp;base64," + btoa(U.uint8ArrayToString(bmp))
         }
+    }
+
+    export function convertUint8BufferToPngUri(palette: Uint8Array, icon: Uint8Array) {
+        const imgConv = new pxt.ImageConverter();
+        const paletteAsTripletArray: number[][] = [];
+
+        for (let i = 0; i < 16; i++) {
+            paletteAsTripletArray.push([
+                palette[i * 3 + 2],
+                palette[i * 3 + 1],
+                palette[i * 3 + 0],
+                255,
+            ]);
+        }
+
+        imgConv.setPalette(paletteAsTripletArray);
+        const stringifiedRefBuffer = String.fromCharCode.apply(
+            null,
+            icon as any as number[]
+        );
+
+        const jresFormattedIconBuffer = `data:image/x-mkcd-f4;base64,${btoa(
+            stringifiedRefBuffer
+        )}`;
+
+        const iconPngDataUri = imgConv.convert(jresFormattedIconBuffer);
+        return iconPngDataUri;
     }
 }

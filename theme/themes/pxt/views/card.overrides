@@ -18,16 +18,17 @@
         height: 3rem;
         background-repeat: no-repeat;
         background-size: contain;
-        background-image: @fileLogo;
+        background-image: @blocksIcon;
+        filter: @logoFilter;
     }
     .content {
         margin-left: 4rem;
         min-width: 5rem;
         height: 8rem;
         .header {
-            word-wrap: break-word;
+            word-break: break-all;
             overflow: hidden;
-            white-space: nowrap;
+            height: 6.5rem;
             text-overflow: ellipsis;
         }
     }
@@ -53,6 +54,29 @@
 .ui.card.file.board {
     .fileimage {
         background-image: unset;
+    }
+}
+
+.ui.card.file.blocksprj {
+    .fileimage {
+        background-size: 85%;
+        background-position-y: 50%;
+    }
+}
+
+.ui.card.file.pyprj {
+    .fileimage {
+        background-image: @pyIcon;
+        filter: @logoFilter;
+    }
+}
+
+.ui.card.file.tsprj {
+    .fileimage {
+        background-image: @jsIcon;
+        filter: @logoFilter;
+        background-size: 65%;
+        background-position-y: 50%;
     }
 }
 
@@ -128,6 +152,21 @@ a.ui.card:focus,
 .ui.card.link.newprojectcard {
     background: fade(@primaryColor, 90%) !important;
 }
+
+.ui.card.link.cloudprojectscard {
+    background: @cloudCardBackground!important;
+
+    .header {
+        white-space: normal;
+    }
+}
+
+@media only screen and (min-height: tallEditorBreakpoint), (min-width: @computerBreakpoint) {
+    .ui.card.link.cloudprojectscard .icon {
+        margin-left: -1rem
+    }
+}
+
 .ui.card.link.scriptmanagercard {
     background: darken(@secondaryColor, 20%) !important;
 }
@@ -156,13 +195,19 @@ a.ui.card:focus,
     .ui.image ~ .content {
         height: 3rem;
     }
+
+    .ui.image ~ .content.tall {
+        height: 4rem;
+    }
 }
 
 .setExampleCardFullHeight() when (@exampleCardFullHeight) {
     .projectsdialog {
         .ui.card.example {
-            .ui.image, .ui.cardimage {
-                height: 12rem !important;
+            height: 12rem;
+
+            .ui.image, .ui.imagewrapper, .ui.cardimage {
+                height: 100% !important;
             }
             .ui.image ~ .content {
                 background: @exampleCardFullHeightBackground;
@@ -177,10 +222,27 @@ a.ui.card:focus,
     /* Mobile only */
     @media only screen and (max-width: @largestMobileScreen) {
         .projectsdialog {
+            // tutorial cards
             .ui.card.example {
+                height: 9rem;
+
                 .ui.image, .ui.cardimage {
                     height: 8.4rem !important;
                 }
+            }
+
+            // project cards
+            .ui.card.link {
+                height: 9rem;
+
+                // new project card +
+                i.huge.icon {
+                    font-size: 2.5em;
+                }
+            }
+
+            .ui.card.link.blocksprj .ui.fileimage {
+                margin-left: -4px;
             }
         }
     }
@@ -212,6 +274,15 @@ a.ui.card:focus,
 /* Mobile only */
 
 @media only screen and (max-width: @largestMobileScreen) {
+    .ui.card.file {
+        .fileimage {
+            top: 2rem;
+            left: 1rem;
+            width: 2rem;
+            height: 1.5rem;
+        }
+    }
+
     .ui.card, .ui.cards>.card {
         .content .description {
             display: none;
@@ -219,6 +290,7 @@ a.ui.card:focus,
         .content .header {
             font-size: 80%;
             font-weight: normal;
+            white-space: nowrap;
         }
     }
 }

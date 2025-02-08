@@ -1,22 +1,28 @@
 import * as pkg from "./package";
+import * as core from "./core";
 import * as React from "react";
 
+import IEditor = pxt.editor.IEditor;
+import IProjectView = pxt.editor.IProjectView;
+
 export type ViewState = any;
-export type ProjectView = pxt.editor.IProjectView;
 
 export interface ParentProps {
-    parent: ProjectView;
+    parent: IProjectView;
 }
 
-export class Editor implements pxt.editor.IEditor {
+export class Editor implements IEditor {
     protected currSource: string;
     isVisible = false;
-    constructor(public parent: ProjectView) {
+    constructor(public parent: IProjectView) {
     }
     changeCallback = () => { };
     setVisible(v: boolean) {
         this.isVisible = v;
     }
+    simStateChanged() { }
+
+    onPageVisibilityChanged(isVisible: boolean) {}
 
     /*******************************
      Methods called before loadFile
@@ -85,7 +91,7 @@ export class Editor implements pxt.editor.IEditor {
     setScale(scale: number) { }
 
     closeFlyout() { }
-
+    clearCaches() { }
     /*******************************
      loadFile
     *******************************/
@@ -110,7 +116,7 @@ export class Editor implements pxt.editor.IEditor {
      * Serializes code to typescript.
      * @returns undefined if there is nothing to save
      */
-    saveToTypeScriptAsync(): Promise<string> {
+    saveToTypeScriptAsync(willOpenTypeScript = false): Promise<string> {
         return Promise.resolve(undefined);
     }
 
@@ -138,5 +144,13 @@ export class Editor implements pxt.editor.IEditor {
     }
 
     updateToolbox() {
+    }
+
+    focusToolbox(itemToFocus?: string) {
+    }
+
+    // allows all editors to send exceptions to error list
+    onExceptionDetected(exception: pxsim.DebuggerBreakpointMessage) {
+        core.warningNotification(lf("Program Error: {0}", exception?.exceptionMessage));
     }
 }

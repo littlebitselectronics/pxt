@@ -1,9 +1,8 @@
 import * as React from "react";
-import { ImageState, Bitmap } from "./store/bitmap";
-import { IconButton } from "./Button";
+import { Button } from "../../../../react-common/components/controls/Button";
 
 interface TimelineFrameProps {
-    frames: ImageState[];
+    frames: pxt.sprite.ImageState[];
     colors: string[];
     animating?: boolean;
     interval?: number;
@@ -22,7 +21,7 @@ interface TimelineFrameState {
  *
  * Chrome on MacOS should be fixed in the next release: https://bugs.chromium.org/p/chromium/issues/detail?id=134040
  */
-const SCALE = ((pxt.BrowserUtils.isMac() && pxt.BrowserUtils.isChrome()) || pxt.BrowserUtils.isEdge()) ? 25 : 1;
+const SCALE = pxt.BrowserUtils.isEdge() ? 25 : 1;
 
 export class TimelineFrame extends React.Component<TimelineFrameProps, TimelineFrameState> {
     protected canvas: HTMLCanvasElement;
@@ -48,13 +47,15 @@ export class TimelineFrame extends React.Component<TimelineFrameProps, TimelineF
             <div className="timeline-frame-spacer" />
             {showActions &&
                 <div className="timeline-frame-actions">
-                    <IconButton
-                        iconClass="ms-Icon ms-Icon--Copy"
+                    <Button
+                        className="image-editor-button"
+                        leftIcon="ms-Icon ms-Icon--Copy"
                         title={lf("Duplicate Current Frame")}
                         onClick={duplicateFrame}
                     />
-                    <IconButton
-                        iconClass="ms-Icon ms-Icon--Delete"
+                    <Button
+                        className="image-editor-button"
+                        leftIcon="ms-Icon ms-Icon--Delete"
                         title={lf("Delete Current Frame")}
                         onClick={deleteFrame}
                     />
@@ -90,11 +91,11 @@ export class TimelineFrame extends React.Component<TimelineFrameProps, TimelineF
         this.canvas.height = imageState.bitmap.height * SCALE;
         this.canvas.width = imageState.bitmap.width * SCALE;
 
-        const bitmap = Bitmap.fromData(imageState.bitmap);
+        const bitmap = pxt.sprite.Bitmap.fromData(imageState.bitmap);
         this.drawBitmap(bitmap);
 
-        if (imageState.floatingLayer) {
-            const floating = Bitmap.fromData(imageState.floatingLayer);
+        if (imageState.floating && imageState.floating.bitmap) {
+            const floating = pxt.sprite.Bitmap.fromData(imageState.floating.bitmap);
             this.drawBitmap(floating, imageState.layerOffsetX, imageState.layerOffsetY, true);
         }
     }
@@ -118,7 +119,7 @@ export class TimelineFrame extends React.Component<TimelineFrameProps, TimelineF
         }
     }
 
-    protected drawBitmap(bitmap: Bitmap, x0 = 0, y0 = 0, transparent = false) {
+    protected drawBitmap(bitmap: pxt.sprite.Bitmap, x0 = 0, y0 = 0, transparent = false) {
         const { colors } = this.props;
 
         const context = this.canvas.getContext("2d");

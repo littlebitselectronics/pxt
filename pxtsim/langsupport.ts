@@ -79,7 +79,7 @@ namespace pxsim {
 
         print() {
             if (runtime && runtime.refCountingDebug)
-                console.log(`RefObject id:${this.id}`)
+                pxsim.log(`RefObject id:${this.id}`)
         }
 
         // render a debug preview string
@@ -95,7 +95,12 @@ namespace pxsim {
         static toDebugString(o: any): string {
             if (o === null) return "null";
             if (o === undefined) return "undefined;"
-            if (o.vtable && o.vtable.name) return o.vtable.name;
+            if (o.vtable && o.vtable.name) {
+                if (o.vtable.name === "_Map" && o instanceof RefMap) {
+                    return "(object)";
+                }
+                return o.vtable.name;
+            }
             if (o.toDebugString) return o.toDebugString();
             if (typeof o == "string") return JSON.stringify(o);
             return o.toString();
@@ -139,7 +144,7 @@ namespace pxsim {
 
         print() {
             if (runtime && runtime.refCountingDebug)
-                console.log(`RefRecord id:${this.id} (${this.vtable.name})`)
+                pxsim.log(`RefRecord id:${this.id} (${this.vtable.name})`)
         }
     }
 
@@ -174,7 +179,7 @@ namespace pxsim {
 
         print() {
             if (runtime && runtime.refCountingDebug)
-                console.log(`RefAction id:${this.id} len:${this.fields.length}`)
+                pxsim.log(`RefAction id:${this.id} len:${this.fields.length}`)
         }
     }
 
@@ -264,7 +269,7 @@ namespace pxsim {
                 r += "\n"
             }
 
-            console.log(r)
+            pxsim.log(r)
         }
 
 
@@ -278,12 +283,12 @@ namespace pxsim {
                 csv += `${p.numstops},${p.value},${p.name},${median}\n`
             }
             processPerfCounters(csv)
-            // console.log(csv)
+            // pxsim.log(csv)
         }
     }
 
     export class RefRefLocal extends RefObject {
-        v: any = null;
+        v: any = undefined;
 
         scan(mark: (path: string, v: any) => void) {
             mark("*", this.v)
@@ -297,7 +302,7 @@ namespace pxsim {
 
         print() {
             if (runtime && runtime.refCountingDebug)
-                console.log(`RefRefLocal id:${this.id} v:${this.v}`)
+                pxsim.log(`RefRefLocal id:${this.id} v:${this.v}`)
         }
     }
 
@@ -319,6 +324,7 @@ namespace pxsim {
         gcSize() { return this.data.length * 2 + 4 }
 
         findIdx(key: string) {
+            key = key + "" // make sure it's a string
             for (let i = 0; i < this.data.length; ++i) {
                 if (this.data[i].key == key)
                     return i;
@@ -336,7 +342,7 @@ namespace pxsim {
 
         print() {
             if (runtime && runtime.refCountingDebug)
-                console.log(`RefMap id:${this.id} size:${this.data.length}`)
+                pxsim.log(`RefMap id:${this.id} size:${this.data.length}`)
         }
 
         toAny(): any {
@@ -501,7 +507,7 @@ namespace pxsim {
         export function stclo(a: RefAction, idx: number, v: any) {
             check(0 <= idx && idx < a.fields.length)
             check(a.fields[idx] === null)
-            //console.log(`STCLO [${idx}] = ${v}`)
+            //pxsim.log(`STCLO [${idx}] = ${v}`)
             a.fields[idx] = v;
             return a;
         }
@@ -623,6 +629,7 @@ namespace pxsim {
         export let string_inline_utf8_vt: any;
         export let string_cons_vt: any;
         export let string_skiplist16_vt: any;
+        export let string_skiplist16_packed_vt: any;
 
         export function typeOf(obj: any) {
             return typeof obj;
@@ -646,15 +653,14 @@ namespace pxsim {
         }
 
         export function runInBackground(a: RefAction) {
-            runtime.runFiberAsync(a).done()
+            runtime.runFiberAsync(a);
         }
 
         export function forever(a: RefAction) {
             function loop() {
                 runtime.runFiberAsync(a)
-                    .then(() => Promise.delay(20))
-                    .then(loop)
-                    .done()
+                    .then(() => U.delay(20))
+                    .then(loop);
             }
             pxtrt.nullCheck(a)
             loop()

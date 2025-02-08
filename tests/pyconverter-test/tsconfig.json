@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-        "target": "es5",
+        "target": "es2017",
         "noImplicitAny": true,
         "noImplicitReturns": true,
         "declaration": true,
@@ -10,12 +10,14 @@
         "types": [
             "chai",
             "mocha",
-            "node",
-            "bluebird"
+            "node"
         ],
-        "sourceMap": false
+        "sourceMap": false,
+        "skipLibCheck": true
     },
     "files": [
-        "pyconvertrunner.ts"
+        "pyconvertrunner.ts",
+        "../common/testUtils.ts",
+        "../common/testHost.ts"
     ]
 }

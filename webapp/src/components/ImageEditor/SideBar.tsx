@@ -2,38 +2,46 @@ import * as React from "react";
 import { connect } from "react-redux";
 
 import { tools } from "./toolDefinitions";
-import { IconButton } from "./Button";
 import { ImageEditorTool, ImageEditorStore } from "./store/imageReducer";
 import { dispatchChangeImageTool } from "./actions/dispatch";
-import { Palette } from "./Palette";
+import { Palette } from "./sprite/Palette";
+import { TilePalette } from "./tilemap/TilePalette";
+import { Minimap } from "./tilemap/Minimap";
+import { Button } from "../../../../react-common/components/controls/Button";
+import { classList } from "../../../../react-common/components/util";
 
 interface SideBarProps {
     selectedTool: ImageEditorTool;
+    isTilemap: boolean;
     dispatchChangeImageTool: (tool: ImageEditorTool) => void;
+    lightMode: boolean;
 }
 
 export class SideBarImpl extends React.Component<SideBarProps,{}> {
     protected handlers: (() => void)[] = [];
 
     render() {
-        const { selectedTool } = this.props;
+        const { selectedTool, isTilemap, lightMode } = this.props;
         return (
-            <div className="image-editor-sidebar">
-                <div className="image-editor-size-buttons">
-
-                </div>
+            <div className={`image-editor-sidebar ${isTilemap ? "tilemap" : ""}`}>
+                {isTilemap &&
+                    <div className="image-editor-tilemap-minimap">
+                        <Minimap lightMode={lightMode} />
+                    </div>
+                }
                 <div className="image-editor-tool-buttons">
-                    {tools.map(td =>
-                        <IconButton
+                    {tools.filter(td => !td.hiddenTool).map(td =>
+                        <Button
+                            className={classList("image-editor-button", selectedTool !== td.tool && "toggle")}
                             key={td.tool}
-                            iconClass={td.iconClass}
-                            toggle={selectedTool != td.tool}
+                            leftIcon={td.iconClass}
                             title={td.title}
-                            onClick={this.clickHandler(td.tool)} />
+                            onClick={this.clickHandler(td.tool)}
+                        />
                     )}
                 </div>
                 <div className="image-editor-palette">
-                    <Palette />
+                    { isTilemap ? <TilePalette /> : <Palette /> }
                 </div>
             </div>
         );
@@ -49,6 +57,7 @@ export class SideBarImpl extends React.Component<SideBarProps,{}> {
 function mapStateToProps({ editor }: ImageEditorStore, ownProps: any) {
     if (!editor) return {};
     return {
+        isTilemap: editor.isTilemap,
         selectedTool: editor.tool
     };
 }

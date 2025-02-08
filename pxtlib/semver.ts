@@ -51,14 +51,15 @@ namespace pxt.semver {
         }
     }
 
-    export function parse(v: string): Version {
-        let r = tryParse(v)
+    export function parse(v: string, defaultVersion?: string): Version {
+        let r = tryParse(v) || tryParse(defaultVersion)
         if (!r)
             U.userError(U.lf("'{0}' doesn't look like a semantic version number", v))
         return r
     }
 
     export function tryParse(v: string): Version {
+        if (!v) return null
         if ("*" === v) {
             return {
                 major: Number.MAX_SAFE_INTEGER,
@@ -100,6 +101,11 @@ namespace pxt.semver {
         return aa.major - bb.major;
     }
 
+    /**
+     * Compares two semver version strings and returns -1 if a < b, 1 if a > b and 0
+     * if versions are equivalent. If a and b are invalid versions, classic strcmp is called.
+     * If a (or b) is an invalid version, it is considered greater than any version (strmp(undefined, "0.0.0") = 1)
+     */
     export function strcmp(a: string, b: string) {
         let aa = tryParse(a)
         let bb = tryParse(b)
@@ -122,7 +128,7 @@ namespace pxt.semver {
 
     /**
      * Filters and sort tags from latest to oldest (semver wize)
-     * @param tags 
+     * @param tags
      */
     export function sortLatestTags(tags: string[]): string[] {
         const v = tags.filter(tag => !!semver.tryParse(tag));
@@ -132,7 +138,7 @@ namespace pxt.semver {
     }
 
     export function test() {
-        console.log("Test semver")
+        pxt.log("Test semver")
         let d = [
             "0.9.0",
             "1.0.0-0.3.7",
@@ -148,11 +154,11 @@ namespace pxt.semver {
 
         for (let i = 0; i < d.length; ++i) {
             let p = parse(d[i])
-            console.log(d[i], p)
+            pxt.log(d[i], p)
             U.assert(stringify(p) == d[i])
             for (let j = 0; j < d.length; ++j) {
                 let x = cmp(p, parse(d[j]))
-                console.log(d[i], d[j], x)
+                pxt.log(d[i], d[j], x)
                 if (i < j)
                     U.assert(x < 0)
                 else if (i > j)

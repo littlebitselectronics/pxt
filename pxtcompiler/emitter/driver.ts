@@ -1,5 +1,8 @@
-/// <reference path="../../built/typescriptServices.d.ts"/>
 /// <reference path="../../localtypings/pxtarget.d.ts"/>
+// TODO: enable reference so we don't need to use: (pxt as any).py
+//      the issue is that this creates a circular dependency. This
+//      is easily handled if we used proper TS modules.
+//// <reference path="../../built/pxtpy.d.ts"/>
 
 // Enforce order:
 /// <reference path="thumb.ts"/>
@@ -61,7 +64,7 @@ namespace ts.pxtc {
                     length: d.length,
                     line: 0,
                     column: 0,
-                    messageText: d.messageText,
+                    messageText: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
                     category: d.category,
                     fileName: "?",
                 }
@@ -75,7 +78,7 @@ namespace ts.pxtc {
                 length: d.length,
                 line: pos.line,
                 column: pos.character,
-                messageText: d.messageText,
+                messageText: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
                 category: d.category,
                 fileName: d.file.fileName,
             }
@@ -85,12 +88,12 @@ namespace ts.pxtc {
         })
     }
 
-    export function runConversions(opts: CompileOptions) {
-        let diags: KsDiagnostic[] = []
-        for (let pass of pxt.conversionPasses) {
-            U.pushRange(diags, pass(opts))
+    export function py2tsIfNecessary(opts: CompileOptions): transpile.TranspileResult | undefined {
+        if (opts.target.preferredEditor == pxt.PYTHON_PROJECT_NAME) {
+            let res = pxtc.transpile.pyToTs(opts)
+            return res
         }
-        return diags
+        return undefined
     }
 
     function mkCompileResult(): CompileResult {
@@ -108,27 +111,32 @@ namespace ts.pxtc {
             res.outfiles[f] = opts.fileSystem[f]
     }
 
-    export function runConversionsAndStoreResults(opts: CompileOptions, res?: CompileResult) {
+    export function runConversionsAndStoreResults(opts: CompileOptions, res?: CompileResult): CompileResult {
         const startTime = U.cpuUs()
-        if (!res) res = mkCompileResult()
-        const convDiag = runConversions(opts)
+        if (!res) {
+            res = mkCompileResult();
+        }
+        const convRes = py2tsIfNecessary(opts)
+        if (convRes) {
+            res = { ...res, diagnostics: convRes.diagnostics, sourceMap: convRes.sourceMap, globalNames: convRes.globalNames }
+        }
+
         storeGeneratedFiles(opts, res)
-        res.diagnostics = convDiag
 
         if (!opts.sourceFiles)
             opts.sourceFiles = Object.keys(opts.fileSystem)
         // ensure that main.ts is last of TS files
-        const idx = opts.sourceFiles.indexOf("main.ts")
+        const idx = opts.sourceFiles.indexOf(pxt.MAIN_TS)
         if (idx >= 0) {
             opts.sourceFiles.splice(idx, 1)
-            opts.sourceFiles.push("main.ts")
+            opts.sourceFiles.push(pxt.MAIN_TS)
         }
 
         // run post-processing code last, if present
-        const postIdx = opts.sourceFiles.indexOf("_onCodeStop.ts")
+        const postIdx = opts.sourceFiles.indexOf(pxt.TUTORIAL_CODE_STOP)
         if (postIdx >= 0) {
             opts.sourceFiles.splice(postIdx, 1)
-            opts.sourceFiles.push("_onCodeStop.ts")
+            opts.sourceFiles.push(pxt.TUTORIAL_CODE_STOP)
         }
 
         res.times["conversions"] = U.cpuUs() - startTime
@@ -194,7 +202,27 @@ namespace ts.pxtc {
         return U.startsWith(filename, "pxt_modules/")
     }
 
+    export interface CompilerHooks {
+        init?(opts: CompileOptions, service?: LanguageService): void;
+        preBinary?(program: Program, opts: CompileOptions, res: CompileResult): void;
+        postBinary?(program: Program, opts: CompileOptions, res: CompileResult): void;
+    }
+    export let compilerHooks: CompilerHooks
+
     export function compile(opts: CompileOptions, service?: LanguageService) {
+        if (!compilerHooks) {
+            // run the extension at most once
+            compilerHooks = {}
+
+            // The extension JavaScript code comes from target.json. It is generated from compiler/*.ts in target by 'pxt buildtarget'
+            if (opts.target.compilerExtension)
+                // eslint-disable-next-line
+                eval(opts.target.compilerExtension)
+        }
+
+        if (compilerHooks.init)
+            compilerHooks.init(opts, service)
+
         let startTime = U.cpuUs()
         let res = mkCompileResult()
 
@@ -229,13 +257,7 @@ namespace ts.pxtc {
         const semStart = U.cpuUs()
 
         if (res.diagnostics.length == 0) {
-            if (opts.skipPxtModulesTSC) {
-                const allDiag = program.getSourceFiles().map(f =>
-                    isPxtModulesFilename(f.fileName) ? [] : program.getSemanticDiagnostics(f))
-                res.diagnostics = patchUpDiagnostics(U.concatArrayLike(allDiag), opts.ignoreFileResolutionErrors)
-            } else {
-                res.diagnostics = patchUpDiagnostics(program.getSemanticDiagnostics(), opts.ignoreFileResolutionErrors);
-            }
+            res.diagnostics = patchUpDiagnostics(program.getSemanticDiagnostics(), opts.ignoreFileResolutionErrors);
         }
 
         const emitStart = U.cpuUs()
@@ -272,14 +294,49 @@ namespace ts.pxtc {
         const apis = getApiInfo(program, opts.jres);
         const blocksInfo = pxtc.getBlocksInfo(apis, opts.bannedCategories);
         const decompileOpts: decompiler.DecompileBlocksOptions = {
-            snippetMode: false,
+            snippetMode: opts.snippetMode || false,
             alwaysEmitOnStart: opts.alwaysDecompileOnStart,
             includeGreyBlockMessages,
-            allowedArgumentTypes: opts.allowedArgumentTypes || ["number", "boolean", "string"]
+            generateSourceMap: opts.generateSourceMap !== undefined ? opts.generateSourceMap : !!opts.ast,
+            allowedArgumentTypes: opts.allowedArgumentTypes || ["number", "boolean", "string"],
+            errorOnGreyBlocks: !!opts.errorOnGreyBlocks
         };
-        let [renameMap, _] = pxtc.decompiler.buildRenameMap(program, file)
+        const [renameMap, _] = pxtc.decompiler.buildRenameMap(program, file, { declarations: "variables", takenNames: {} })
         const bresp = pxtc.decompiler.decompileToBlocks(blocksInfo, file, decompileOpts, renameMap);
         return bresp;
+    }
+
+    // Decompile an array of code snippets (sourceTexts) to XML strings (blocks)
+    export function decompileSnippets(program: Program, opts: CompileOptions, includeGreyBlockMessages = false) {
+        const apis = getApiInfo(program, opts.jres);
+        const blocksInfo = pxtc.getBlocksInfo(apis, opts.bannedCategories);
+        const renameMap = new pxtc.decompiler.RenameMap([]); // Don't rename for snippets
+
+        const decompileOpts: decompiler.DecompileBlocksOptions = {
+            snippetMode: opts.snippetMode || false,
+            alwaysEmitOnStart: opts.alwaysDecompileOnStart,
+            includeGreyBlockMessages,
+            generateSourceMap: opts.generateSourceMap !== undefined ? opts.generateSourceMap : !!opts.ast,
+            allowedArgumentTypes: opts.allowedArgumentTypes || ["number", "boolean", "string"],
+            errorOnGreyBlocks: !!opts.errorOnGreyBlocks
+        };
+
+        let programCache: Program; // Initialize to undefined, using the input program will incorrectly mark it as stale
+        const xml: string[] = [];
+        if (opts.sourceTexts) {
+            for (let i = 0; i < opts.sourceTexts.length; i++) {
+                opts.fileSystem[pxt.MAIN_TS] = opts.sourceTexts[i];
+                opts.fileSystem[pxt.MAIN_BLOCKS] = "";
+
+                let newProgram = getTSProgram(opts, programCache);
+                const file = newProgram.getSourceFile(pxt.MAIN_TS);
+                const bresp = pxtc.decompiler.decompileToBlocks(blocksInfo, file, decompileOpts, renameMap);
+                xml.push(bresp.outfiles[pxt.MAIN_BLOCKS]);
+                programCache = newProgram;
+            }
+        }
+
+        return xml;
     }
 
     export function getTSProgram(opts: CompileOptions, old?: ts.Program) {
@@ -333,24 +390,24 @@ namespace ts.pxtc {
 
         let tsFiles = opts.sourceFiles.filter(f => U.endsWith(f, ".ts"))
         // ensure that main.ts is last of TS files
-        let tsFilesNoMain = tsFiles.filter(f => f != "main.ts")
+        let tsFilesNoMain = tsFiles.filter(f => f != pxt.MAIN_TS)
         let hasMain = false;
         if (tsFiles.length > tsFilesNoMain.length) {
             tsFiles = tsFilesNoMain
-            tsFiles.push("main.ts")
+            tsFiles.push(pxt.MAIN_TS)
             hasMain = true;
         }
 
         // run post-processing code last, if present
-        const post_idx = tsFiles.indexOf("_onCodeStop.ts")
+        const post_idx = tsFiles.indexOf(pxt.TUTORIAL_CODE_STOP);
         if (post_idx >= 0) {
             tsFiles.splice(post_idx, 1)
-            tsFiles.push("_onCodeStop.ts")
+            tsFiles.push(pxt.TUTORIAL_CODE_STOP);
         }
 
         // TODO: ensure that main.ts is last???
         const program = createProgram(tsFiles, options, host, old);
-        annotate(program, "main.ts", target || (pxt.appTarget && pxt.appTarget.compile));
+        annotate(program, pxt.MAIN_TS, target || (pxt.appTarget && pxt.appTarget.compile));
         return program;
     }
 

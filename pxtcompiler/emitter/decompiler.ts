@@ -10,17 +10,56 @@ namespace ts.pxtc.decompiler {
 
         // Allow for arguments for which fixed instances exist to be decompiled
         // even if the expression is not a direct reference to a fixed instance
-        DecompileIndirectFixedInstances = "decompileIndirectFixedInstances"
+        DecompileIndirectFixedInstances = "decompileIndirectFixedInstances",
+
+        // When set on a function, the argument expression will be passed up
+        // as a string of TypeScript code instead of being decompiled into blocks. The
+        // field editor is expected to parse the code itself and also preserve it
+        // if the valus is invalid (like a grey-block would)
+        DecompileArgumentAsString = "decompileArgumentAsString"
     }
 
-    export const FILE_TOO_LARGE_CODE = 9266;
-    export const DECOMPILER_ERROR = 9267;
-    const SK = ts.SyntaxKind;
+    export interface CommentInfo {
+        kind: CommentKind;
+        hasTrailingNewline: boolean;
+        followedByEmptyLine: boolean;
+        isTrailingComment: boolean;
 
-    /**
-     * Max number of blocks before we bail out of decompilation
-     */
-    const MAX_BLOCKS = 1500;
+        start: number;
+        end: number;
+        owner?: Node;
+        ownerStatement?: StatementNode;
+    }
+
+    export enum CommentKind {
+        SingleLine,
+        MultiLine
+    }
+
+    export interface MultiLineComment extends CommentInfo {
+        kind: CommentKind.MultiLine;
+        lines: string[];
+    }
+
+    export interface SingleLineComment extends CommentInfo {
+        kind: CommentKind.SingleLine;
+        text: string;
+    }
+
+    export type Comment = MultiLineComment | SingleLineComment;
+
+    export const DECOMPILER_ERROR = 9267;
+
+    interface DecompileModuleExport {
+        name: string;
+        initializer: string;
+    }
+
+    interface DecompilerCallInfo extends pxtc.CallInfo {
+        decompilerBlockAlias?: string;
+    }
+
+    const SK = ts.SyntaxKind;
 
     const lowerCaseAlphabetStartCode = 97;
     const lowerCaseAlphabetEndCode = 122;
@@ -40,10 +79,12 @@ namespace ts.pxtc.decompiler {
         functionParamIds: pxt.Map<pxt.Map<string>>; // Maps a function name to a map of paramName => paramId
         declaredEnums: pxt.Map<boolean>;
         declaredKinds?: pxt.Map<KindDeclarationInfo>;
+        tileset: pxt.sprite.legacy.LegacyTileInfo[];
         attrs: (c: pxtc.CallInfo) => pxtc.CommentAttrs;
         compInfo: (c: pxtc.CallInfo) => pxt.blocks.BlockCompileInfo;
         localReporters: PropertyDesc[][]; // A stack of groups of locally scoped argument declarations, to determine whether an argument should decompile as a reporter or a variable
         opts: DecompileBlocksOptions;
+        aliasBlocks: pxt.Map<string>; // A mapping of qualified names to qualified names of blocks that use blockAliasFor
     }
 
     interface KindDeclarationInfo {
@@ -134,6 +175,7 @@ namespace ts.pxtc.decompiler {
         value: OutputNode;
         shadowType?: string;
         shadowMutation?: pxt.Map<string>;
+        emitShadowOnly?: boolean;
     }
 
     interface MutationChild {
@@ -151,7 +193,9 @@ namespace ts.pxtc.decompiler {
 
     interface ExpressionNode extends BlockNode {
         kind: "expr";
+        handlers?: Handler[];
         isShadow?: boolean;
+        id?: string;
     }
 
     interface StatementNode extends BlockNode {
@@ -159,7 +203,8 @@ namespace ts.pxtc.decompiler {
         handlers?: Handler[];
         next?: StatementNode;
         prev?: StatementNode;
-        comment?: string;
+        comment?: Comment[];
+        id?: string;
 
         // Optional data that Blockly ignores. We use it to associate statements with workspace comments
         data?: string;
@@ -176,10 +221,9 @@ namespace ts.pxtc.decompiler {
     }
 
     interface WorkspaceComment {
-        text: string;
-
         // Used for grouping comments and statements
         refId: string;
+        comment: Comment[];
     }
 
     type OutputNode = ExpressionNode | TextNode;
@@ -224,13 +268,18 @@ namespace ts.pxtc.decompiler {
         }
     }
 
-    export type NamesSet = pxt.Map<boolean>
+    export type RenameMapOpts = {
+        declarations: "variables" | "all"
+        takenNames: NamesSet,
+    }
+    export type NamesSet = pxt.Map<boolean | {}>
     /**
      * Uses the language service to ensure that there are no duplicate variable
      * names in the given file. All variables in Blockly are global, so this is
      * necessary to prevent local variables from colliding.
      */
-    export function buildRenameMap(p: Program, s: SourceFile, takenNames: NamesSet = {}): [RenameMap, NamesSet] {
+    export function buildRenameMap(p: Program, s: SourceFile,
+        { declarations, takenNames }: RenameMapOpts = { declarations: "variables", takenNames: {} }): [RenameMap, NamesSet] {
         let service = ts.createLanguageService(new LSHost(p))
         const allRenames: RenameLocation[] = [];
 
@@ -244,12 +293,13 @@ namespace ts.pxtc.decompiler {
 
             function checkChildren(n: Node): void {
                 ts.forEachChild(n, (child) => {
-                    if (child.kind === SK.VariableDeclaration && (child as ts.VariableDeclaration).name.kind === SK.Identifier) {
-                        const name = (child as ts.VariableDeclaration).name.getText();
+                    if (isDeclarationName(child)
+                        && (declarations === "all" || ts.isVariableDeclaration(child.parent))) {
+                        const name = child.getText();
 
                         if (takenNames[name]) {
                             const newName = getNewName(name, takenNames);
-                            const renames = service.findRenameLocations(s.fileName, (child as ts.VariableDeclaration).name.pos + 1, false, false);
+                            const renames = service.findRenameLocations(s.fileName, child.pos + 1, false, false);
                             if (renames) {
                                 renames.forEach(r => {
                                     allRenames.push({
@@ -272,16 +322,19 @@ namespace ts.pxtc.decompiler {
         }
     }
 
-    export function getNewName(name: string, takenNames: NamesSet) {
+    export function getNewName(name: string, takenNames: NamesSet, recordNewName = true) {
         // If the variable is a single lower case letter, try and rename it to a different letter (i.e. i -> j)
-        if (name.length === 1) {
+        // DO NOT apply this logic to variables named x, y, or z since those are generally meaningful names
+        if (name.length === 1 && name !== "x" && name !== "y" && name !== "z") {
             const charCode = name.charCodeAt(0);
             if (charCode >= lowerCaseAlphabetStartCode && charCode <= lowerCaseAlphabetEndCode) {
                 const offset = charCode - lowerCaseAlphabetStartCode;
                 for (let i = 1; i < 26; i++) {
                     const newChar = String.fromCharCode(lowerCaseAlphabetStartCode + ((offset + i) % 26));
+                    if (newChar === "x" || newChar === "y" || newChar === "z") continue;
                     if (!takenNames[newChar]) {
-                        takenNames[newChar] = true;
+                        if (recordNewName)
+                            takenNames[newChar] = true;
                         return newChar;
                     }
                 }
@@ -292,7 +345,8 @@ namespace ts.pxtc.decompiler {
         for (let i = 2; ; i++) {
             const toTest = name + i;
             if (!takenNames[toTest]) {
-                takenNames[toTest] = true;
+                if (recordNewName)
+                    takenNames[toTest] = true;
                 return toTest;
             }
         }
@@ -302,7 +356,8 @@ namespace ts.pxtc.decompiler {
         snippetMode?: boolean; // do not emit "on start"
         alwaysEmitOnStart?: boolean; // emit "on start" even if empty
         errorOnGreyBlocks?: boolean; // fail on grey blocks (usefull when testing docs)
-        allowedArgumentTypes?: string[]; // a whitelist of types that can be decompiled for user defined function arguments
+        allowedArgumentTypes?: string[]; // an allowlist of types that can be decompiled for user defined function arguments
+        generateSourceMap?: boolean; // generate block ids
         /*@internal*/
         includeGreyBlockMessages?: boolean; // adds error attributes to the mutations in typescript_statement blocks (for debug pruposes)
     }
@@ -319,10 +374,15 @@ namespace ts.pxtc.decompiler {
     export function decompileToBlocks(blocksInfo: pxtc.BlocksInfo, file: ts.SourceFile, options: DecompileBlocksOptions, renameMap?: RenameMap): pxtc.CompileResult {
         let emittedBlocks = 0;
         let stmts: NodeArray<ts.Statement> = file.statements;
-        let result: pxtc.CompileResult = {
+        const result: pxtc.CompileResult = {
             blocksInfo: blocksInfo,
-            outfiles: {}, diagnostics: [], success: true, times: {}
+            outfiles: {},
+            diagnostics: [],
+            success: true,
+            times: {}
         }
+        if (options.generateSourceMap)
+            result.blockSourceMap = [];
         const env: DecompilerEnv = {
             blocks: blocksInfo,
             declaredFunctions: {},
@@ -332,7 +392,9 @@ namespace ts.pxtc.decompiler {
             attrs: attrs,
             compInfo: compInfo,
             localReporters: [],
-            opts: options || {}
+            tileset: [],
+            opts: options || {},
+            aliasBlocks: {}
         };
         const fileText = file.getFullText();
         let output = ""
@@ -343,6 +405,17 @@ namespace ts.pxtc.decompiler {
         const autoDeclarations: [string, ts.Node][] = [];
 
         const getCommentRef = (() => { let currentCommentId = 0; return () => `${currentCommentId++}` })();
+
+        const apis = blocksInfo.apis.byQName;
+        Object.keys(apis).forEach(qName => {
+            const api = apis[qName];
+            if (api.attributes.blockAliasFor && apis[api.attributes.blockAliasFor]) {
+                env.aliasBlocks[api.attributes.blockAliasFor] = api.qName;
+            }
+        });
+
+
+        const commentMap = buildCommentMap(file);
 
         const checkTopNode = (topLevelNode: Node) => {
             if (topLevelNode.kind === SK.FunctionDeclaration && !checkStatement(topLevelNode, env, false, true)) {
@@ -361,12 +434,20 @@ namespace ts.pxtc.decompiler {
                     });
                 });
             }
-            else if (isModuleDeclaration(topLevelNode) && !checkStatement(topLevelNode, env, false, true)) {
-                const kindName = topLevelNode.name.text;
-                const exported = getKindExports(topLevelNode);
+            else if (isModuleDeclaration(topLevelNode)) {
+                if (!checkKindNamespaceDeclaration(topLevelNode as ts.NamespaceDeclaration, env)) {
+                    const kindName = topLevelNode.name.text;
+                    const exported = getModuleExports(topLevelNode);
 
-                if (env.declaredKinds[kindName]) {
-                    env.declaredKinds[kindName].declaredNames.push(...exported);
+                    if (env.declaredKinds[kindName]) {
+                        env.declaredKinds[kindName].declaredNames.push(...(exported.map(({ name }) => name)));
+                    }
+                }
+                else if (!checkTilesetNamespace(topLevelNode as ts.NamespaceDeclaration)) {
+                    env.tileset = getModuleExports(topLevelNode).map(({ name, initializer }) => ({
+                        projectId: parseInt(name.substr(pxt.sprite.TILE_PREFIX.length)),
+                        data: pxt.sprite.imageLiteralToBitmap(initializer).data()
+                    }));
                 }
             }
             else if (topLevelNode.kind === SK.Block) {
@@ -399,10 +480,13 @@ namespace ts.pxtc.decompiler {
             }));
         });
 
-        if (enumMembers.length) {
+        if (enumMembers.length || env.tileset.length) {
             write("<variables>")
             enumMembers.forEach(e => {
                 write(`<variable type="${U.htmlEscape(e.type)}">${U.htmlEscape(e.name)}</variable>`)
+            });
+            env.tileset.forEach(e => {
+                write(`<variable type="${pxt.sprite.BLOCKLY_TILESET_TYPE}">${pxt.sprite.legacy.tileToBlocklyVariable(e)}</variable>`)
             });
             write("</variables>")
         }
@@ -410,39 +494,37 @@ namespace ts.pxtc.decompiler {
         let n: StatementNode;
         try {
             n = codeBlock(stmts, undefined, true, undefined, !options.snippetMode);
+
+            // Emit all of the orphaned comments
+            for (const comment of commentMap) {
+                if (!comment.owner) {
+                    workspaceComments.push({
+                        refId: getCommentRef(),
+                        comment: [comment]
+                    });
+                }
+            }
         }
         catch (e) {
-            if ((<any>e).programTooLarge) {
-                result.success = false;
-                result.diagnostics = pxtc.patchUpDiagnostics([{
-                    file,
-                    start: file.getFullStart(),
-                    length: file.getFullWidth(),
-                    messageText: e.message,
-                    category: ts.DiagnosticCategory.Error,
-                    code: FILE_TOO_LARGE_CODE
-                }]);
-            }
-            else {
-                // don't throw
-                pxt.reportException(e);
-                result.success = false;
-                result.diagnostics = pxtc.patchUpDiagnostics([{
-                    file,
-                    start: file.getFullStart(),
-                    length: file.getFullWidth(),
-                    messageText: e.message,
-                    category: ts.DiagnosticCategory.Error,
-                    code: DECOMPILER_ERROR
-                }]);
-                return result;
-            }
+            // don't throw
+            pxt.reportException(e);
+            result.success = false;
+            result.diagnostics = pxtc.patchUpDiagnostics([{
+                file,
+                start: file.getFullStart(),
+                length: file.getFullWidth(),
+                messageText: e.message,
+                category: ts.DiagnosticCategory.Error,
+                code: DECOMPILER_ERROR
+            }]);
+            return result;
         }
 
         if (n) {
             emitStatementNode(n);
         } else if (!options.snippetMode && !stmts.length) {
-            write(`<block type="${ts.pxtc.ON_START_TYPE}"></block>`);
+            openBlockTag(ts.pxtc.ON_START_TYPE, mkStmt(ts.pxtc.ON_START_TYPE, stmts[0]));
+            closeBlockTag();
         }
 
         workspaceComments.forEach(c => {
@@ -473,8 +555,8 @@ ${output}</xml>`;
             result.success = false;
         }
 
-        function attrs(callInfo: pxtc.CallInfo): pxtc.CommentAttrs {
-            const blockInfo = blocksInfo.apis.byQName[callInfo.qName];
+        function attrs(callInfo: DecompilerCallInfo): pxtc.CommentAttrs {
+            const blockInfo = blocksInfo.apis.byQName[callInfo.decompilerBlockAlias || callInfo.qName];
             if (blockInfo) {
                 const attributes = blockInfo.attributes;
 
@@ -482,6 +564,10 @@ ${output}</xml>`;
                 if (!attributes.blockId || blocksInfo.blocksById[attributes.blockId] || attributes.blockId === pxtc.PAUSE_UNTIL_TYPE) {
                     return blockInfo.attributes;
                 }
+            }
+            else if (callInfo.decl) {
+                const parsed = parseComments(callInfo.decl);
+                if (parsed) return parsed;
             }
             return {
                 paramDefl: {},
@@ -497,27 +583,103 @@ ${output}</xml>`;
             return undefined;
         }
 
-        function countBlock() {
-            emittedBlocks++;
-            if (emittedBlocks > MAX_BLOCKS) {
-                let e = new Error(Util.lf("Could not decompile because the script is too large"));
-                (<any>e).programTooLarge = true;
-                throw e
+        function getCallKey(statement: ExpressionStatement) {
+            const call = statement.expression as CallExpression;
+            const callInfo = pxtInfo(call).callInfo;
+            const attributes = attrs(callInfo);
+
+            if (attributes.blockAllowMultiple) return undefined;
+            if (attributes.blockHandlerKey) return attributes.blockHandlerKey;
+
+            const args = callInfo.args.filter(arg => !isArrowFunction(arg) && !isFunctionExpression(arg)).map(arg => getArgKeyRecursive(arg)).join("$$");
+            return attributes.blockId + "-" + args;
+        }
+
+        // custom function to get the key for an argument. we do this instead of simply calling getText() because this
+        // handles whitespace and certain passthrough nodes like parenthesized expressions
+        function getArgKeyRecursive(n: ts.Expression): string {
+            if (!n) return "";
+
+            switch (n.kind) {
+                case SK.ParenthesizedExpression:
+                case SK.AsExpression:
+                    return getArgKeyRecursive((n as ts.ParenthesizedExpression).expression);
+                case SK.Identifier:
+                    return (n as ts.Identifier).text;
+                case SK.StringLiteral:
+                case SK.FirstTemplateToken:
+                case SK.NoSubstitutionTemplateLiteral:
+                    return `"${(n as ts.StringLiteral).text}"`
+                case SK.NumericLiteral:
+                    return (n as ts.LiteralExpression).text;
+                case SK.TrueKeyword:
+                    return "true";
+                case SK.FalseKeyword:
+                    return "false";
+                case SK.BinaryExpression:
+                    return `{${getArgKeyRecursive((n as ts.BinaryExpression).left)}${(n as ts.BinaryExpression).operatorToken.getText()}${getArgKeyRecursive((n as ts.BinaryExpression).right)}}`
+                case SK.PrefixUnaryExpression:
+                    return (n as ts.PrefixUnaryExpression).operator + getArgKeyRecursive((n as ts.PrefixUnaryExpression).operand)
+                case SK.PropertyAccessExpression:
+                    return getArgKeyRecursive((n as ts.PropertyAccessExpression).expression) + "." + getArgKeyRecursive((n as ts.PropertyAccessExpression).name)
+                case SK.ArrayLiteralExpression:
+                    return `[${(n as ts.ArrayLiteralExpression).elements.map(e => getArgKeyRecursive(e))}]`
+                case SK.ElementAccessExpression:
+                    return `${(n as ts.ElementAccessExpression).expression}[${(n as ts.ElementAccessExpression).argumentExpression}]`;
+                case SK.TaggedTemplateExpression:
+                    return `${getArgKeyRecursive((n as ts.TaggedTemplateExpression).tag)}\`${(n as ts.TaggedTemplateExpression).template.getText()}\``;
+                case SK.CallExpression:
+                    return `${getArgKeyRecursive((n as ts.CallExpression).expression)}(${(n as ts.CallExpression).arguments.map(getArgKeyRecursive).join(",")})`
+                default:
+                    return n.getText();
             }
         }
 
-        function mkStmt(type: string): StatementNode {
-            return {
+        // generated ids with the same entropy as blockly
+        function blocklyGenUid() {
+            const soup_ = '!#$%()*+,-./:;=?@[]^_`{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            const length = 20;
+            const soupLength = soup_.length;
+            const id = [];
+            for (let i = 0; i < length; i++) {
+                id[i] = soup_.charAt(Math.random() * soupLength);
+            }
+            return id.join('');
+        }
+
+        function mkId(type: string, node: ts.Node): string {
+            if (type == ts.pxtc.ON_START_TYPE)
+                return "xRRgvHNlG#rZ^u`HECiY";
+            const id = blocklyGenUid()
+            if (node) {
+                const startPos = node.getFullStart();
+                result.blockSourceMap.push(<pxt.blocks.BlockSourceInterval>{
+                    id,
+                    startPos,
+                    endPos: startPos + node.getFullWidth()
+                })
+            }
+            return id;
+        }
+
+        function mkStmt(type: string, node: ts.Node): StatementNode {
+            const stm: StatementNode = {
                 kind: "statement",
                 type
             };
+            if (result.blockSourceMap)
+                stm.id = mkId(type, node);
+            return stm;
         }
 
-        function mkExpr(type: string): ExpressionNode {
-            return {
+        function mkExpr(type: string, node: ts.Node): ExpressionNode {
+            const expr: ExpressionNode = {
                 kind: "expr",
                 type
             };
+            //if (result.blockSourceMap)
+            //    expr.id = mkId(type, node);
+            return expr;
         }
 
         function mkValue(name: string, value: ExpressionNode | TextNode, shadowType?: string, shadowMutation?: pxt.Map<string>): ValueNode {
@@ -548,7 +710,7 @@ ${output}</xml>`;
                 return;
             }
 
-            openBlockTag(n.type)
+            openBlockTag(n.type, n)
             emitBlockNodeCore(n);
 
             if (n.data !== undefined) {
@@ -566,7 +728,7 @@ ${output}</xml>`;
             }
 
             if (n.comment !== undefined) {
-                write(`<comment pinned="false">${U.htmlEscape(n.comment)}</comment>`)
+                write(`<comment pinned="false">${U.htmlEscape(formatCommentsForBlocks(n.comment))}</comment>`)
             }
 
             closeBlockTag();
@@ -611,31 +773,7 @@ ${output}</xml>`;
         function emitValueNode(n: ValueNode) {
             write(`<value name="${n.name}">`)
 
-            let emitShadowOnly = false;
-
-            if (n.value.kind === "expr") {
-                const value = n.value as ExpressionNode;
-                if (value.type === numberType && n.shadowType === minmaxNumberType) {
-                    value.type = minmaxNumberType;
-                    value.fields[0].name = 'SLIDER';
-                    value.mutation = n.shadowMutation;
-                }
-                emitShadowOnly = value.type === n.shadowType;
-                if (!emitShadowOnly) {
-                    switch (value.type) {
-                        case "math_number":
-                        case "math_number_minmax":
-                        case "math_integer":
-                        case "math_whole_number":
-                        case "logic_boolean":
-                        case "text":
-                            emitShadowOnly = !n.shadowType;
-                            break
-                    }
-                }
-            }
-
-            if (emitShadowOnly) {
+            if (shouldEmitShadowOnly(n)) {
                 emitOutputNode(n.value, true);
             }
             else {
@@ -689,19 +827,16 @@ ${output}</xml>`;
                 const node = n as ExpressionNode;
                 const isShadow = shadow || node.isShadow;
                 const tag = isShadow ? "shadow" : "block";
-                if (!isShadow) {
-                    countBlock();
-                }
 
-                write(`<${tag} type="${U.htmlEscape(node.type)}">`)
+                write(`<${tag} ${node.id ? `id="${node.id}" ` : ''}type="${U.htmlEscape(node.type)}">`)
                 emitBlockNodeCore(node);
                 write(`</${tag}>`)
             }
         }
 
-        function openBlockTag(type: string) {
-            countBlock();
-            write(`<block type="${U.htmlEscape(type)}">`)
+        function openBlockTag(type: string, node: StatementNode) {
+            const id = node && node.id;
+            write(`<block ${id ? `id="${node.id}" ` : ''}type="${U.htmlEscape(type)}">`)
         }
 
         function closeBlockTag() {
@@ -710,16 +845,19 @@ ${output}</xml>`;
 
         function emitWorkspaceComment(comment: WorkspaceComment) {
             let maxLineLength = 0;
-            const lines = comment.text.split("\n");
-            lines.forEach(line => maxLineLength = Math.max(maxLineLength, line.length));
+            const text = formatCommentsForBlocks(comment.comment);
+            if (text.trim()) {
+                const lines = text.split("\n");
+                lines.forEach(line => maxLineLength = Math.max(maxLineLength, line.length));
 
-            // These are just approximations but they are the best we can do outside the DOM
-            const width = Math.max(Math.min(maxLineLength * 10, maxCommentWidth), minCommentWidth);
-            const height = Math.max(Math.min(lines.length * 40, maxCommentHeight), minCommentHeight);
+                // These are just approximations but they are the best we can do outside the DOM
+                const width = Math.max(Math.min(maxLineLength * 10, maxCommentWidth), minCommentWidth);
+                const height = Math.max(Math.min(lines.length * 40, maxCommentHeight), minCommentHeight);
 
-            write(`<comment h="${height}" w="${width}" data="${U.htmlEscape(comment.refId)}">`)
-            write(U.htmlEscape(comment.text))
-            write(`</comment>`);
+                write(`<comment h="${height}" w="${width}" data="${U.htmlEscape(comment.refId)}">`)
+                write(U.htmlEscape(text))
+                write(`</comment>`);
+            }
         }
 
         function getOutputBlock(n: ts.Node): OutputNode {
@@ -758,6 +896,8 @@ ${output}</xml>`;
                         return getTaggedTemplateExpression(n as ts.TaggedTemplateExpression);
                     case SK.CallExpression:
                         return getStatementBlock(n, undefined, undefined, true) as any;
+                    case SK.AsExpression:
+                        return getOutputBlock((n as ts.AsExpression).expression);
                     default:
                         error(n, Util.lf("Unsupported syntax kind for output expression block: {0}", SK[n.kind]));
                         break;
@@ -790,6 +930,10 @@ ${output}</xml>`;
         function getTypeScriptExpressionBlock(n: ts.Node) {
             const text = applyRenamesInRange(n.getFullText(), n.getFullStart(), n.getEnd()).trim();
             trackVariableUsagesInText(n);
+
+            // Mark comments or else they are emitted twice
+            markCommentsInRange(n, commentMap);
+
             return getFieldBlock(pxtc.TS_OUTPUT_TYPE, "EXPRESSION", text);
         }
 
@@ -816,16 +960,16 @@ ${output}</xml>`;
                 rightValue = getValue(rightName, n.right, numberType);
             }
 
-            const result = mkExpr(npp.type);
-            result.fields = [];
+            const r = mkExpr(npp.type, n);
+            r.fields = [];
 
             if (npp.op) {
-                result.fields.push(getField("OP", npp.op))
+                r.fields.push(getField("OP", npp.op))
             }
 
-            result.inputs = [leftValue, rightValue];
+            r.inputs = [leftValue, rightValue];
 
-            return result;
+            return r;
 
         }
 
@@ -855,16 +999,19 @@ ${output}</xml>`;
             const args: ts.Node[] = [];
             collectTextJoinArgs(n, args);
 
-            const result = mkExpr("text_join");
-            result.mutation = {
-                "items": args.length.toString()
-            };
-            result.inputs = [];
-
+            const inputs: ValueNode[] = [];
             for (let i = 0; i < args.length; i++) {
-                result.inputs.push(getValue("ADD" + i, args[i], stringType));
+                if (i > 0 || !isEmptyString(args[i].getText())) {
+                    inputs.push(getValue("ADD" + inputs.length, args[i], stringType));
+                }
             }
-            return result;
+
+            const r = mkExpr("text_join", n);
+            r.inputs = inputs;
+            r.mutation = {
+                "items": inputs.length.toString()
+            };
+            return r;
         }
 
         function getValue(name: string, contents: boolean | number | string | Node, shadowType?: string, shadowMutation?: pxt.Map<string>): ValueNode {
@@ -894,6 +1041,12 @@ ${output}</xml>`;
         }
 
         function getIdentifier(identifier: Identifier): ExpressionNode {
+            if (isDeclaredElsewhere(identifier)) {
+                const info = pxtInfo(identifier);
+
+                const id = blocksInfo.apis.byQName[info.commentAttrs.blockIdentity];
+                return getEnumFieldBlock(id, info.commentAttrs.enumIdentity);
+            }
             const name = getVariableName(identifier);
             const oldName = identifier.text;
             let localReporterArg: PropertyDesc = null;
@@ -928,29 +1081,39 @@ ${output}</xml>`;
         }
 
         function getFieldBlock(type: string, fieldName: string, value: string, isShadow?: boolean): ExpressionNode {
-            const r = mkExpr(type);
+            const r = mkExpr(type, null);
             r.fields = [getField(fieldName, value)];
             r.isShadow = isShadow;
             return r;
         }
 
         function getDraggableVariableBlock(valueName: string, varName: string) {
-            return mkValue(valueName,
-                getFieldBlock("variables_get_reporter", "VAR", varName, true), "variables_get_reporter");
+            const fieldBlock = getFieldBlock("variables_get_reporter", "VAR", varName);
+            fieldBlock.mutation = {
+                "duplicateondrag": "true"
+            };
+            return mkValue(valueName, fieldBlock, undefined, fieldBlock.mutation);
         }
 
         function mkDraggableReporterValue(valueName: string, varName: string, varType: string) {
-            const reporterType = pxt.blocks.reporterTypeForArgType(varType);
             const reporterShadowBlock = getDraggableReporterBlock(varName, varType, true);
-            return mkValue(valueName, reporterShadowBlock, reporterType);
+            return mkValue(valueName, reporterShadowBlock, undefined);
         }
 
-        function getDraggableReporterBlock(varName: string, varType: string, shadow: boolean) {
+        function getDraggableReporterBlock(varName: string, varType: string, draggable: boolean) {
             const reporterType = pxt.blocks.reporterTypeForArgType(varType);
-            const reporterShadowBlock = getFieldBlock(reporterType, "VALUE", varName, shadow);
+            const reporterShadowBlock = getFieldBlock(reporterType, "VALUE", varName);
 
             if (reporterType === "argument_reporter_custom") {
                 reporterShadowBlock.mutation = { typename: varType };
+            }
+
+            if (draggable) {
+                if (!reporterShadowBlock.mutation) {
+                    reporterShadowBlock.mutation = {};
+                }
+
+                reporterShadowBlock.mutation["duplicateondrag"] = "true";
             }
 
             return reporterShadowBlock;
@@ -966,7 +1129,7 @@ ${output}</xml>`;
 
         // TODO: Add a real negation block
         function negateNumericNode(node: ts.Node): ExpressionNode {
-            const r = mkExpr("math_arithmetic");
+            const r = mkExpr("math_arithmetic", node);
             r.inputs = [
                 getValue("A", 0, numberType),
                 getValue("B", node, numberType)
@@ -978,7 +1141,7 @@ ${output}</xml>`;
         function getPrefixUnaryExpression(node: PrefixUnaryExpression): OutputNode {
             switch (node.operator) {
                 case SK.ExclamationToken:
-                    const r = mkExpr("logic_negate");
+                    const r = mkExpr("logic_negate", node);
                     r.inputs = [getConditionalInput("BOOL", node.operand)];
                     return r;
                 case SK.PlusToken:
@@ -1021,10 +1184,10 @@ ${output}</xml>`;
             blockId = attributes.blockId || blockId;
 
             if (attributes.blockCombine)
-                return getPropertyGetBlock(n)
+                return getPropertyGetBlock(n, n)
 
             if (attributes.blockId === "lists_length" || attributes.blockId === "text_length") {
-                const r = mkExpr(U.htmlEscape(attributes.blockId));
+                const r = mkExpr(U.htmlEscape(attributes.blockId), n);
                 r.inputs = [getValue("VALUE", n.expression)];
 
                 return r;
@@ -1047,25 +1210,32 @@ ${output}</xml>`;
 
             const info = env.compInfo(callInfo);
 
-            if (blockId && info.thisParameter) {
-                const r = mkExpr(blockId);
+            if (blockId && info && info.thisParameter) {
+                const r = mkExpr(blockId, n);
                 r.inputs = [getValue(U.htmlEscape(info.thisParameter.definitionName), n.expression, info.thisParameter.shadowBlockId)];
                 return r;
             }
 
             let idfn = attributes.blockIdentity ? blocksInfo.apis.byQName[attributes.blockIdentity] : blocksInfo.blocksById[blockId];
-            let f = /%([a-zA-Z0-9_]+)/.exec(idfn.attributes.block);
-            const r = mkExpr(U.htmlEscape(idfn.attributes.blockId));
+            if (blockId && idfn.attributes.blockId !== blockId && idfn.attributes.decompilerShadowAlias === blockId) {
+                idfn = blocksInfo.blocksById[blockId];
+            }
+            return getEnumFieldBlock(idfn, value);
+        }
+
+        function getEnumFieldBlock(idfn: SymbolInfo, value: string) {
+            let f = /(?:%|\$)([a-zA-Z0-9_]+)/.exec(idfn.attributes.block);
+            const r = mkExpr(U.htmlEscape(idfn.attributes.blockId), undefined);
             r.fields = [{
                 kind: "field",
                 name: U.htmlEscape(f[1]),
                 value
             }];
-            return r
+            return r;
         }
 
         function getArrayLiteralExpression(n: ts.ArrayLiteralExpression): ExpressionNode {
-            const r = mkExpr("lists_create_with");
+            const r = mkExpr("lists_create_with", n);
             r.inputs = n.elements.map((e, i) => getValue("ADD" + i, e));
             r.mutation = {
                 "items": n.elements.length.toString()
@@ -1074,7 +1244,7 @@ ${output}</xml>`;
         }
 
         function getElementAccessExpression(n: ts.ElementAccessExpression): ExpressionNode {
-            const r = mkExpr("lists_index_get");
+            const r = mkExpr("lists_index_get", n);
             r.inputs = [getValue("LIST", n.expression), getValue("INDEX", n.argumentExpression, numberType)]
             return r;
         }
@@ -1096,12 +1266,20 @@ ${output}</xml>`;
 
             const comp = pxt.blocks.compileInfo(api);
 
-            const r = mkExpr(api.attributes.blockId);
+            const r = mkExpr(api.attributes.blockId, t);
 
-            const text = (t.template as ts.NoSubstitutionTemplateLiteral).text;
+            let text: string;
+            const param = comp.parameters[0];
+
+            if (param.fieldOptions && param.fieldOptions[DecompileParamKeys.DecompileArgumentAsString]) {
+                text = t.getText();
+            }
+            else {
+                text = (t.template as ts.NoSubstitutionTemplateLiteral).text;
+            }
 
             // This will always be a field and not a value because we only allow no-substitution templates
-            r.fields = [getField(comp.parameters[0].actualName, text)];
+            r.fields = [getField(param.actualName, text)];
 
             return r;
         }
@@ -1122,6 +1300,111 @@ ${output}</xml>`;
             return undefined;
         }
 
+        /**
+         * We split up comments according to the following rules:
+         *      1. If the comment is not top-level:
+         *          a. Combine it with all comments for the following statement
+         *          b. If there is no following statement in the current block, group it with the previous statement
+         *          c. If there are no statements inside the block, group it with the parent block
+         *          d. If trailing the same line as the statement, group it with the comments for that statement
+         *      2. If the comment is top-level:
+         *          b. If the comment is followed by an empty line, it becomes a workspace comment
+         *          c. If the comment is followed by a multi-line comment, it becomes a workspace comment
+         *          a. If the comment is a single-line comment, combine it with the next single-line comment
+         *          d. If the comment is not followed with an empty line, group it with the next statement or event
+         *          e. All other comments are workspace comments
+         *
+         * The below function gathers any comments associated to the Node, and attaches them
+         * to the StatementNode.
+         */
+        function getNodeComments(commented: Node, stmt: StatementNode) {
+            let comments: Comment[] = [];
+            let current: Comment;
+            for (let i = 0; i < commentMap.length; i++) {
+                current = commentMap[i];
+                if (!current.owner && current.start >= commented.pos && current.end <= commented.end) {
+                    current.owner = commented;
+                    current.ownerStatement = stmt;
+                    comments.push(current);
+                }
+
+                if (current.start > commented.end) break;
+            }
+
+            if (current && current.isTrailingComment) {
+                const endLine = ts.getLineAndCharacterOfPosition(file, commented.end);
+                const commentLine = ts.getLineAndCharacterOfPosition(file, current.start);
+
+                if (endLine.line === commentLine.line) {
+                    // If the comment is trailing and on the same line as the statement, it probably belongs
+                    // to this statement. Remove it from any statement it's already assigned to and any workspace
+                    // comments
+                    if (current.ownerStatement) {
+                        current.ownerStatement.comment.splice(current.ownerStatement.comment.indexOf(current), 1);
+
+                        for (const wsComment of workspaceComments) {
+                            wsComment.comment.splice(wsComment.comment.indexOf(current), 1)
+                        }
+                    }
+                    current.owner = commented;
+                    current.ownerStatement = stmt;
+                    comments.push(current);
+                }
+            }
+
+            if (comments.length) {
+                const wsCommentRefs: string[] = [];
+
+                if (isTopLevelComment(commented)) {
+                    let currentWorkspaceComment: Comment[] = [];
+
+                    const localWorkspaceComments: Comment[][] = [];
+
+                    comments.forEach((comment, index) => {
+                        let beforeStatement = comment.owner && comment.start < comment.owner.getStart();
+                        if (comment.kind === CommentKind.MultiLine && beforeStatement) {
+                            if (currentWorkspaceComment.length) {
+                                localWorkspaceComments.push(currentWorkspaceComment);
+                                currentWorkspaceComment = [];
+                            }
+                            if (index != comments.length - 1) {
+                                localWorkspaceComments.push([comment]);
+                                return;
+                            }
+                        }
+
+                        currentWorkspaceComment.push(comment);
+
+                        if (comment.followedByEmptyLine && beforeStatement) {
+                            localWorkspaceComments.push(currentWorkspaceComment);
+                            currentWorkspaceComment = [];
+                        }
+                    });
+
+                    comments = currentWorkspaceComment;
+
+                    localWorkspaceComments.forEach(comment => {
+                        const refId = getCommentRef();
+
+                        wsCommentRefs.push(refId);
+                        workspaceComments.push({ comment, refId });
+                    });
+                }
+
+                // Attach comments to StatementNode
+                if (stmt) {
+                    if (wsCommentRefs.length) {
+                        if (stmt.data) stmt.data += ";" + wsCommentRefs.join(";")
+                        else stmt.data = wsCommentRefs.join(";")
+                    }
+                    if (comments && comments.length) {
+                        if (stmt.comment) stmt.comment = stmt.comment.concat(comments);
+                        else stmt.comment = comments;
+                    }
+                }
+            }
+        }
+
         function getStatementBlock(n: ts.Node, next?: ts.Node[], parent?: ts.Node, asExpression = false, topLevel = false): StatementNode {
             const node = n as ts.Node;
             let stmt: StatementNode;
@@ -1134,7 +1417,9 @@ ${output}</xml>`;
             else {
                 switch (node.kind) {
                     case SK.Block:
-                        return codeBlock((node as ts.Block).statements, next, topLevel);
+                        let bBlock = codeBlock((node as ts.Block).statements, next, topLevel);
+
+                        return bBlock;
                     case SK.ExpressionStatement:
                         return getStatementBlock((node as ts.ExpressionStatement).expression, next, parent || node, asExpression, topLevel);
                     case SK.VariableStatement:
@@ -1161,7 +1446,6 @@ ${output}</xml>`;
                             // never get used in the blocks (and thus won't be emitted again)
 
                             trackAutoDeclaration(decl);
-                            getComments(parent || node);
                             return getNext();
                         }
                         stmt = getVariableDeclarationStatement(node as ts.VariableDeclaration);
@@ -1199,7 +1483,11 @@ ${output}</xml>`;
                     case SK.EnumDeclaration:
                     case SK.ModuleDeclaration:
                         // If the enum declaration made it past the checker then it is emitted elsewhere
+                        markCommentsInRange(node, commentMap);
                         return getNext();
+                    case SK.ReturnStatement:
+                        stmt = getReturnStatementBlock(node as ts.ReturnStatement);
+                        break;
                     default:
                         if (next) {
                             error(node, Util.lf("Unsupported statement in block: {0}", SK[node.kind]))
@@ -1223,7 +1511,7 @@ ${output}</xml>`;
             }
 
             if (!skipComments) {
-                getComments(parent || node);
+                getNodeComments(parent || node, stmt);
             }
 
             return stmt;
@@ -1234,35 +1522,13 @@ ${output}</xml>`;
                 }
                 return undefined;
             }
-
-            function getComments(commented: Node) {
-                const commentRanges = ts.getLeadingCommentRangesOfNode(commented, file)
-                if (commentRanges) {
-                    const wsCommentRefs: string[] = [];
-                    const commentText = getCommentText(commentRanges, node, wsCommentRefs)
-
-                    if (stmt) {
-                        if (wsCommentRefs.length) {
-                            stmt.data = wsCommentRefs.join(";")
-                        }
-                        if (commentText && stmt) {
-                            stmt.comment = commentText;
-                        }
-                        else {
-                            // ERROR TODO
-                        }
-                    }
-                }
-
-            }
         }
 
         function getTypeScriptStatementBlock(node: ts.Node, prefix?: string, err?: string): StatementNode {
-
             if (options.errorOnGreyBlocks)
                 error(node);
 
-            const r = mkStmt(pxtc.TS_STATEMENT_TYPE);
+            const r = mkStmt(pxtc.TS_STATEMENT_TYPE, node);
             r.mutation = {}
 
             trackVariableUsagesInText(node);
@@ -1273,6 +1539,8 @@ ${output}</xml>`;
 
             text = applyRenamesInRange(text, start, end);
 
+            // Mark comments or else they are emitted twice
+            markCommentsInRange(node, commentMap);
 
             if (prefix) {
                 text = prefix + text;
@@ -1307,18 +1575,33 @@ ${output}</xml>`;
         }
 
         function getContinueStatementBlock(node: ts.Node): StatementNode {
-            const r = mkStmt(pxtc.TS_CONTINUE_TYPE);
+            const r = mkStmt(pxtc.TS_CONTINUE_TYPE, node);
             return r;
         }
 
         function getBreakStatementBlock(node: ts.Node): StatementNode {
-            const r = mkStmt(pxtc.TS_BREAK_TYPE);
+            const r = mkStmt(pxtc.TS_BREAK_TYPE, node);
             return r;
         }
 
         function getDebuggerStatementBlock(node: ts.Node): StatementNode {
-            const r = mkStmt(pxtc.TS_DEBUGGER_TYPE);
+            const r = mkStmt(pxtc.TS_DEBUGGER_TYPE, node);
             return r;
+        }
+
+        function getReturnStatementBlock(node: ts.ReturnStatement): StatementNode {
+            const r = mkStmt(pxtc.TS_RETURN_STATEMENT_TYPE, node);
+            if (node.expression) {
+                r.inputs = [
+                    mkValue("RETURN_VALUE", getOutputBlock(node.expression), numberType)
+                ];
+            }
+            else {
+                r.mutation = {
+                    "no_return_value": "true"
+                };
+            }
+            return r
         }
 
         function getImageLiteralStatement(node: ts.CallExpression, info: pxtc.CallInfo) {
@@ -1329,17 +1612,19 @@ ${output}</xml>`;
             }
 
             const attributes = attrs(info);
-            const res = mkStmt(attributes.blockId);
+            const res = mkStmt(attributes.blockId, node);
             res.fields = [];
 
             const leds = ((arg as ts.StringLiteral).text || '').replace(/\s+/g, '');
-            const nc = attributes.imageLiteral * 5;
-            if (nc * 5 != leds.length) {
-                error(node, Util.lf("Invalid image pattern"));
+            const nc = (attributes.imageLiteralColumns || 5) * (attributes.imageLiteral || attributes.gridLiteral);
+            const nr = attributes.imageLiteralRows || 5;
+            const nleds = nc * nr;
+            if (nleds != leds.length) {
+                error(node, Util.lf("Invalid image pattern ({0} expected vs {1} actual)", nleds, leds.length));
                 return undefined;
             }
             let ledString = '';
-            for (let r = 0; r < 5; ++r) {
+            for (let r = 0; r < nr; ++r) {
                 for (let c = 0; c < nc; ++c) {
                     ledString += /[#*1]/.test(leds[r * nc + c]) ? '#' : '.';
                 }
@@ -1356,17 +1641,17 @@ ${output}</xml>`;
             switch (n.operatorToken.kind) {
                 case SK.EqualsToken:
                     if (n.left.kind === SK.Identifier) {
-                        return getVariableSetOrChangeBlock(n.left as ts.Identifier, n.right);
+                        return getVariableSetOrChangeBlock(n, n.left as ts.Identifier, n.right);
                     }
                     else if (n.left.kind == SK.PropertyAccessExpression) {
-                        return getPropertySetBlock(n.left as ts.PropertyAccessExpression, n.right, "@set@");
+                        return getPropertySetBlock(n, n.left as ts.PropertyAccessExpression, n.right, "@set@");
                     }
                     else {
-                        return getArraySetBlock(n.left as ts.ElementAccessExpression, n.right);
+                        return getArraySetBlock(n, n.left as ts.ElementAccessExpression, n.right);
                     }
                 case SK.PlusEqualsToken:
                     if (isTextJoin(n)) {
-                        const r = mkStmt("variables_set");
+                        const r = mkStmt("variables_set", n);
                         const renamed = getVariableName(n.left as ts.Identifier);
                         trackVariableUsage(renamed, ReferenceType.InBlocksOnly);
                         r.inputs = [mkValue("VALUE", getTextJoin(n), numberType)];
@@ -1375,11 +1660,11 @@ ${output}</xml>`;
                     }
 
                     if (n.left.kind == SK.PropertyAccessExpression)
-                        return getPropertySetBlock(n.left as ts.PropertyAccessExpression, n.right, "@change@");
+                        return getPropertySetBlock(n, n.left as ts.PropertyAccessExpression, n.right, "@change@");
                     else
-                        return getVariableSetOrChangeBlock(n.left as ts.Identifier, n.right, true);
+                        return getVariableSetOrChangeBlock(n, n.left as ts.Identifier, n.right, true);
                 case SK.MinusEqualsToken:
-                    const r = mkStmt("variables_change");
+                    const r = mkStmt("variables_change", n);
                     r.inputs = [mkValue("VALUE", negateNumericNode(n.right), numberType)];
                     r.fields = [getField("VAR", getVariableName(n.left as ts.Identifier))];
 
@@ -1391,7 +1676,7 @@ ${output}</xml>`;
         }
 
         function getWhileStatement(n: ts.WhileStatement): StatementNode {
-            const r = mkStmt("device_while");
+            const r = mkStmt("device_while", n);
             r.inputs = [getConditionalInput("COND", n.expression)];
             r.handlers = [{ name: "DO", statement: getStatementBlock(n.statement) }];
             return r;
@@ -1400,7 +1685,7 @@ ${output}</xml>`;
         function getIfStatement(n: ts.IfStatement): StatementNode {
             let flatif = flattenIfStatement(n);
 
-            const r = mkStmt("controls_if");
+            const r = mkStmt("controls_if", n);
             r.mutation = {
                 "elseif": (flatif.ifStatements.length - 1).toString(),
                 "else": flatif.elseStatement ? "1" : "0"
@@ -1409,12 +1694,14 @@ ${output}</xml>`;
             r.handlers = [];
 
             flatif.ifStatements.forEach((stmt, i) => {
+                let statement = getStatementBlock(stmt.thenStatement)
                 r.inputs.push(getConditionalInput("IF" + i, (stmt as ts.IfStatement).expression));
-                r.handlers.push({ name: "DO" + i, statement: getStatementBlock(stmt.thenStatement) });
+                r.handlers.push({ name: "DO" + i, statement });
             });
 
             if (flatif.elseStatement) {
-                r.handlers.push({ name: "ELSE", statement: getStatementBlock(flatif.elseStatement) });
+                let statement = getStatementBlock(flatif.elseStatement);
+                r.handlers.push({ name: "ELSE", statement });
             }
 
             return r;
@@ -1437,6 +1724,7 @@ ${output}</xml>`;
                 case SK.TrueKeyword:
                 case SK.FalseKeyword:
                 case SK.Identifier:
+                case SK.ElementAccessExpression:
                     return undefined;
                 case SK.BinaryExpression:
                     return checkBooleanBinaryExpression(unwrappedExpr as BinaryExpression);
@@ -1469,10 +1757,14 @@ ${output}</xml>`;
             }
 
             function checkBooleanCallExpression(n: CallExpression) {
-                const callInfo: pxtc.CallInfo = pxtc.pxtInfo(n.expression).callInfo;
+                const callInfo: pxtc.CallInfo = pxtc.pxtInfo(n).callInfo;
                 if (callInfo) {
                     const api = env.blocks.apis.byQName[callInfo.qName];
                     if (api && api.retType == "boolean") {
+                        return undefined;
+                    }
+                    else if (ts.isIdentifier(n.expression) && env.declaredFunctions[n.expression.text]) {
+                        // User functions have a return type of "any" in blocks so they are safe to decompile
                         return undefined;
                     }
                 }
@@ -1490,13 +1782,13 @@ ${output}</xml>`;
             let r: StatementNode;
 
             if (condition.operatorToken.kind === SK.LessThanToken && !checkForVariableUsages(n.statement)) {
-                r = mkStmt("controls_repeat_ext");
+                r = mkStmt("controls_repeat_ext", n);
                 r.fields = [];
                 r.inputs = [getValue("TIMES", condition.right, wholeNumberType)];
                 r.handlers = [];
             }
             else {
-                r = mkStmt("pxt_controls_for");
+                r = mkStmt("pxt_controls_for", n);
                 r.fields = [];
                 r.inputs = [];
                 r.handlers = [];
@@ -1509,7 +1801,7 @@ ${output}</xml>`;
                         const valueField = getNumericLiteral(decrementedValue + "");
                         r.inputs.push(mkValue("TO", valueField, wholeNumberType));
                     } else {
-                        const ex = mkExpr("math_arithmetic");
+                        const ex = mkExpr("math_arithmetic", n);
                         ex.fields = [getField("OP", "MINUS")];
                         ex.inputs = [
                             getValue("A", unwrappedRightSide, numberType),
@@ -1523,7 +1815,8 @@ ${output}</xml>`;
                 }
             }
 
-            r.handlers.push({ name: "DO", statement: getStatementBlock(n.statement) });
+            const statement = getStatementBlock(n.statement);
+            r.handlers = [{ name: "DO", statement  }];
             return r;
 
             function checkForVariableUsages(node: Node): boolean {
@@ -1539,25 +1832,26 @@ ${output}</xml>`;
             const initializer = n.initializer as ts.VariableDeclarationList;
             const renamed = getVariableName(initializer.declarations[0].name as ts.Identifier);
 
-            const r = mkStmt("pxt_controls_for_of");
+            const r = mkStmt("pxt_controls_for_of", n);
             r.inputs = [getValue("LIST", n.expression), getDraggableVariableBlock("VAR", renamed)];
-            r.handlers = [{ name: "DO", statement: getStatementBlock(n.statement) }];
+            const statement = getStatementBlock(n.statement);
+            r.handlers = [{ name: "DO", statement  }];
 
             return r
         }
 
-        function getVariableSetOrChangeBlock(name: ts.Identifier, value: Node | number, changed = false, overrideName = false): StatementNode {
+        function getVariableSetOrChangeBlock(n: ts.Node, name: ts.Identifier, value: Node | number, changed = false, overrideName = false): StatementNode {
             const renamed = getVariableName(name);
             trackVariableUsage(renamed, ReferenceType.InBlocksOnly);
             // We always do a number shadow even if the variable is not of type number
-            const r = mkStmt(changed ? "variables_change" : "variables_set");
+            const r = mkStmt(changed ? "variables_change" : "variables_set", n.parent || n);
             r.inputs = [getValue("VALUE", value, numberType)];
             r.fields = [getField("VAR", renamed)]
             return r;
         }
 
-        function getArraySetBlock(left: ts.ElementAccessExpression, right: ts.Expression): StatementNode {
-            const r = mkStmt("lists_index_set");
+        function getArraySetBlock(n: ts.BinaryExpression, left: ts.ElementAccessExpression, right: ts.Expression): StatementNode {
+            const r = mkStmt("lists_index_set", n);
             r.inputs = [
                 getValue("LIST", left.expression),
                 getValue("INDEX", left.argumentExpression, numberType),
@@ -1566,15 +1860,15 @@ ${output}</xml>`;
             return r;
         }
 
-        function getPropertySetBlock(left: ts.PropertyAccessExpression, right: ts.Expression, tp: string) {
-            return getPropertyBlock(left, right, tp) as StatementNode
+        function getPropertySetBlock(n: ts.Node, left: ts.PropertyAccessExpression, right: ts.Expression, tp: string) {
+            return getPropertyBlock(n, left, right, tp) as StatementNode
         }
 
-        function getPropertyGetBlock(left: ts.PropertyAccessExpression) {
-            return getPropertyBlock(left, null, "@get@") as ExpressionNode
+        function getPropertyGetBlock(n: ts.Node, left: ts.PropertyAccessExpression) {
+            return getPropertyBlock(n, left, null, "@get@") as ExpressionNode
         }
 
-        function getPropertyBlock(left: ts.PropertyAccessExpression, right: ts.Expression, tp: string): StatementNode | ExpressionNode {
+        function getPropertyBlock(n: ts.Node, left: ts.PropertyAccessExpression, right: ts.Expression, tp: string): StatementNode | ExpressionNode {
             const info: pxtc.CallInfo = pxtc.pxtInfo(left).callInfo
             const sym = env.blocks.apis.byQName[info ? info.qName : ""]
             if (!sym || !sym.attributes.blockCombine) {
@@ -1583,7 +1877,7 @@ ${output}</xml>`;
             }
             const qName = `${sym.namespace}.${sym.retType}.${tp}`;
             const setter = env.blocks.blocks.find(b => b.qName == qName)
-            const r = right ? mkStmt(setter.attributes.blockId) : mkExpr(setter.attributes.blockId)
+            const r = right ? mkStmt(setter.attributes.blockId, n) : mkExpr(setter.attributes.blockId, n)
             const pp = setter.attributes._def.parameters;
 
             let fieldValue = info.qName;
@@ -1605,7 +1899,7 @@ ${output}</xml>`;
 
         function getVariableDeclarationStatement(n: ts.VariableDeclaration): StatementNode {
             if (addVariableDeclaration(n)) {
-                return getVariableSetOrChangeBlock(n.name as ts.Identifier, n.initializer)
+                return getVariableSetOrChangeBlock(n, n.name as ts.Identifier, n.initializer)
             }
             return undefined;
         }
@@ -1618,7 +1912,7 @@ ${output}</xml>`;
                 return undefined;
             }
 
-            return getVariableSetOrChangeBlock(node.operand as ts.Identifier, isPlusPlus ? 1 : -1, true);
+            return getVariableSetOrChangeBlock(node, node.operand as ts.Identifier, isPlusPlus ? 1 : -1, true);
         }
 
         function getFunctionDeclaration(n: ts.FunctionDeclaration): StatementNode {
@@ -1637,7 +1931,7 @@ ${output}</xml>`;
 
             let r: StatementNode;
 
-            r = mkStmt("function_definition");
+            r = mkStmt("function_definition", n);
             r.mutation = {
                 name
             };
@@ -1645,11 +1939,13 @@ ${output}</xml>`;
                 r.mutationChildren = [];
                 n.parameters.forEach(p => {
                     const paramName = p.name.getText();
+                    let type = normalizeType(p.type.getText());
+                    if (pxt.U.endsWith(type, "[]")) type = "Array";
                     r.mutationChildren.push({
                         nodeName: "arg",
                         attributes: {
                             name: paramName,
-                            type: p.type.getText(),
+                            type,
                             id: env.functionParamIds[name][paramName]
                         }
                     });
@@ -1661,11 +1957,11 @@ ${output}</xml>`;
         }
 
         function getCallStatement(node: ts.CallExpression, asExpression: boolean): StatementNode | ExpressionNode {
-            const info: pxtc.CallInfo = pxtc.pxtInfo(node).callInfo
+            const info: DecompilerCallInfo = pxtc.pxtInfo(node).callInfo
             const attributes = attrs(info);
 
             if (info.qName == "Math.pow") {
-                const r = mkExpr("math_arithmetic");
+                const r = mkExpr("math_arithmetic", node);
                 r.inputs = [
                     mkValue("A", getOutputBlock(node.arguments[0]), numberType),
                     mkValue("B", getOutputBlock(node.arguments[1]), numberType)
@@ -1679,9 +1975,9 @@ ${output}</xml>`;
                     let r: ExpressionNode;
 
                     if (isRoundingFunction(op)) {
-                        r = mkExpr("math_js_round");
+                        r = mkExpr("math_js_round", node);
                     } else {
-                        r = mkExpr("math_js_op");
+                        r = mkExpr("math_js_op", node);
                         let opType: string;
                         if (isUnaryMathFunction(op)) opType = "unary";
                         else if (isInfixMathFunction(op)) opType = "infix";
@@ -1698,7 +1994,7 @@ ${output}</xml>`;
             }
 
             if (attributes.blockId === pxtc.PAUSE_UNTIL_TYPE) {
-                const r = mkStmt(pxtc.PAUSE_UNTIL_TYPE);
+                const r = mkStmt(pxtc.PAUSE_UNTIL_TYPE, node);
                 const lambda = node.arguments[0] as (ts.FunctionExpression | ts.ArrowFunction);
 
                 let condition: ts.Node;
@@ -1721,18 +2017,29 @@ ${output}</xml>`;
                     const name = getVariableName(node.expression as ts.Identifier);
                     if (env.declaredFunctions[name]) {
                         let r: StatementNode;
-                        r = mkStmt("function_call");
+
+                        let isStatement = true;
+
+                        if (info.isExpression) {
+                            const [parent] = getParent(node);
+                            isStatement = parent && parent.kind === SK.ExpressionStatement;
+                        }
+
+                        r = mkStmt(isStatement ? "function_call" : "function_call_output", node);
                         if (info.args.length) {
                             r.mutationChildren = [];
                             r.inputs = [];
                             env.declaredFunctions[name].parameters.forEach((p, i) => {
                                 const paramName = p.name.getText();
                                 const argId = env.functionParamIds[name][paramName];
+                                let type = normalizeType(p.type.getText());
+                                if (pxt.U.endsWith(type, "[]")) type = "Array";
+
                                 r.mutationChildren.push({
                                     nodeName: "arg",
                                     attributes: {
                                         name: paramName,
-                                        type: p.type.getText(),
+                                        type: type,
                                         id: argId
                                     }
                                 });
@@ -1751,7 +2058,7 @@ ${output}</xml>`;
                 attributes.blockId = builtin.blockId;
             }
 
-            if (attributes.imageLiteral) {
+            if (attributes.imageLiteral || attributes.gridLiteral) {
                 return getImageLiteralStatement(node, info);
             }
 
@@ -1764,13 +2071,11 @@ ${output}</xml>`;
             }
 
             const args = paramList(info, env.blocks);
-            const api = env.blocks.apis.byQName[info.qName];
+            const api = env.blocks.apis.byQName[info.decompilerBlockAlias || info.qName];
             const comp = pxt.blocks.compileInfo(api);
 
-            const r = {
-                kind: asExpression ? "expr" : "statement",
-                type: attributes.blockId
-            } as StatementNode;
+            const r = asExpression ? mkExpr(attributes.blockId, node)
+                : mkStmt(attributes.blockId, node);
 
             const addInput = (v: ValueNode) => (r.inputs || (r.inputs = [])).push(v);
             const addField = (f: FieldNode) => (r.fields || (r.fields = [])).push(f);
@@ -1833,6 +2138,16 @@ ${output}</xml>`;
                     }
                 }
 
+                if (param && paramInfo && paramInfo.isEnum && e.kind === SK.Identifier) {
+                    addField(getField(U.htmlEscape(param.definitionName), pxtInfo(e).commentAttrs.enumIdentity));
+                    return;
+                }
+
+                if (param && param.fieldOptions && param.fieldOptions[DecompileParamKeys.DecompileArgumentAsString]) {
+                    addField(getField(U.htmlEscape(param.definitionName), Util.htmlEscape(e.getText())));
+                    return;
+                }
+
                 switch (e.kind) {
                     case SK.FunctionExpression:
                     case SK.ArrowFunction:
@@ -1890,7 +2205,9 @@ ${output}</xml>`;
                                 }
                             }
                         }
-                        (r.handlers || (r.handlers = [])).push({ name: "HANDLER", statement: getStatementBlock(e) });
+                        const statement = getStatementBlock(e);
+                        (r.handlers || (r.handlers = [])).push({ name: "HANDLER", statement });
+
                         if (mustPopLocalScope) {
                             env.localReporters.pop();
                         }
@@ -1964,7 +2281,30 @@ ${output}</xml>`;
 
             if (optionalCount) {
                 if (!r.mutation) r.mutation = {};
-                r.mutation["_expanded"] = optionalCount.toString();
+
+                if (attributes.compileHiddenArguments) {
+                    // Only expand the optional arguments that do not map to shadow blocks
+                    let nonOptional = 0;
+                    let expandCount = 0;
+
+                    for (const arg of args) {
+                        const aName = U.htmlEscape(arg.param.definitionName);
+                        const input = r.inputs.find(i => i.name === aName);
+
+                        if (!arg.param.isOptional) {
+                            nonOptional++;
+                        }
+                        else if (input && !shouldEmitShadowOnly(input)) {
+                            expandCount = Math.max(arg.param.definitionIndex - nonOptional + 1, expandCount)
+                        }
+                    }
+
+                    r.mutation["_expanded"] =  expandCount.toString();
+                }
+                else {
+                    r.mutation["_expanded"] = optionalCount.toString();
+                }
+
             }
 
             return r;
@@ -2063,14 +2403,32 @@ ${output}</xml>`;
                 }
             }
 
-            eventStatements.map(n => getStatementBlock(n, undefined, undefined, false, topLevel)).forEach(emitStatementNode);
+            const compiledEvents: StatementNode[] = [];
+            const keyMap: {[index: string]: boolean} = {};
+            for (const statement of eventStatements) {
+                const key = statement.kind === SK.FunctionDeclaration ? undefined : getCallKey(statement as ExpressionStatement);
+
+                if (key && keyMap[key]) {
+                    // Pass false for topLevel to force a grey block
+                    compiledEvents.push(getStatementBlock(statement, undefined, undefined, false, false))
+                }
+                else {
+                    keyMap[key] = true;
+                    compiledEvents.push(getStatementBlock(statement, undefined, undefined, false, topLevel))
+                }
+            }
+
+            compiledEvents.forEach(emitStatementNode);
 
             if (blockStatements.length) {
                 // wrap statement in "on start" if top level
-                const stmt = getStatementBlock(blockStatements.shift(), blockStatements, parent, false, topLevel);
+                const blockNode = blockStatements.shift();
+                const stmt = getStatementBlock(blockNode, blockStatements, parent, false, topLevel);
                 if (emitOnStart) {
                     // Preserve any variable edeclarations that were never used
-                    let current = stmt;
+                    // stmt and blockNode will not yet align if there was an auto-declared variable.
+                    let currentStmtNode = stmt;
+                    let currentBlockNode: ts.Node = blockNode;
                     autoDeclarations.forEach(([name, node]) => {
                         if (varUsages[name] === ReferenceType.InBlocksOnly) {
                             return;
@@ -2084,37 +2442,44 @@ ${output}</xml>`;
                             v = getTypeScriptStatementBlock(node, "let ");
                         }
                         else {
-                            v = getVariableSetOrChangeBlock((node as ts.VariableDeclaration).name as ts.Identifier, (node as ts.VariableDeclaration).initializer, false, true);
+                            v = getVariableSetOrChangeBlock(blockNode, (node as ts.VariableDeclaration).name as ts.Identifier, (node as ts.VariableDeclaration).initializer, false, true);
                         }
-                        v.next = current;
-                        current = v;
+
+                        // Auto-declared variables were not previously inserted into the stmt linked-list.
+                        // Insert auto-declared 'v' as the currentStmtNode.
+                        v.next = currentStmtNode;
+                        currentStmtNode = v;
+                        currentBlockNode = node;
+
+                        // Attach to currentStmtNode any associated comments
+                        getNodeComments(currentBlockNode.parent, currentStmtNode);
                     });
 
-                    if (current) {
-                        const r = mkStmt(ts.pxtc.ON_START_TYPE);
+                    if (currentStmtNode) {
+                        const r = mkStmt(ts.pxtc.ON_START_TYPE, currentBlockNode);
                         r.handlers = [{
                             name: "HANDLER",
-                            statement: current
+                            statement: currentStmtNode
                         }];
                         return r;
                     }
                     else {
-                        maybeEmitEmptyOnStart();
+                        maybeEmitEmptyOnStart(stmt);
                     }
                 }
                 return stmt;
             }
             else if (emitOnStart) {
-                maybeEmitEmptyOnStart();
+                maybeEmitEmptyOnStart(undefined);
             }
 
             return undefined;
         }
 
-        function maybeEmitEmptyOnStart() {
+        function maybeEmitEmptyOnStart(node: StatementNode) {
             if (options.alwaysEmitOnStart) {
-                countBlock();
-                write(`<block type="${ts.pxtc.ON_START_TYPE}"></block>`);
+                openBlockTag(ts.pxtc.ON_START_TYPE, node);
+                closeBlockTag();
             }
         }
 
@@ -2131,85 +2496,6 @@ ${output}</xml>`;
                 }
                 trackVariableUsagesInText(n);
             })
-        }
-
-        /**
-         * Takes a series of comment ranges and converts them into string suitable for a
-         * comment block in blockly. All comments above a statement will be included,
-         * regardless of single vs multi line and whitespace. Paragraphs are delineated
-         * by empty lines between comments (a commented empty line, not an empty line
-         * between two separate comment blocks)
-         */
-        function getCommentText(commentRanges: ts.CommentRange[], node: Node, workspaceRefs?: string[]) {
-            let text = ""
-            let currentLine = ""
-
-            const isTopLevel = isTopLevelComment(node);
-
-            for (const commentRange of commentRanges) {
-                let commentText = fileText.substr(commentRange.pos, commentRange.end - commentRange.pos)
-                if (commentText) {
-                    // Strip windows line endings because they break the regex we use to extract content
-                    commentText = commentText.replace(/\r\n/g, "\n");
-                }
-                if (commentRange.kind === SyntaxKind.SingleLineCommentTrivia) {
-                    appendMatch(commentText, 1, 3, singleLineCommentRegex)
-                }
-                else if (commentRange.kind === SyntaxKind.MultiLineCommentTrivia && isTopLevel) {
-                    const lines = commentText.split("\n")
-                    for (let i = 0; i < lines.length; i++) {
-                        appendMatch(lines[i], i, lines.length, multiLineCommentRegex);
-                    }
-                    if (currentLine) text += currentLine
-                    const ref = getCommentRef();
-                    if (workspaceRefs) {
-                        workspaceRefs.push(ref);
-                    }
-                    workspaceComments.push({ text, refId: ref });
-                    text = '';
-                    currentLine = '';
-                }
-                else {
-                    const lines = commentText.split("\n")
-                    for (let i = 0; i < lines.length; i++) {
-                        appendMatch(lines[i], i, lines.length, multiLineCommentRegex)
-                    }
-                }
-            }
-
-            text += currentLine
-
-            return text.trim()
-
-            function isTopLevelComment(n: Node): boolean {
-                const [parent,] = getParent(n);
-                if (!parent || parent.kind == SK.SourceFile) return true;
-                // Expression statement
-                if (parent.kind == SK.ExpressionStatement) return isTopLevelComment(parent);
-                // Variable statement
-                if (parent.kind == SK.VariableDeclarationList) return isTopLevelComment(parent.parent);
-                return false;
-            }
-
-            function appendMatch(line: string, lineno: number, lineslen: number, regex: RegExp) {
-                const match = regex.exec(line)
-                if (match) {
-                    const matched = match[1].trim()
-
-                    if (matched === ON_START_COMMENT || matched === HANDLER_COMMENT) {
-                        return;
-                    }
-
-                    if (matched) {
-                        currentLine += currentLine ? " " + matched : matched
-                    } else {
-                        if (lineno && lineno < lineslen - 1) {
-                            text += currentLine + "\n"
-                            currentLine = ""
-                        }
-                    }
-                }
-            }
         }
 
         function trackAutoDeclaration(n: ts.VariableDeclaration) {
@@ -2271,6 +2557,8 @@ ${output}</xml>`;
                 return checkEnumDeclaration(node as ts.EnumDeclaration, topLevel);
             case SK.ModuleDeclaration:
                 return checkNamespaceDeclaration(node as ts.NamespaceDeclaration);
+            case SK.ReturnStatement:
+                return checkReturnStatement(node as ts.ReturnStatement);
             case SK.BreakStatement:
             case SK.ContinueStatement:
             case SK.DebuggerStatement:
@@ -2433,19 +2721,33 @@ ${output}</xml>`;
         }
 
         function checkCall(n: ts.CallExpression, env: DecompilerEnv, asExpression = false, topLevel = false) {
-            const info: pxtc.CallInfo = pxtc.pxtInfo(n).callInfo;
+            const info: DecompilerCallInfo = pxtc.pxtInfo(n).callInfo;
             if (!info) {
                 return Util.lf("Function call not supported in the blocks");
             }
 
             const attributes = env.attrs(info);
 
+            let userFunction: FunctionDeclaration;
+
+            if (ts.isIdentifier(n.expression)) {
+                userFunction = env.declaredFunctions[n.expression.text];
+            }
+
             if (!asExpression) {
-                if (info.isExpression) {
-                    return Util.lf("No output expressions as statements");
+                if (info.isExpression && !userFunction) {
+                    const alias = env.aliasBlocks[info.qName];
+
+                    if (alias) {
+                        info.decompilerBlockAlias = env.aliasBlocks[info.qName];
+                    }
+                    else if (!env.opts.snippetMode) {
+                        return Util.lf("No output expressions as statements");
+                    }
                 }
             }
-            else if (info.qName == "Math.pow") {
+
+            if (info.qName == "Math.pow") {
                 return undefined;
             }
             else if (pxt.Util.startsWith(info.qName, "Math.")) {
@@ -2471,17 +2773,13 @@ ${output}</xml>`;
             if (!attributes.blockId || !attributes.block) {
                 const builtin = pxt.blocks.builtinFunctionInfo[info.qName];
                 if (!builtin) {
-                    if (n.expression.kind === SK.Identifier) {
-                        const funcName = (n.expression as ts.Identifier).text;
-                        if (!env.declaredFunctions[funcName]) {
-                            return Util.lf("Call statements must have a valid declared function");
-                        } else if (env.declaredFunctions[funcName].parameters.length !== info.args.length) {
-                            return Util.lf("Function calls in blocks must have the same number of arguments as the function definition");
-                        } else {
-                            return undefined;
-                        }
+                    if (!userFunction) {
+                        return Util.lf("Call statements must have a valid declared function");
+                    } else if (userFunction.parameters.length !== info.args.length) {
+                        return Util.lf("Function calls in blocks must have the same number of arguments as the function definition");
+                    } else {
+                        return undefined;
                     }
-                    return Util.lf("Function call not supported in the blocks");
                 }
                 attributes.blockId = builtin.blockId;
             }
@@ -2491,7 +2789,7 @@ ${output}</xml>`;
             const comp = pxt.blocks.compileInfo(api);
             const totalDecompilableArgs = comp.parameters.length + (comp.thisParameter ? 1 : 0);
 
-            if (attributes.imageLiteral) {
+            if (attributes.imageLiteral || attributes.gridLiteral) {
                 // Image literals do not show up in the block string, so it won't be in comp
                 if (info.args.length - totalDecompilableArgs > 1) {
                     return Util.lf("Function call has more arguments than are supported by its block");
@@ -2502,9 +2800,11 @@ ${output}</xml>`;
                     return Util.lf("Only string literals supported for image literals")
                 }
                 const leds = ((arg as ts.StringLiteral).text || '').replace(/\s+/g, '');
-                const nc = attributes.imageLiteral * 5;
-                if (nc * 5 != leds.length) {
-                    return Util.lf("Invalid image pattern");
+                const nr = attributes.imageLiteralRows || 5;
+                const nc = (attributes.imageLiteralColumns || 5) * (attributes.imageLiteral || attributes.gridLiteral);
+                const nleds = nc * nr;
+                if (nc * nr != leds.length) {
+                    return Util.lf("Invalid image pattern ({0} expected vs {1} actual)", nleds, leds.length);
                 }
                 return undefined;
             }
@@ -2626,6 +2926,10 @@ ${output}</xml>`;
                             }
                         }
                     }
+                    else if (e.kind === SK.Identifier) {
+                        const attributes = pxtInfo(e).commentAttrs;
+                        if (attributes && attributes.enumIdentity) return undefined;
+                    }
                     return Util.lf("Enum arguments may only be literal property access expressions");
                 }
                 else if (isLiteralNode(e) && (param.fieldEditor || param.shadowBlockId)) {
@@ -2657,14 +2961,12 @@ ${output}</xml>`;
                     }
 
                     const tag = unwrapNode((e as ts.TaggedTemplateExpression).tag);
-
-                    if (tag.kind !== SK.Identifier) {
-                        return Util.lf("Tagged template literals must use an identifier as the tag");
-                    }
-
                     const tagText = tag.getText();
-                    if (tagText.trim() != tagName.trim()) {
-                        return Util.lf("Function only supports template literals with tag '{0}'", tagName);
+
+                    const possibleTags = tagName.split(";").map(t => t.trim());
+
+                    if (possibleTags.indexOf(tagText) === -1) {
+                        return Util.lf("Function only supports template literals with tag '{0}'", possibleTags.join(", "));
                     }
 
                     const template = (e as ts.TaggedTemplateExpression).template;
@@ -2762,22 +3064,12 @@ ${output}</xml>`;
                             return Util.lf("Function parameters must declare a type");
                         }
 
-                        if (env.opts.allowedArgumentTypes.indexOf(normalizeType(type)) === -1) {
+                        const normalized = normalizeType(type);
+                        if (env.opts.allowedArgumentTypes.indexOf(normalized) === -1 && !U.endsWith(normalized, "[]")) {
                             return Util.lf("Only types that can be added in blocks can be used for function arguments");
                         }
                     }
                 }
-            }
-
-            let fail = false;
-            ts.forEachReturnStatement(n.body, stmt => {
-                if (stmt.expression) {
-                    fail = true;
-                }
-            });
-
-            if (fail) {
-                return Util.lf("Function with return value not supported in blocks")
             }
 
             return undefined;
@@ -2822,49 +3114,81 @@ ${output}</xml>`;
         }
 
         function checkNamespaceDeclaration(n: ts.NamespaceDeclaration) {
-            if (!isModuleBlock(n.body)) {
-                return Util.lf("Namespaces cannot be nested.")
+            const kindCheck = checkKindNamespaceDeclaration(n, env);
+            if (!kindCheck) return undefined;
+
+            const tilesetCheck = checkTilesetNamespace(n);
+            if (!tilesetCheck) return undefined;
+
+            return kindCheck;
+        }
+
+        function checkReturnStatement(n: ts.ReturnStatement) {
+            if (checkIfWithinFunction(n)) {
+                return undefined;
             }
+            return Util.lf("Return statements can only be used within top-level function declarations");
 
-            const kindInfo = env.blocks.kindsByName[n.name.text]
-            if (!kindInfo) {
-                return Util.lf("Only namespaces with 'kind' blocks can be decompiled");
+            function checkIfWithinFunction(n: Node): boolean {
+                const enclosing = ts.getEnclosingBlockScopeContainer(n);
+                if (enclosing) {
+                    switch (enclosing.kind) {
+                        case SK.SourceFile:
+                        case SK.ArrowFunction:
+                        case SK.FunctionExpression:
+                            return false;
+                        case SK.FunctionDeclaration:
+                            return enclosing.parent && enclosing.parent.kind === SK.SourceFile && !checkStatement(enclosing, env, false, true);
+                        default:
+                            return checkIfWithinFunction(enclosing);
+                    }
+                }
+
+                return false;
             }
+        }
+    }
 
-            const fail = Util.lf("Namespaces may only contain valid 'kind' exports");
+    function checkKindNamespaceDeclaration(n: ts.NamespaceDeclaration, env: DecompilerEnv) {
+        if (!isModuleBlock(n.body)) {
+            return Util.lf("Namespaces cannot be nested.")
+        }
 
-            // Each statement must be of the form `export const kind = kindNamespace.create()`
-            for (const statement of n.body.statements) {
-                // There isn't really a way to persist comments, so to be safe just bail out
-                if (isCommented(statement)) return fail;
+        const kindInfo = env.blocks.kindsByName[n.name.text]
+        if (!kindInfo) {
+            return Util.lf("Only namespaces with 'kind' blocks can be decompiled");
+        }
 
-                if (isVariableStatement(statement) && statement.declarationList.declarations) {
-                    const isSingleDeclaration = statement.declarationList.declarations.length === 1;
-                    const isExport = statement.modifiers && statement.modifiers.length === 1 && statement.modifiers[0].kind === SK.ExportKeyword;
-                    const isConst = statement.declarationList.flags & NodeFlags.Const
+        const fail = Util.lf("Namespaces may only contain valid 'kind' exports");
 
-                    if (isSingleDeclaration && isExport && isConst) {
-                        const declaration = statement.declarationList.declarations[0];
-                        if (!declaration.initializer || !isCallExpression(declaration.initializer) || !isIdentifier(declaration.name)) {
-                            return fail;
-                        }
+        // Each statement must be of the form `export const kind = kindNamespace.create()`
+        for (const statement of n.body.statements) {
+            // There isn't really a way to persist comments, so to be safe just bail out
+            if (isCommented(statement)) return fail;
 
-                        const call = declaration.initializer;
+            if (isVariableStatement(statement) && statement.declarationList.declarations) {
+                const isSingleDeclaration = statement.declarationList.declarations.length === 1;
+                const isExport = statement.modifiers && statement.modifiers.length === 1 && statement.modifiers[0].kind === SK.ExportKeyword;
+                const isConst = statement.declarationList.flags & NodeFlags.Const
 
-                        if (call.arguments.length) {
-                            return fail;
-                        }
+                if (isSingleDeclaration && isExport && isConst) {
+                    const declaration = statement.declarationList.declarations[0];
+                    if (!declaration.initializer || !isCallExpression(declaration.initializer) || !isIdentifier(declaration.name)) {
+                        return fail;
+                    }
 
-                        // The namespace is emitted from the blocks, but it's optional when decompiling
-                        if (isPropertyAccessExpression(call.expression) && isIdentifier(call.expression.expression)) {
-                            if (call.expression.expression.text !== kindInfo.name || call.expression.name.text !== kindInfo.createFunctionName) return fail;
-                        }
-                        else if (isIdentifier(call.expression)) {
-                            if (call.expression.text !== kindInfo.createFunctionName) return fail;
-                        }
-                        else {
-                            return fail;
-                        }
+                    const call = declaration.initializer;
+
+                    if (call.arguments.length) {
+                        return fail;
+                    }
+
+                    // The namespace is emitted from the blocks, but it's optional when decompiling
+                    if (isPropertyAccessExpression(call.expression) && isIdentifier(call.expression.expression)) {
+                        if (call.expression.expression.text !== kindInfo.name || call.expression.name.text !== kindInfo.createFunctionName) return fail;
+                    }
+                    else if (isIdentifier(call.expression)) {
+                        if (call.expression.text !== kindInfo.createFunctionName) return fail;
                     }
                     else {
                         return fail;
@@ -2874,9 +3198,83 @@ ${output}</xml>`;
                     return fail;
                 }
             }
-
-            return undefined;
+            else {
+                return fail;
+            }
         }
+
+        return undefined;
+    }
+
+    function checkTilesetNamespace(n: ts.NamespaceDeclaration) {
+        if (!isModuleBlock(n.body)) {
+            return Util.lf("Namespaces cannot be nested.")
+        }
+
+        if (n.name.text !== pxt.sprite.TILE_NAMESPACE) {
+            return Util.lf("Tileset namespace must be named myTiles");
+        }
+
+        const fail = Util.lf("The myTiles namespace can only export tile variables with image literal initializers and no duplicate ids");
+        const commentFail = Util.lf("Tileset members must have a blockIdentity comment and no other annotations");
+
+        const nameRegex = new RegExp(`${pxt.sprite.TILE_PREFIX}(\\d+)`);
+        const foundIds: string[] = [];
+
+        const commentRegex = /^\s*\/\/%\s*blockIdentity=[^\s]+\s*$/;
+
+        // Each statement must be of the form "export const tile{ID} = img``;"
+        for (const statement of (n.body as ts.ModuleBlock).statements) {
+            // Tile members have a single annotation of the form "//% blockIdentity=..."
+            // Bail out on any other comment because we can't persist it
+            const commentRanges = ts.getLeadingCommentRangesOfNode(statement, statement.getSourceFile());
+
+            if (commentRanges && commentRanges.length) {
+                const comments = commentRanges.map(cr => statement.getSourceFile().text.substr(cr.pos, cr.end - cr.pos)).filter(c => !!c);
+
+                if (comments.length !== 1 || !commentRegex.test(comments[0])) {
+                    return commentFail;
+                }
+            }
+            else {
+                return commentFail;
+            }
+
+            if (isVariableStatement(statement) && statement.declarationList.declarations) {
+                const isSingleDeclaration = statement.declarationList.declarations.length === 1;
+                const isExport = statement.modifiers && statement.modifiers.length === 1 && statement.modifiers[0].kind === SK.ExportKeyword;
+                const isConst = statement.declarationList.flags & NodeFlags.Const
+
+                if (isSingleDeclaration && isExport && isConst) {
+                    const declaration = statement.declarationList.declarations[0];
+                    if (!declaration.initializer || !isTaggedTemplateExpression(declaration.initializer) || !isIdentifier(declaration.name)) {
+                        return fail;
+                    }
+
+                    const tag = declaration.initializer;
+
+                    if (!isIdentifier(tag.tag) || tag.tag.text !== "img") {
+                        return fail;
+                    }
+
+                    const match = nameRegex.exec(declaration.name.text);
+
+                    if (!match || foundIds.indexOf(match[1]) !== -1) {
+                        return fail;
+                    }
+
+                    foundIds.push(match[1]);
+                }
+                else {
+                    return fail;
+                }
+            }
+            else {
+                return fail;
+            }
+        }
+
+        return undefined;
     }
 
     function isEmptyStringNode(node: Node) {
@@ -2906,20 +3304,6 @@ ${output}</xml>`;
 
     function isDefaultArray(e: Expression) {
         return e.kind === SK.ArrayLiteralExpression && (e as ArrayLiteralExpression).elements.length === 0;
-    }
-
-    function getCallInfo(checker: ts.TypeChecker, node: ts.Node, apiInfo: ApisInfo) {
-        const symb = checker.getSymbolAtLocation(node);
-
-        if (symb) {
-            const qName = checker.getFullyQualifiedName(symb);
-
-            if (qName) {
-                return apiInfo.byQName[qName];
-            }
-        }
-
-        return undefined;
     }
 
     function getObjectBindingProperties(callback: ts.ArrowFunction): [string[], pxt.Map<string>] {
@@ -2973,9 +3357,10 @@ ${output}</xml>`;
             case SK.NoSubstitutionTemplateLiteral:
                 return checkStringLiteral(n as ts.StringLiteral);
             case SK.Identifier:
+                const pInfo = pxtInfo(n);
                 if (isUndefined(n)) {
                     return Util.lf("Undefined is not supported in blocks");
-                } else if (isDeclaredElsewhere(n as Identifier)) {
+                } else if (isDeclaredElsewhere(n as Identifier) && !(pInfo.commentAttrs && pInfo.commentAttrs.blockIdentity && pInfo.commentAttrs.enumIdentity)) {
                     return Util.lf("Variable is declared in another file");
                 } else {
                     return undefined;
@@ -2993,6 +3378,8 @@ ${output}</xml>`;
                 return checkStatement(n, env, true, undefined);
             case SK.TaggedTemplateExpression:
                 return checkTaggedTemplateExpression(n as ts.TaggedTemplateExpression, env);
+            case SK.AsExpression:
+                return checkAsExpression(n as ts.AsExpression);
 
         }
         return Util.lf("Unsupported syntax kind for output expression block: {0}", SK[n.kind]);
@@ -3102,6 +3489,34 @@ ${output}</xml>`;
 
         // The compiler will have already caught any invalid tags or templates
         return undefined;
+    }
+
+    function checkAsExpression(n: ts.AsExpression) {
+        // The only time we allow casts to decompile is in the very special case where someone has
+        // written a program comparing two string, boolean, or numeric literals in blocks and
+        // converted to text. e.g. 3 == 5 or true != false
+        if (n.type.getText().trim() === "any" && (ts.isStringOrNumericLiteral(n.expression) ||
+            n.expression.kind === SK.TrueKeyword || n.expression.kind === SK.FalseKeyword)) {
+            const [parent] = getParent(n);
+
+            if (parent.kind === SK.BinaryExpression) {
+                switch ((parent as ts.BinaryExpression).operatorToken.kind) {
+                    case SK.EqualsEqualsToken:
+                    case SK.EqualsEqualsEqualsToken:
+                    case SK.ExclamationEqualsToken:
+                    case SK.ExclamationEqualsEqualsToken:
+                    case SK.LessThanToken:
+                    case SK.LessThanEqualsToken:
+                    case SK.GreaterThanToken:
+                    case SK.GreaterThanEqualsToken:
+                        return undefined;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        return Util.lf("Casting not supported in blocks");
     }
 
     function getParent(node: Node): [Node, Node] {
@@ -3255,27 +3670,37 @@ ${output}</xml>`;
         return res;
     }
 
-    function getKindExports(n: ModuleDeclaration): string[] {
-        return (n.body as ModuleBlock).statements.map(s => ((s as VariableStatement).declarationList.declarations[0].name as Identifier).text);
+    function getModuleExports(n: ModuleDeclaration): DecompileModuleExport[] {
+        return (n.body as ModuleBlock).statements.map(s => {
+            const decl = (s as VariableStatement).declarationList.declarations[0];
+
+            return {
+                name: (decl.name as ts.Identifier).text,
+                initializer: decl.initializer.getText()
+            };
+        });
     }
 
     function isOutputExpression(expr: ts.Expression): boolean {
         switch (expr.kind) {
-            case SK.BinaryExpression:
+            case SK.BinaryExpression: {
                 const tk = (expr as ts.BinaryExpression).operatorToken.kind;
                 return tk != SK.PlusEqualsToken && tk != SK.MinusEqualsToken && tk != SK.EqualsToken;
+            }
             case SK.PrefixUnaryExpression: {
-                let op = (expr as ts.PrefixUnaryExpression).operator;
+                const op = (expr as ts.PrefixUnaryExpression).operator;
                 return op != SK.PlusPlusToken && op != SK.MinusMinusToken;
             }
             case SK.PostfixUnaryExpression: {
-                let op = (expr as ts.PostfixUnaryExpression).operator;
+                const op = (expr as ts.PostfixUnaryExpression).operator;
                 return op != SK.PlusPlusToken && op != SK.MinusMinusToken;
             }
-            case SK.CallExpression:
+            case SK.CallExpression: {
                 const callInfo: pxtc.CallInfo = pxtc.pxtInfo(expr).callInfo
                 assert(!!callInfo);
                 return callInfo.isExpression;
+            }
+            case SK.Identifier:
             case SK.ParenthesizedExpression:
             case SK.NumericLiteral:
             case SK.StringLiteral:
@@ -3335,5 +3760,215 @@ ${output}</xml>`;
     function isCommented(node: ts.Node) {
         const ranges = ts.getLeadingCommentRangesOfNode(node, node.getSourceFile());
         return !!(ranges && ranges.length)
+    }
+
+    function getCommentsFromRanges(file: ts.SourceFile, commentRanges: ts.CommentRange[], isTrailingComment = false) {
+        const res: Comment[] = [];
+        const fileText = file.getFullText();
+
+        if (commentRanges && commentRanges.length) {
+            for (const commentRange of commentRanges) {
+
+                const endLine = ts.getLineOfLocalPosition(file, commentRange.end);
+                const nextLineStart = ts.getStartPositionOfLine(endLine + 1, file) || fileText.length;
+                const nextLineEnd = ts.getStartPositionOfLine(endLine + 2, file) || fileText.length;
+
+                const followedByEmptyLine = !isTrailingComment && !fileText.substr(
+                    nextLineStart,
+                    nextLineEnd - nextLineStart
+                ).trim();
+
+                let commentText = fileText.substr(commentRange.pos, commentRange.end - commentRange.pos)
+                if (commentText) {
+                    // Strip windows line endings because they break the regex we use to extract content
+                    commentText = commentText.replace(/\r\n/g, "\n");
+                }
+                if (commentRange.kind === SyntaxKind.SingleLineCommentTrivia) {
+                    const match = singleLineCommentRegex.exec(commentText);
+
+                    if (match) {
+                        res.push({
+                            kind: CommentKind.SingleLine,
+                            text: match[1],
+                            start: commentRange.pos,
+                            end: commentRange.end,
+                            hasTrailingNewline: !!commentRange.hasTrailingNewLine,
+                            followedByEmptyLine,
+                            isTrailingComment
+                        });
+                    }
+                    else {
+                        res.push({
+                            kind: CommentKind.SingleLine,
+                            text: "",
+                            start: commentRange.pos,
+                            end: commentRange.end,
+                            hasTrailingNewline: !!commentRange.hasTrailingNewLine,
+                            followedByEmptyLine,
+                            isTrailingComment
+                        });
+                    }
+                }
+                else {
+                    const lines = commentText.split("\n").map(line => {
+                        const match = multiLineCommentRegex.exec(line);
+                        return match ? match[1] : "";
+                    });
+                    res.push({
+                        kind: CommentKind.MultiLine,
+                        lines,
+                        start: commentRange.pos,
+                        end: commentRange.end,
+                        hasTrailingNewline: !!commentRange.hasTrailingNewLine,
+                        followedByEmptyLine,
+                        isTrailingComment
+                    });
+                }
+            }
+        }
+
+        return res;
+    }
+
+    function formatCommentsForBlocks(comments: Comment[]) {
+        let out = "";
+
+        for (const comment of comments) {
+            if (comment.kind === CommentKind.SingleLine) {
+                if (comment.text === ON_START_COMMENT || comment.text === HANDLER_COMMENT) {
+                    continue;
+                }
+                else {
+                    out += comment.text.trim() + "\n";
+                }
+            }
+            else {
+                for (const line of comment.lines) {
+                    out += line.trim() + "\n";
+                }
+            }
+        }
+
+        return out.trim();
+    }
+
+    function isTopLevelComment(n: Node): boolean {
+        const [parent,] = getParent(n);
+        if (!parent || parent.kind == SK.SourceFile) return true;
+        // Expression statement
+        if (parent.kind == SK.ExpressionStatement) return isTopLevelComment(parent);
+        // Variable statement
+        if (parent.kind == SK.VariableDeclarationList) return isTopLevelComment(parent.parent);
+        return false;
+    }
+
+    export function getLeadingComments(node: Node, file: ts.SourceFile, commentRanges?: ts.CommentRange[]): Comment[] {
+        return getCommentsFromRanges(file, commentRanges || ts.getLeadingCommentRangesOfNode(node, file));
+    }
+
+    export function getTrailingComments(node: Node, file: ts.SourceFile): Comment[] {
+        return getCommentsFromRanges(file, ts.getTrailingCommentRanges(file.getFullText(), node.end));
+    }
+
+    export function getCommentsForStatement(commented: Node, commentMap: Comment[]) {
+        let comments: Comment[] = [];
+        let current: Comment;
+        for (let i = 0; i < commentMap.length; i++) {
+            current = commentMap[i];
+            if (!current.owner && current.start >= commented.pos && current.end <= commented.end) {
+                current.owner = commented;
+                comments.push(current);
+            }
+
+            if (current.start > commented.end) break;
+        }
+
+        return comments;
+    }
+
+    export function buildCommentMap(file: SourceFile) {
+        const fileText = file.getFullText();
+        const scanner = ts.createScanner(file.languageVersion, false, file.languageVariant, fileText, undefined, file.getFullStart());
+        let res: Comment[] = [];
+
+        let leading: CommentRange[];
+        let trailing: CommentRange[];
+
+        while (scanner.getTextPos() < file.end) {
+            const val = scanner.scan();
+            if (val === SK.SingleLineCommentTrivia || val === SK.MultiLineCommentTrivia) {
+                leading = ts.getLeadingCommentRanges(fileText, scanner.getTokenPos()) || [];
+                trailing = ts.getTrailingCommentRanges(fileText, scanner.getTokenPos()) || [];
+
+                // Filter out duplicates
+                trailing = trailing.filter(range => !leading.some(other => other.pos === range.pos));
+
+                res.push(...getCommentsFromRanges(file, leading, false));
+                res.push(...getCommentsFromRanges(file, trailing, true));
+
+                for (const range of res) {
+                    if (range.end > scanner.getTextPos()) {
+                        scanner.setTextPos(range.end)
+                    }
+                }
+            }
+        }
+
+        res.sort((a, b) => a.start - b.start);
+
+        return res;
+    }
+
+    function markCommentsInRange(node: Node, commentMap: Comment[]) {
+        let current: Comment;
+        for (let i = 0; i < commentMap.length; i++) {
+            current = commentMap[i];
+            if (!current.owner && current.start >= node.pos && current.end <= node.end) {
+                current.owner = node;
+            }
+        }
+    }
+
+    function shouldEmitShadowOnly(n: ValueNode) {
+        if (n.emitShadowOnly !== undefined) {
+            return n.emitShadowOnly;
+        }
+
+        let emitShadowOnly = false;
+
+        if (n.value.kind === "expr") {
+            const value = n.value as ExpressionNode;
+            if (value.type === numberType && n.shadowType === minmaxNumberType) {
+                value.type = minmaxNumberType;
+                value.fields[0].name = 'SLIDER';
+                value.mutation = n.shadowMutation;
+            }
+            emitShadowOnly = value.type === n.shadowType;
+            if (!emitShadowOnly) {
+                switch (value.type) {
+                    case "math_number":
+                    case "math_number_minmax":
+                    case "math_integer":
+                    case "math_whole_number":
+                    case "logic_boolean":
+                    case "text":
+                        emitShadowOnly = !n.shadowType;
+                        break;
+                }
+            }
+
+            if (emitShadowOnly && value.inputs) {
+                for (const input of value.inputs) {
+                    if (!shouldEmitShadowOnly(input)) {
+                        emitShadowOnly = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        n.emitShadowOnly = emitShadowOnly;
+
+        return emitShadowOnly;
     }
 }

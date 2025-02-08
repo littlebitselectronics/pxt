@@ -2,16 +2,108 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
-			"name": "serve",
+			"name": "pxt ci (pxt-core)",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceRoot}/built/pxt.js",
+			"stopOnEntry": false,
+			"args": [
+				"ci",
+			],
+			"cwd": "${workspaceRoot}",
+			"runtimeExecutable": null,
+			"runtimeArgs": [
+				"--nolazy"
+			],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"sourceMaps": false,
+			"outFiles": []
+		},
+		{
+			"name": "pxt ci (microbit)",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceRoot}/built/pxt.js",
+			"stopOnEntry": false,
+			"args": [
+				"ci",
+			],
+			"cwd": "${workspaceRoot}/../pxt-microbit",
+			"runtimeExecutable": null,
+			"runtimeArgs": [
+				"--nolazy"
+			],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"sourceMaps": false,
+			"outFiles": []
+		},
+		{
+			"name": "pxt serve (minecraft)",
 			"type": "node",
 			"request": "launch",
 			"program": "${workspaceRoot}/built/pxt.js",
 			"stopOnEntry": false,
 			"args": [
 				"serve",
-				"--rebundle"
+				"--noauth"
+			],
+			"cwd": "${workspaceRoot}/../pxt-minecraft",
+			"runtimeExecutable": null,
+			"runtimeArgs": [
+				"--nolazy"
+			],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"sourceMaps": false,
+			"outFiles": []
+		},
+		{
+			"name": "pxt serve (microbit)",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceRoot}/built/pxt.js",
+			"stopOnEntry": false,
+			"args": [
+				"serve",
+				"--rebundle",
+				"--noauth",
+				"--hostname",
+				"127.0.0.1",
+				"--backport",
+				"8080"
 			],
 			"cwd": "${workspaceRoot}/../pxt-microbit",
+			"runtimeExecutable": null,
+			"runtimeArgs": [
+				"--nolazy"
+			],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"sourceMaps": false,
+			"outFiles": []
+		},
+		{
+			"name": "pxt serve (arcade)",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceRoot}/built/pxt.js",
+			"stopOnEntry": false,
+			"args": [
+				"serve",
+				"--rebundle",
+				"--noauth"
+			],
+			"cwd": "${workspaceRoot}/../pxt-arcade",
 			"runtimeExecutable": null,
 			"runtimeArgs": [
 				"--nolazy"
@@ -52,7 +144,7 @@
 			"stopOnEntry": false,
 			"args": [
 				"checkdocs",
-				"--re", 
+				"--re",
 				"adafruit"
 			],
 			"cwd": "${workspaceRoot}/../pxt-maker",
@@ -137,7 +229,8 @@
 			"program": "${workspaceRoot}/built/pxt.js",
 			"stopOnEntry": false,
 			"args": [
-				"buildsprites", "space"
+				"buildsprites",
+				"space"
 			],
 			"cwd": "${workspaceRoot}/../pxt-32/libs/device",
 			"runtimeExecutable": null,
@@ -209,6 +302,27 @@
 			"env": {
 				"NODE_ENV": "testing"
 			}
+		},
+		{
+			"name": "BuildShims",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceRoot}/built/pxt.js",
+			"stopOnEntry": false,
+			"args": [
+				"buildshims"
+			],
+			"cwd": "${workspaceRoot}/../pxt-microbit/libs/flashlog",
+			"runtimeExecutable": null,
+			"runtimeArgs": [
+				"--nolazy"
+			],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"sourceMaps": false,
+			"outFiles": []
 		},
 		{
 			"name": "Attach",

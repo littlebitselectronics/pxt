@@ -4,9 +4,11 @@ import * as sui from "./sui";
 import * as data from "./data";
 import * as simulator from "./simulator";
 
-type ISettingsProps = pxt.editor.ISettingsProps;
+import ISettingsProps = pxt.editor.ISettingsProps;
+import SimState = pxt.editor.SimState;
 
 export interface DebuggerToolbarProps extends ISettingsProps {
+    showAdvancedControls: boolean;
 }
 
 export interface DebuggerToolbarState {
@@ -27,6 +29,7 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
         this.dbgStepInto = this.dbgStepInto.bind(this);
         this.dbgStepOut = this.dbgStepOut.bind(this);
         this.exitDebugging = this.exitDebugging.bind(this);
+        this.toggleTrace = this.toggleTrace.bind(this);
     }
 
     restartSimulator() {
@@ -59,8 +62,13 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
         simulator.dbgStepOut();
     }
 
+    toggleTrace() {
+        pxt.tickEvent("simulator.trace", undefined, { interactiveConsent: true });
+        this.props.parent.toggleTrace();
+    }
+
     getMenuDom() {
-        const node = ReactDOM.findDOMNode(this);
+        const node = ReactDOM.findDOMNode(this) as Element;
         return node && node.firstElementChild;
     }
 
@@ -68,13 +76,13 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
         const parentState = this.props.parent.state;
 
         const simState = parentState.simState;
-        const isRunning = simState == pxt.editor.SimState.Running;
-        const isStarting = simState == pxt.editor.SimState.Starting;
+        const isRunning = simState == SimState.Running;
+        const isStarting = simState == SimState.Starting;
         const isDebugging = parentState.debugging;
         if (!isDebugging) return <div />;
 
         const isDebuggerRunning = simulator.driver && simulator.driver.state == pxsim.SimulatorState.Running;
-        const advancedDebugging = !this.props.parent.isBlocksActive();
+        const advancedDebugging = this.props.showAdvancedControls;
 
         const isValidDebugFile = advancedDebugging || this.props.parent.isBlocksActive() || pxt.appTarget.appTheme.debugExtensionCode;
         if (!isValidDebugFile) return <div />;
@@ -88,6 +96,9 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
         const dbgStepOverTooltip = lf("Step over");
         const dbgStepOutTooltip = lf("Step out");
 
+        const tracing = this.props.parent.state.tracing;
+        const traceTooltip = tracing ? lf("Disable Slow-Mo") : lf("Slow-Mo")
+
         if (!isDebugging) {
             return <div className="debugtoolbar" role="complementary" aria-label={lf("Debugger toolbar")} />
         } else if (advancedDebugging) {
@@ -100,6 +111,7 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
                         <sui.Item key='dbgstepinto' className={`dbg-btn dbg-step-into ${dbgStepDisabledClass}`} icon={`xicon stepinto ${isDebuggerRunning ? "disabled" : ""}`} title={dbgStepIntoTooltip} onClick={this.dbgStepInto} />
                         <sui.Item key='dbgstepout' className={`dbg-btn dbg-step-out ${dbgStepDisabledClass}`} icon={`xicon stepout ${isDebuggerRunning ? "disabled" : ""}`} title={dbgStepOutTooltip} onClick={this.dbgStepOut} />
                         <sui.Item key='dbgrestart' className={`dbg-btn dbg-restart right`} icon={`refresh green`} title={restartTooltip} onClick={this.restartSimulator} />
+                        <sui.Item key='dbgslowmo' className={`dbg-btn dbg-trace ${tracing ? "tracing" : ""}`} icon={`xicon turtle`} title={traceTooltip} onClick={this.toggleTrace} />
                     </div>}
             </div>;
         } else {
@@ -109,6 +121,7 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
                     <sui.Item key='dbgstep' className={`dbg-btn dbg-step separator-after ${dbgStepDisabledClass}`} icon={`arrow right ${dbgStepDisabled ? "disabled" : "blue"}`} title={dbgStepIntoTooltip} onClick={this.dbgStepInto} text={"Step"} />
                     <sui.Item key='dbgpauseresume' className={`dbg-btn dbg-pause-resume ${isDebuggerRunning ? "pause" : "play"}`} icon={`${isDebuggerRunning ? "pause blue" : "play green"}`} title={dbgPauseResumeTooltip} onClick={this.dbgPauseResume} />
                     <sui.Item key='dbgrestart' className={`dbg-btn dbg-restart`} icon={`refresh green`} title={restartTooltip} onClick={this.restartSimulator} />
+                    <sui.Item key='dbgslowmo' className={`dbg-btn dbg-trace ${tracing ? "tracing" : ""}`} icon={`xicon turtle`} title={traceTooltip} onClick={this.toggleTrace} />
                 </div>
             </div>;
         }

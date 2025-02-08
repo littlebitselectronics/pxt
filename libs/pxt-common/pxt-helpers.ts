@@ -33,14 +33,74 @@ interface StringMap {
 
 /**
   * Convert a string to an integer.
-  * @param s A string to convert into an integral number. eg: 123
+  * @param text A string to convert into an integral number. eg: "123"
+  * @param radix optional A value between 2 and 36 that specifies the base of the number in text.
+  * If this argument is not supplied, strings with a prefix of '0x' are considered hexadecimal.
+  * All other strings are considered decimal.
   */
 //% help=text/parse-int
 //% blockId="string_parseint" block="parse to integer %text" blockNamespace="text"
 //% text.defl="123"
 //% blockHidden=1
-function parseInt(text: string): number {
-    return parseFloat(text) >> 0;
+function parseInt(text: string, radix?: number): number {
+    // roughly based on https://www.ecma-international.org/ecma-262/5.1/#sec-15.1.2.2
+    // with some consideration for avoiding unnecessary slices where easy
+    if (!text || (radix != null && (radix < 2 || radix > 36)))
+        return NaN;
+
+    let start = 0;
+    while (start < text.length && helpers.isWhitespace(text.charCodeAt(start)))
+        ++start;
+
+    if (start === text.length)
+        return NaN;
+
+    const numberOffset = 48; // 0
+    const numCount = 10;
+    const letterOffset = 97; // a
+    const letterCount = 26;
+    const lowerCaseMask = 0x20;
+
+    let sign = 1;
+    switch (text.charAt(start)) {
+        case "-":
+            sign = -1;
+            // fallthrough
+        case "+":
+            ++start;
+    }
+
+    if ((!radix || radix == 16)
+            && "0" === text[start]
+            && ("x" === text[start + 1] || "X" === text[start + 1])) {
+        radix = 16;
+        start += 2;
+    } else if (!radix) {
+        radix = 10;
+    }
+
+    let output = 0;
+    let hasDigit = false;
+    for (let i = start; i < text.length; ++i) {
+        const code = text.charCodeAt(i) | lowerCaseMask;
+        let val: number = undefined;
+
+        if (code >= numberOffset && code < numberOffset + numCount)
+            val = code - numberOffset;
+        else if (code >= letterOffset && code < letterOffset + letterCount)
+            val = numCount + code - letterOffset;
+
+        if (val == undefined || val >= radix) {
+            if (!hasDigit) {
+                return NaN;
+            }
+            break;
+        }
+        hasDigit = true;
+        output = output * radix + val;
+    }
+
+    return sign * output;
 }
 
 namespace helpers {
@@ -237,6 +297,10 @@ namespace helpers {
         return out;
     }
 
+    export function arrayPickRandom<T>(arr: T[]): T {
+        return arr[Math.randomRange(0, arr.length - 1)];
+    }
+
     export function arraySlice<T>(arr: T[], start?: number, end?: number): T[] {
         // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/slice
         const res: T[] = [];
@@ -264,6 +328,60 @@ namespace helpers {
         return res;
     }
 
+    export function stringReplace(s: string, toReplace: string, replacer: string | ((sub: string) => string)) {
+        toReplace = toReplace + "";
+        const ind = s.indexOf(toReplace);
+        if (ind == -1)
+            return s;
+
+        const begin = s.slice(0, ind);
+        const end = s.slice(ind + toReplace.length);
+
+        if (typeof replacer == "string" || !replacer) {
+            return begin + replacer + end;
+        } else {
+            return begin + replacer(toReplace) + end;
+        }
+    }
+
+    export function stringReplaceAll(s: string, toReplace: string, replacer: string | ((sub: string) => string)) {
+        toReplace = toReplace + "";
+        const split = s.split(toReplace);
+        const empty = toReplace.isEmpty();
+
+        let output = (empty ? applyReplace(toReplace, replacer) : "");
+
+        if (split.length) {
+            output += split[0];
+        }
+
+        for (let i = 1; i < split.length; ++i) {
+            output += applyReplace(toReplace, replacer) + split[i];
+        }
+
+        if (!s.isEmpty() && empty) {
+            output += applyReplace(toReplace, replacer);
+        }
+
+        return output;
+
+        function applyReplace(r: string, replacer: string | ((sub: string) => string)): string {
+            if (typeof replacer == "string" || !replacer) {
+                return replacer as string;
+            } else {
+                return replacer(r);
+            }
+        }
+    }
+
+    //% shim=String_::substr
+    declare function stringSubstrHelper(s: string, start: number, length?: number): string;
+
+    export function stringSubstr(s: string, start: number, length?: number): string {
+        length = length === undefined ? s.length : length || 0;
+        return stringSubstrHelper(s, start, length);
+    }
+
     export function stringSlice(s: string, start: number, end?: number): string {
         const len = s.length;
 
@@ -271,18 +389,34 @@ namespace helpers {
             start = Math.max(len + start, 0);
         }
 
-        if (end == null) {
+        if (end === undefined) {
             end = len;
+        } else if (end === null) {
+            end = 0;
         }
 
         if (end < 0) {
             end = len + end;
         }
 
-        return s.substr(start, end - start);
+        return stringSubstrHelper(s, start, end - start);
     }
 
-    // TODO move to PXT
+    // also note this doesn't handle unicode, but neither does JS (there's toLocaleUpperCase())
+    export function stringToUpperCase(s: string): string {
+        let r = ""
+        let prev = 0
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i)
+            if (97 <= c && c <= 122) {
+                r += s.slice(prev, i) + String.fromCharCode(c - 32)
+                prev = i + 1
+            }
+        }
+        r += s.slice(prev)
+        return r
+    }
+
     // also note this doesn't handle unicode, but neither does JS (there's toLocaleLowerCase())
     export function stringToLowerCase(s: string): string {
         let r = ""
@@ -355,6 +489,37 @@ namespace helpers {
         return q + r;
     }
 
+    export function stringTrim(s: string): string {
+        let start = 0;
+        let end = s.length - 1;
+
+        while (start <= end && isWhitespace(s.charCodeAt(start)))
+            ++start;
+
+        while (end > start && isWhitespace(s.charCodeAt(end)))
+            --end;
+        return s.slice(start, end + 1);
+    }
+
+    export function isWhitespace(c: number): boolean {
+        // https://www.ecma-international.org/ecma-262/6.0/#sec-white-space
+        switch (c) {
+            case 0x0009:  // character tab
+            case 0x000B:  // line tab
+            case 0x000C:  // form feed
+            case 0x0020:  // space
+            case 0x00A0:  // no-break space
+            case 0xFEFF:  // zero width no break space
+            case 0x000A:  // line feed
+            case 0x000D:  // carriage return
+            case 0x2028:  // line separator
+            case 0x2029:  // paragraph separator
+                return true;
+            default:
+                return false;
+        }
+    }
+
     export function stringEmpty(S: string): boolean {
         return !S;
     }
@@ -370,6 +535,8 @@ namespace Math {
       * For example, the absolute value of -5 is the same as the absolute value of 5.
       * @param x A numeric expression for which the absolute value is needed.
       */
+    //% blockId=math_op3
+    //% help=math/abs
     export function abs(x: number): number {
         return x < 0 ? -x : x;
     }
@@ -387,6 +554,8 @@ namespace Math {
     /**
       * Returns the larger of two supplied numeric expressions.
       */
+    //% blockId=math_op2
+    //% help=math/max
     export function max(a: number, b: number): number {
         if (a >= b) return a;
         return b;
@@ -395,6 +564,8 @@ namespace Math {
     /**
       * Returns the smaller of two supplied numeric expressions.
       */
+    //% blockId=math_op2
+    //% help=math/min
     export function min(a: number, b: number): number {
         if (a <= b) return a;
         return b;
@@ -492,13 +663,13 @@ namespace __internal {
 
     /**
      * Get the color wheel field editor
-     * @param color color, eg: #ff0000
+     * @param color color
      */
     //% blockId=colorNumberPicker block="%value"
     //% blockHidden=true
     //% shim=TD_ID colorSecondary="#FFFFFF"
     //% value.fieldEditor="colornumber" value.fieldOptions.decompileLiterals=true
-    //% value.defl='#ff0000'
+    //% value.defl='0xff0000'
     //% value.fieldOptions.colours='["#ff0000","#ff8000","#ffff00","#ff9da5","#00ff00","#b09eff","#00ffff","#007fff","#65471f","#0000ff","#7f00ff","#ff0080","#ff00ff","#ffffff","#999999","#000000"]'
     //% value.fieldOptions.columns=4 value.fieldOptions.className='rgbColorPicker'
     export function __colorNumberPicker(value: number) {
@@ -562,7 +733,7 @@ namespace __internal {
     //% blockId=protractorPicker block="%angle"
     //% shim=TD_ID
     //% angle.fieldEditor=protractor
-    //% angle.fieldOptions.decompileLiterals=1    
+    //% angle.fieldOptions.decompileLiterals=1
     //% colorSecondary="#FFFFFF"
     //% blockHidden=1
     export function __protractor(angle: number) {

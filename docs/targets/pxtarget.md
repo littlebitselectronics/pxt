@@ -140,7 +140,6 @@ Here is the appTheme from pxt-sample with some comments:
         "homeUrl": "https://microsoft.github.io/pxt-sample/",
         "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=521839",
         "termsOfUseUrl": "https://go.microsoft.com/fwlink/?LinkID=206977",
-        "betaUrl": "https://makecode.com/",
         // populating the (?) menu
         "docMenu": [
             {
@@ -252,6 +251,7 @@ This severely misnamed option controls the available blocks in the Blockly edito
         // options specific to the special "on start" block
         onStartNamespace?: string; // default = loops
         onStartColor?: string;
+        onStartGroup?: string;
         onStartWeight?: number;
         onStartUnDeletable?: boolean;
     }
@@ -283,3 +283,19 @@ PXT expects to find the C/C++ sources on github.
         serviceId: string;
     }
 ```
+
+### ``uploadDocs`` and ``uploadApiStringsBranchRx``
+
+The ``uploadDocs`` flag determins if the API strings and docs have to be uploaded
+to crowdin when a build occurs on master or release branches.
+
+The ``uploadApiStringsBranchRx`` flag provide a custom regex
+for matching the branch where api strings should be uploaded.
+From a stable branch, this would be ``^stable\d+\.\d+$``
+
+## Additional settings
+
+### template project
+
+You can add or modify the default files created with a new project by adding
+a library called ``template`` (make it ``hidden``).

@@ -19,10 +19,20 @@ functions, lambdas, classes).
 
 ## ~ hint
 
-Static Python is not still in an Experimental phase 
-and might not be available in your editor.
+Support for Static Python may still be 
+experimental for some MakeCode editors. 
+If Python isn't shown as a language choice 
+in the editor you're using, you can enable 
+it by clicking the gear icon ⚙️, going to 
+`About` , then clicking `Experiments`.
+Experiments are released selectively, so 
+if an experiment you want does not show yet, 
+please be patient — it will be rolled 
+out to your editor soon!
 
 ## ~
+
+# Static TypeScript
 
 ## Supported language features
 
@@ -112,6 +122,7 @@ is constructed right after last used variable have been defined.
 For functions defined before usage, the closure is constructed at the
 point of definition.)
 Both of the following examples will yield a compile error.
+
 ```typescript
 function foo1() {
     bar()
@@ -127,7 +138,6 @@ function foo1() {
     function bar() { let y = x } 
 }
 ```
-
 
 For JS-only targets we may implement the following:
 
@@ -280,3 +290,59 @@ and dynamic maps.
 * `Object.keys()` is currently not implemented for classes; when it will be
   the order of fields will be static declaration order
 * how to validate types of C++ classes (Pin mostly)?
+
+# Python
+
+## Supported language features
+The following language features should be fully supported and work according to the Python 3 language specification.
+
+* lists
+* dictionaries
+* function definitions
+* function calling
+* method calling
+* calling into any MakeCode library code
+* literals: strings, numbers, boolean, None
+* many list methods: pop, clear, index, count, len
+* many string methods: casefold, capitalize, center, count, endswith, find, index, isalnum, isalph, isascii, isdigit, isnumeric, isspace, isdecimal, isidentifier, islower, isprintable, istitle, issupper, join, ljust, lower, lstrip, replace, rfind, rindex, rjust, rsplit, rstrip, split, splitlines, startswith, strip, swapcase, title, upper, zfill, ord
+* many math functions: int, min, max, abs, randint
+* while loop
+* for-in loop with range(), array or string literal
+* break, continue
+* conditional statements (if, elif, else)
+* pass statement
+* variables*
+* if expression / ternary operator
+* comparison (in, notin)
+* byte literal
+* type annotations using ":" syntax
+* slice notation**
+* lambda
+
+*: variable semantics have slightly different scoping rules than Python 3 and global & nonlocal keywords are unsupported.
+**: some slice notation is not yet supported
+
+## Not supported language features
+The following language features are not yet supported.
+
+* with
+* assert
+* classes
+* __constructor
+* super()
+* global & nonlocal
+* raise
+* try
+* generators
+* attributes
+* import, import from
+* sets
+* list comprehensions
+* set comprehensions
+* dictionary comprehensions
+* await
+* yield, yield from
+* format strings
+* arrays
+* all list, string, math methods not listed above
+* *args / varargs
