@@ -1,8 +1,19 @@
 /// <reference path="../../built/pxtsim.d.ts"/>
 
+import * as Blockly from "blockly";
+import { FieldCustom } from "./field_utils";
+
 namespace pxtblockly {
 
-    export class FieldRoundMatrix extends Blockly.Field implements Blockly.FieldCustom {
+    const rowRegex = /^.*[\.#].*$/;
+
+    enum LabelMode {
+      None,
+      Number,
+      Letter
+    }
+
+    export class FieldRoundMatrix extends Blockly.Field implements FieldCustom {
         private static CELL_WIDTH = 25;
         private static CELL_HORIZONTAL_MARGIN = 7;
         private static CELL_VERTICAL_MARGIN = 5;
@@ -34,7 +45,7 @@ namespace pxtblockly {
 
         private currentDragState_: boolean;
 
-        constructor(text: string, params: any, validator?: Function) {
+        constructor(text: string, params: any, validator?: Blockly.FieldValidator<any>) {
             super(text, validator);
             this.params = params;
 

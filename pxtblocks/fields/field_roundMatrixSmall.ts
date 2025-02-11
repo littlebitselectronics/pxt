@@ -1,9 +1,19 @@
 /// <reference path="../../built/pxtlib.d.ts" />
 
+import * as Blockly from "blockly";
+import { FieldCustom } from "./field_utils";
+import { FieldSpriteEditorOptions } from "./field_sprite";
 
 namespace pxtblockly {
   import svg = pxt.svgUtil;
 
+	const rowRegex = /^.*[\.#].*$/;
+
+	enum LabelMode {
+    None,
+    Number,
+    Letter
+	}
 
   interface ParsedSpriteEditorOptions {
       sizes: [number, number][];
@@ -21,7 +31,7 @@ namespace pxtblockly {
   const TOTAL_WIDTH = PADDING * 2 + BG_PADDING * 2 + PREVIEW_WIDTH;
   const DEFAULT_COLOR = "#AAA4AE";
 
-  export class FieldRoundMatrixSmall extends Blockly.Field implements Blockly.FieldCustom {
+  export class FieldRoundMatrixSmall extends Blockly.Field implements FieldCustom {
       public isFieldCustom_ = true;
 
       private params: ParsedSpriteEditorOptions;
@@ -33,7 +43,7 @@ namespace pxtblockly {
       private redoStack: pxtmatrix.CanvasState[];
       private colors: string[];
 
-      constructor(text: string, params: any, validator?: Function) {
+      constructor(text: string, params: any, validator?: Blockly.FieldValidator<any>) {
           super(text, validator);
           this.colors = [
             '#8E07BA','#FF8A00', '#FFC200',
@@ -71,16 +81,21 @@ namespace pxtblockly {
 
           // Force a render.
           this.render_();
-          (this as any).mouseDownWrapper_ = Blockly.bindEventWithChecks_((this as any).getClickTarget_(), "mousedown", this, (this as any).onMouseDown_)
+          (this as any).mouseDownWrapper_ = Blockly.browserEvents.bind((this as any).getClickTarget_(), "mousedown", this, (this as any).onMouseDown_)
       }
-
       /**
        * Show the inline free-text editor on top of the text.
        * @private
        */
       showEditor_() {
-          const windowSize = goog.dom.getViewportSize();
-          const scrollOffset = goog.style.getViewportPageOffset(document);
+					const windowSize = {
+				    width: window.innerWidth,
+    				height: window.innerHeight
+					};
+					const scrollOffset = {
+						x: document.documentElement.scrollLeft || document.body.scrollLeft,
+						y: document.documentElement.scrollTop || document.body.scrollTop
+					};
 
           // If there is an existing drop-down someone else owns, hide it immediately and clear it.
           Blockly.DropDownDiv.hideWithoutAnimation();
@@ -106,34 +121,42 @@ namespace pxtblockly {
         //}
           this.editor.setSizePresets([[7,7]]);
 
-          goog.style.setHeight(contentDiv, this.editor.outerHeight() + 1);
-          goog.style.setWidth(contentDiv, this.editor.outerWidth() + 1);
-          goog.style.setStyle(contentDiv, "overflow", "hidden");
-          goog.style.setStyle(contentDiv, "max-height", "500px");
+          function setHeight(element: HTMLElement, height: number | string): void {
+            element.style.height = typeof height === 'number' ? height + 'px' : height;
+          }
+          function setWidth(element: HTMLElement, width: number | string): void {
+            element.style.width = typeof width === 'number' ? width + 'px' : width;
+          }
+          function setStyle(element: HTMLElement, property: string, value: string | null): void {
+            element.style[property as any] = value;
+          }
+
+          setHeight(contentDiv, this.editor.outerHeight() + 1);
+          setWidth(contentDiv, this.editor.outerWidth() + 1);
+          setStyle(contentDiv, "overflow", "hidden");
+          setStyle(contentDiv, "max-height", "500px");
           pxt.BrowserUtils.addClass(contentDiv.parentElement, "sprite-editor-dropdown")
 
           Blockly.DropDownDiv.setColour("#2c3e50", "#2c3e50");
-          Blockly.DropDownDiv.showPositionedByBlock(this, this.sourceBlock_, () => {
+          Blockly.DropDownDiv.showPositionedByBlock(this, this.sourceBlock_ as Blockly.BlockSvg, () => {
               this.editor.closeEditor();
               this.state = this.editor.bitmap().image;
               this.redrawPreview();
               if (this.sourceBlock_ && Blockly.Events.isEnabled()) {
                   Blockly.Events.fire(new Blockly.Events.BlockChange(
-                      this.sourceBlock_, 'field', this.name, this.text_, this.getText()));
+                      this.sourceBlock_, 'field', this.name, this.getValue(), this.getText()));
               }
 
-              goog.style.setHeight(contentDiv, null);
-              goog.style.setWidth(contentDiv, null);
-              goog.style.setStyle(contentDiv, "overflow", null);
-              goog.style.setStyle(contentDiv, "max-height", null);
+              setHeight(contentDiv, null);
+              setWidth(contentDiv, null);
+              setStyle(contentDiv, "overflow", null);
+              setStyle(contentDiv, "max-height", null);
               pxt.BrowserUtils.removeClass(contentDiv.parentElement, "sprite-editor-dropdown");
               this.editor.removeKeyListeners();
           });
-
           this.editor.addKeyListeners();
           this.editor.layout();
       }
-
       private isInFlyout() {
           return ((this.sourceBlock_.workspace as Blockly.WorkspaceSvg).getParentSvg() as SVGElement).className.baseVal == "blocklyFlyout";
       }
@@ -148,14 +171,14 @@ namespace pxtblockly {
         return pxtmatrix.bitmapToImageLiteral(this.state, pxt.editor.FileType.TypeScript);
       }
 
-      setText(newText: string) {
+      setValue(newText: string) {
           if (newText == null) {
               return;
           }
           this.parseBitmap(newText);
           this.redrawPreview();
 
-          super.setText(newText);
+          super.setValue(newText);
       }
 
       private redrawPreview() {
@@ -235,7 +258,7 @@ namespace pxtblockly {
           return canvas.toDataURL();
       }
 
-      private getColor(val : number) {
+      private getColor(val: number) {
         if(val - 1 >= 0 && val - 1 < this.colors.length) {
             return this.colors[val-1]
         } else {
