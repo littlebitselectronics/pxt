@@ -727,7 +727,7 @@ export class CategoryItem extends data.Component<CategoryItemProps, CategoryItem
         if (onCategoryClick) onCategoryClick(treeRow, index);
         //LBOS changes to allow for dynamic color change of flyout
         const allBackgrounds: HTMLCollectionOf<Element> = document.getElementsByClassName('blocklyFlyout')
-        const nameid:string = treeRow.nameid;
+        const nameid: string = treeRow.nameid;
         let selected: HTMLElement;
         for (let index = 0; index < allBackgrounds.length; index++) {
             const element: HTMLElement = (allBackgrounds[index] as HTMLElement);
