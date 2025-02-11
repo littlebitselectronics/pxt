@@ -123,13 +123,13 @@ namespace pxtblockly {
 
           function setHeight(element: HTMLElement, height: number | string): void {
             element.style.height = typeof height === 'number' ? height + 'px' : height;
-          }					
+          }
           function setWidth(element: HTMLElement, width: number | string): void {
             element.style.width = typeof width === 'number' ? width + 'px' : width;
-          }					
+          }
           function setStyle(element: HTMLElement, property: string, value: string | null): void {
             element.style[property as any] = value;
-          }          
+          }
 
           setHeight(contentDiv, this.editor.outerHeight() + 1);
           setWidth(contentDiv, this.editor.outerWidth() + 1);
@@ -258,7 +258,7 @@ namespace pxtblockly {
           return canvas.toDataURL();
       }
 
-      private getColor(val : number) {
+      private getColor(val: number) {
         if(val - 1 >= 0 && val - 1 < this.colors.length) {
             return this.colors[val-1]
         } else {
