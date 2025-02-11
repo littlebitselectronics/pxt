@@ -272,11 +272,7 @@ declare interface String {
     //% shim=String_::charAt weight=48
     //% help=text/char-at
     //% blockId="string_get" block="char from %this=text|at %pos" blockNamespace="text"
-<<<<<<< HEAD
-    //% advanced=true
-=======
     //% this.defl="this"
->>>>>>> upstream/master
     charAt(index: number): string;
 
     /** Returns the length of a String object. */
@@ -288,15 +284,8 @@ declare interface String {
      * Return the Unicode value of the character at the specified location.
      * @param index The zero-based index of the desired character. If there is no character at the specified index, NaN is returned.
      */
-<<<<<<< HEAD
     //% shim=String_::charCodeAt
     //% advanced=true
-=======
-    //% shim=String_::charCodeAt weight=46
-    //% help=text/char-code-at
-    //% blockId="string_charcode_at" block="char code from $this=text|at $index" blockNamespace="text"
-    //% this.defl="this"
->>>>>>> upstream/master
     charCodeAt(index: number): number;
 
     /**
@@ -306,11 +295,7 @@ declare interface String {
     //% shim=String_::compare
     //% help=text/compare
     //% blockId="string_compare" block="compare %this=text| to %that" blockNamespace="text"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     compare(that: string): number;
 
     /**
@@ -321,11 +306,7 @@ declare interface String {
     //% helper=stringSubstr
     //% help=text/substr
     //% blockId="string_substr" block="substring of %this=text|from %start|of length %length" blockNamespace="text"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     substr(start: number, length?: number): string;
 
     /**
@@ -362,11 +343,7 @@ declare interface String {
     //% help=text/is-empty
     //% blockId="string_isempty" blockNamespace="text"
     //% block="%this=text| is empty"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     isEmpty(): boolean;
 
     /**
@@ -378,11 +355,7 @@ declare interface String {
     //% help=text/index-of
     //% blockId="string_indexof" blockNamespace="text"
     //% block="%this=text|find index of %searchValue"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     indexOf(searchValue: string, start?: number): number;
 
     /**
@@ -394,11 +367,7 @@ declare interface String {
     //% help=text/includes
     //% blockId="string_includes" blockNamespace="text"
     //% block="%this=text|includes %searchValue"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     includes(searchValue: string, start?: number): boolean;
 
     /**
@@ -410,11 +379,7 @@ declare interface String {
     //% help=text/split
     //% blockId="string_split" blockNamespace="text"
     //% block="split %this=text|at %separator"
-<<<<<<< HEAD
     //% advanced=true
-=======
-    //% this.defl="this"
->>>>>>> upstream/master
     split(separator?: string, limit?: number): string[];
 
     /**

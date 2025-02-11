@@ -2,7 +2,6 @@
 
 import * as Blockly from "blockly";
 import { FieldCustom } from "./field_utils";
-import { LabelMode } from "./field_label";
 
 namespace pxtblockly {
 
@@ -46,7 +45,7 @@ namespace pxtblockly {
 
         private currentDragState_: boolean;
 
-        constructor(text: string, params: any, validator?: Function) {
+        constructor(text: string, params: any, validator?: Blockly.FieldValidator<any>) {
             super(text, validator);
             this.params = params;
 
