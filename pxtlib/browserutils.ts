@@ -149,7 +149,7 @@ namespace pxt.BrowserUtils {
     export function isLocalHost(ignoreFlags?: boolean): boolean {
         try {
             return typeof window !== "undefined"
-                && /^http:\/\/(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9.-]+\.local):\d+\/?/.test(window.location.href)
+                && /^https?:\/\/(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9.-]+\.local):\d+\/?/.test(window.location.href)
                 && (ignoreFlags || !/nolocalhost=1/.test(window.location.href))
                 && !(pxt?.webConfig?.isStatic);
         } catch (e) { return false; }
@@ -161,7 +161,7 @@ namespace pxt.BrowserUtils {
 
     export function isSkillmapEditor(): boolean {
         try {
-            return /skill(?:s?)Map=1/.test(window.location.href);
+            return /skill(?:s?)map=1/i.test(window.location.href);
         } catch (e) { return false; }
     }
 
@@ -510,8 +510,8 @@ namespace pxt.BrowserUtils {
         return outputCanvas.toDataURL("image/png");
     }
 
-    const MAX_SCREENSHOT_SIZE = 1e6; // max 1Mb
-    export function encodeToPngAsync(dataUri: string,
+    const MAX_SCREENSHOT_SIZE = 10e6; // max 10Mb
+    export function encodeToPngAsync(uri: string,
         options?: {
             width?: number,
             height?: number,
@@ -556,8 +556,21 @@ namespace pxt.BrowserUtils {
             img.onerror = ev => {
                 pxt.reportError("png", "png rendering failed");
                 resolve(undefined)
+            };
+
+            try {
+                const url = new URL(uri);
+
+                if ((url.protocol === "http:" || url.protocol === "https:") && url.host !== window.location.host) {
+                    img.setAttribute("crossOrigin", "anonymous");
+                }
             }
-            img.src = dataUri;
+            catch (e) {
+                // might fail on localhost or if it's a relative path. safe to
+                // ignore that exception
+            }
+
+            img.src = uri;
         })
     }
 

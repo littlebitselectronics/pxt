@@ -38,7 +38,6 @@ import * as make from "./make";
 import * as blocklyToolbox from "./blocksSnippets";
 import * as monacoToolbox from "./monacoSnippets";
 import * as greenscreen from "./greenscreen";
-import * as accessibleblocks from "./accessibleblocks";
 import * as socketbridge from "./socketbridge";
 import * as webusb from "./webusb";
 import * as auth from "./auth";
@@ -47,6 +46,7 @@ import * as user from "./user";
 import * as headerbar from "./headerbar";
 import * as sidepanel from "./sidepanel";
 import * as qr from "./qr";
+import { ThemePickerModal } from "../../react-common/components/theming/ThemePickerModal";
 
 import * as monaco from "./monaco"
 import * as toolboxHelpers from "./toolboxHelpers"
@@ -80,16 +80,21 @@ import Util = pxt.Util;
 import { HintManager } from "./hinttooltip";
 import { mergeProjectCode, appendTemporaryAssets } from "./mergeProjects";
 import { Tour } from "./components/onboarding/Tour";
+import { AreaMenuOverlay } from "./components/AreaMenuOverlay";
 import { parseTourStepsAsync } from "./onboarding";
 import { initGitHubDb } from "./idbworkspace";
 import { BlockDefinition, CategoryNameID } from "./toolbox";
-import { Feedback} from "../../react-common/components/controls/Feedback/Feedback";
+import { FeedbackModal } from "../../react-common/components/controls/Feedback/Feedback";
+import { ThemeManager } from "../../react-common/components/theming/themeManager";
+import { applyPolyfills } from "./polyfills";
+import { sendUpdateFeedbackTheme } from "../../react-common/components/controls/Feedback/FeedbackEventListener";
 
 pxt.blocks.requirePxtBlockly = () => pxtblockly as any;
 pxt.blocks.requireBlockly = () => Blockly;
 pxt.blocks.registerFieldEditor = (selector, proto, validator) => pxtblockly.registerFieldEditor(selector, proto, validator);
 
 pxsim.util.injectPolyphils();
+applyPolyfills();
 
 let theEditor: ProjectView;
 let hash: { cmd: string, arg: string };
@@ -165,16 +170,16 @@ export class ProjectView
     private pendingImport: pxt.Util.DeferredPromise<void>;
     private shouldFocusToolbox: boolean;
 
-    private highContrastSubscriber: data.DataSubscriber = {
-        subscriptions: [],
-        onDataChanged: () => {
-            this.onHighContrastChanged();
-        }
-    };
+    private themeManager: ThemeManager;
 
     private cloudStatusSubscriber: data.DataSubscriber = {
         subscriptions: [],
         onDataChanged: (path) => this.onCloudStatusChanged(path)
+    }
+
+    private headerChangeSubscriber: data.DataSubscriber = {
+        subscriptions: [],
+        onDataChanged: (path) => this.onHeaderChanged(path)
     }
 
     // component ID strings
@@ -186,8 +191,7 @@ export class ProjectView
         this.reload = false; //set to true in case of reset of the project where we are going to reload the page.
         this.settings = JSON.parse(pxt.storage.getLocal("editorSettings") || "{}")
         const shouldShowHomeScreen = this.shouldShowHomeScreen();
-        const isHighContrast = /hc=(\w+)/.test(window.location.href) || (window.matchMedia?.('(forced-colors: active)')?.matches);
-        if (isHighContrast) core.setHighContrast(true);
+        this.themeManager = ThemeManager.getInstance(document);
 
         const simcfg = pxt.appTarget.simulator;
         this.state = {
@@ -199,7 +203,7 @@ export class ProjectView
             simState: SimState.Stopped,
             autoRun: this.autoRunOnStart(),
             isMultiplayerGame: false,
-            onboarding: undefined,
+            activeTourConfig: undefined,
             mute: pxt.editor.MuteState.Unmuted,
             feedback: {showing: false, kind: "generic"} // state that tracks if the feedback modal is showing and what kind
         };
@@ -210,7 +214,7 @@ export class ProjectView
         this.hidePackageDialog = this.hidePackageDialog.bind(this);
         this.hwDebug = this.hwDebug.bind(this);
         this.hideLightbox = this.hideLightbox.bind(this);
-        this.hideOnboarding = this.hideOnboarding.bind(this);
+        this.closeTour = this.closeTour.bind(this);
         this.hideFeedback = this.hideFeedback.bind(this);
         this.openSimSerial = this.openSimSerial.bind(this);
         this.openDeviceSerial = this.openDeviceSerial.bind(this);
@@ -227,10 +231,21 @@ export class ProjectView
         this.exitTutorial = this.exitTutorial.bind(this);
         this.setEditorOffset = this.setEditorOffset.bind(this);
         this.resetTutorialTemplateCode = this.resetTutorialTemplateCode.bind(this);
+        this.initGlobalActionHandlers();
         this.initSimulatorMessageHandlers();
+        this.showThemePicker = this.showThemePicker.bind(this);
+        this.hideThemePicker = this.hideThemePicker.bind(this);
+        this.onThemeChanged = this.onThemeChanged.bind(this);
+        this.setColorThemeById = this.setColorThemeById.bind(this);
+        this.showLoginDialog = this.showLoginDialog.bind(this);
+        this.useTutorialSimSidebarLayout = this.useTutorialSimSidebarLayout.bind(this);
 
         // add user hint IDs and callback to hint manager
         if (pxt.BrowserUtils.useOldTutorialLayout()) this.hintManager.addHint(ProjectView.tutorialCardId, this.tutorialCardHintCallback.bind(this));
+
+        this.themeManager.subscribe("mainWebapp", this.onThemeChanged);
+        const isHighContrast = /hc=(\w+)/.test(window.location.href) || (window.matchMedia?.('(forced-colors: active)')?.matches);
+        if (isHighContrast) this.setColorThemeById(pxt.appTarget.appTheme.highContrastColorTheme, true);
     }
 
     private autoRunOnStart(): boolean {
@@ -291,8 +306,41 @@ export class ProjectView
                     };
                     simulator.driver.postMessage(playerOneConnectedMsg);
                 }
+            } else if (msg.type === "action") {
+                const { action } = msg as pxsim.SimulatorActionMessage;
+                this.runGlobalAction(action);
             }
         }, false);
+    }
+
+    private initGlobalActionHandlers() {
+        document.addEventListener("keydown", (e: KeyboardEvent) => {
+            const action = pxsim.accessibility.getGlobalAction(e)
+            this.runGlobalAction(action)
+        });
+    }
+
+    /**
+     * Run a global action based on shortcuts triggered in sim or main window.
+     */
+    private runGlobalAction(action: pxsim.GlobalAction) {
+        if (!data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)) {
+            return;
+        }
+        switch (action) {
+            case "escape": {
+                this.setSimulatorFullScreen(false);
+                return;
+            }
+            case "toggleareamenu" : {
+                this.toggleAreaMenu();
+                return
+            }
+            case "togglekeyboardcontrolshelp": {
+                this.toggleBuiltInSideDoc("keyboardControls", false);
+                return
+            }
+        }
     }
 
     /**
@@ -607,6 +655,11 @@ export class ProjectView
             && this.editorFile && this.editorFile.name == pxt.ASSETS_FILE;
     }
 
+    isTextSourceCodeEditorActive() {
+        return !this.state.embedSimView && this.editor == this.textEditor
+            && this.editorFile && /(\.ts|\.py)$/.test(this.editorFile.name);
+    }
+
     private isAnyEditeableJavaScriptOrPackageActive(): boolean {
         return this.editor == this.textEditor
             && this.editorFile && !this.editorFile.isReadonly() && /(\.ts|pxt.json)$/.test(this.editorFile.name);
@@ -682,6 +735,9 @@ export class ProjectView
 
         if (this.isBlocksActive()) {
             if (this.state.embedSimView) this.setState({ embedSimView: false });
+            // This timeout prevents key events from being handled by Blockly's keyboard
+            // navigation plugin prematurely.
+            setTimeout(() => {this.editor.focusWorkspace()}, 0)
             return;
         }
 
@@ -998,7 +1054,7 @@ export class ProjectView
         this.saveFileAsync(); // don't wait for saving to backend store to finish before typechecking
         const state = this.editor.snapshotState()
         compiler.typecheckAsync()
-            .then(resp => {
+            .then(cr => {
                 const end = Util.now();
                 // if typecheck is slow (>10s)
                 // and it happened more than 2 times,
@@ -1019,6 +1075,10 @@ export class ProjectView
                 }
 
                 this.maybeShowPackageErrors();
+
+                if (cr.success && pxt.commands.notifyProjectCompiled) {
+                    pxt.commands.notifyProjectCompiled(this.state.header.id, cr);
+                }
             });
     })
 
@@ -1074,7 +1134,7 @@ export class ProjectView
 
     public async componentDidMount() {
         this.allEditors.forEach(e => e.prepare())
-        await simulator.initAsync(document.getElementById("boardview"), {
+        await simulator.initAsync(getBoardView(), {
             orphanException: brk => {
                 // TODO: start debugging session
                 // TODO: user friendly error message
@@ -1146,13 +1206,14 @@ export class ProjectView
         this.loadBlocklyAsync();
 
         // subscribe to user preference changes (for simulator or non-render subscriptions)
-        data.subscribe(this.highContrastSubscriber, auth.HIGHCONTRAST);
         data.subscribe(this.cloudStatusSubscriber, `${cloud.HEADER_CLOUDSTATE}:*`);
+        data.subscribe(this.headerChangeSubscriber, "header:*");
     }
 
     public componentWillUnmount() {
-        data.unsubscribe(this.highContrastSubscriber);
         data.unsubscribe(this.cloudStatusSubscriber);
+        data.unsubscribe(this.headerChangeSubscriber);
+        this.themeManager?.unsubscribe("mainWebapp");
     }
 
     // Add an error guard for the entire application
@@ -1224,8 +1285,8 @@ export class ProjectView
                 return previousEditor ? previousEditor.unloadFileAsync() : Promise.resolve();
             })
             .then(() => {
-                let hc = this.getData<boolean>(auth.HIGHCONTRAST)
-                return this.editor.loadFileAsync(this.editorFile, hc)
+                let hc = this.themeManager.isHighContrast(this.themeManager.getCurrentColorTheme()?.id);
+                return this.editor.loadFileAsync(this.editorFile, hc);
             })
             .then(() => {
                 this.saveFileAsync(); // make sure state is up to date
@@ -1421,6 +1482,12 @@ export class ProjectView
         } else if (!shouldCollapse && !this.isSideDocExpanded()) {
             sd.expand();
         }
+    }
+
+    toggleBuiltInSideDoc(help: pxt.editor.BuiltInHelp, focusIfVisible: boolean) {
+        let sd = this.refs["sidedoc"] as container.SideDocs;
+        if (!sd) return;
+        sd.toggleBuiltInHelp(help, focusIfVisible);
     }
 
     setTutorialInstructionsExpanded(value: boolean): void {
@@ -1722,6 +1789,7 @@ export class ProjectView
             await this.loadTutorialCustomTsAsync();
             await this.loadTutorialTemplateCodeAsync();
             await this.loadTutorialBlockConfigsAsync();
+            await this.loadTutorialHiddenCategoriesAsync();
 
             const main = pkg.getEditorPkg(pkg.mainPkg);
 
@@ -1783,6 +1851,16 @@ export class ProjectView
                 this.shouldTryDecompile = true;
             }
 
+            // Onboard accessible blocks if accessible blocks has just been enabled
+            const onboardAccessibleBlocks = pxt.storage.getLocal("onboardAccessibleBlocks") === "1"
+            const sideDocsLoadUrl = onboardAccessibleBlocks ? `${container.builtInPrefix}keyboardControls` : ""
+            if (onboardAccessibleBlocks) {
+                pxt.storage.setLocal("onboardAccessibleBlocks", "0")
+            }
+
+            // Force editor tools to collapse in headless tutorials and blocks mode (essentially hiding file explorer)
+            const forceEditorToolsCollapse = pxt.appTarget.simulator.headless && (!!h.tutorial || h.editor === pxt.BLOCKS_PROJECT_NAME);
+
             this.setState({
                 home: false,
                 showFiles: h.githubId ? true : false,
@@ -1791,9 +1869,10 @@ export class ProjectView
                 header: h,
                 projectName: h.name,
                 currFile: file,
-                sideDocsLoadUrl: '',
+                sideDocsLoadUrl: sideDocsLoadUrl,
                 debugging: false,
-                isMultiplayerGame: false
+                isMultiplayerGame: false,
+                collapseEditorTools: forceEditorToolsCollapse || this.state.collapseEditorTools,
             });
 
             pkg.getEditorPkg(pkg.mainPkg).onupdate = () => {
@@ -1839,12 +1918,11 @@ export class ProjectView
                 this.setSideDoc(documentation, editorForFile == this.blocksEditor);
             }
             else {
-                const readme = main.lookupFile("this/README.md");
-                const readmeContent = readme?.content?.trim();
+                const readmeContent = this.getLocalizedReadmeContent();
                 // no auto-popup when editing packages locally
                 // ### @autoOpen false
                 if (!h.githubId && readmeContent && !/#{2,}\s+@autoOpen\s+false\s*/i.test(readmeContent)) {
-                    this.setSideMarkdown(readme.content);
+                    this.setSideMarkdown(readmeContent);
                 }
             }
 
@@ -1860,6 +1938,25 @@ export class ProjectView
             /* await */ cmds.maybeReconnectAsync(false, true);
             this.editorLoaded();
         }
+    }
+
+    private getLocalizedReadmeContent(): string | undefined {
+        const main = pkg.getEditorPkg(pkg.mainPkg);
+        const [initialLang, baseLang, initialLangLowerCase] = pxt.Util.normalizeLanguageCode(pxt.Util.userLanguage());
+        const priorityOrder = [initialLang, initialLangLowerCase, baseLang].filter((lang) => typeof lang === "string");
+        const pathsToTest = [
+            ...priorityOrder.map(lang =>`this/_locales/${lang}/README.md`),
+            "this/README.md"
+        ];
+        for (const path of pathsToTest) {
+            const file = main.lookupFile(path);
+            const hasContent = file?.content?.trim();
+
+            if (hasContent) {
+                return file.content;
+            }
+        }
+        return undefined;
     }
 
     private async loadTutorialFiltersAsync(): Promise<void> {
@@ -1888,8 +1985,11 @@ export class ProjectView
                 editorState.filters = {
                     blocks: tutorialBlocks.usedBlocks,
                     defaultState: pxt.editor.FilterState.Hidden
-                }
-                editorState.hasCategories = !(header.tutorial.metadata && header.tutorial.metadata.flyoutOnly);
+                };
+                editorState.hasCategories = !(
+                    header.tutorial.metadata &&
+                    (header.tutorial.metadata.flyoutOnly || header.tutorial.metadata.unifiedToolbox)
+                );
             }
             this.setState({ editorState: editorState });
             this.editor.filterToolbox(true);
@@ -2017,8 +2117,11 @@ export class ProjectView
         if (!header || !header.tutorial) {
             return;
         }
-        else if (!header.tutorial.templateCode || header.tutorial.templateLoaded) {
-            if (header.tutorial.mergeCarryoverCode && header.tutorial.mergeHeaderId) {
+        const hasCodeCarryover = header.tutorial.mergeCarryoverCode && header.tutorial.mergeHeaderId;
+        const hideReplaceMyCode = header.tutorial.metadata?.hideReplaceMyCode || pxt.appTarget.appTheme.hideReplaceMyCode;
+
+        if (!header.tutorial.templateCode && !(hasCodeCarryover && hideReplaceMyCode) || header.tutorial.templateLoaded) {
+            if (hasCodeCarryover) {
                 pxt.warn(lf("Refusing to carry code between tutorials because the loaded tutorial \"{0}\" does not contain a template code block.", header.tutorial.tutorial));
             }
             return;
@@ -2029,33 +2132,36 @@ export class ProjectView
         // Mark that the template has been loaded so that we don't overwrite the
         // user code if the tutorial is re-opened
         header.tutorial.templateLoaded = true;
+
         let currentText = await workspace.getTextAsync(header.id);
 
-        // If we're starting in the asset editor, always load into TS
-        const preferredEditor = header.tutorial.metadata?.preferredEditor;
-        if (preferredEditor && filenameForEditor(preferredEditor) === pxt.ASSETS_FILE) {
-            currentText[pxt.MAIN_TS] = template;
-        }
-
-        const projectname = projectNameForEditor(preferredEditor || header.editor);
-
-        if (projectname === pxt.PYTHON_PROJECT_NAME && header.tutorial.templateLanguage === "python") {
-            currentText[pxt.MAIN_PY] = template;
-        }
-        else if (projectname === pxt.JAVASCRIPT_PROJECT_NAME) {
-            currentText[pxt.MAIN_TS] = template;
-        }
-        else if (projectname === pxt.PYTHON_PROJECT_NAME) {
-            const pyCode = await compiler.decompilePythonSnippetAsync(template)
-            if (pyCode) {
-                currentText[pxt.MAIN_PY] = pyCode;
+        if (template) {
+            // If we're starting in the asset editor, always load into TS
+            const preferredEditor = header.tutorial.metadata?.preferredEditor;
+            if (preferredEditor && filenameForEditor(preferredEditor) === pxt.ASSETS_FILE) {
+                currentText[pxt.MAIN_TS] = template;
             }
-        }
-        else {
-            const resp = await compiler.decompileBlocksSnippetAsync(template)
-            const blockXML = resp.outfiles[pxt.MAIN_BLOCKS];
-            if (blockXML) {
-                currentText[pxt.MAIN_BLOCKS] = blockXML
+
+            const projectname = projectNameForEditor(preferredEditor || header.editor);
+
+            if (projectname === pxt.PYTHON_PROJECT_NAME && header.tutorial.templateLanguage === "python") {
+                currentText[pxt.MAIN_PY] = template;
+            }
+            else if (projectname === pxt.JAVASCRIPT_PROJECT_NAME) {
+                currentText[pxt.MAIN_TS] = template;
+            }
+            else if (projectname === pxt.PYTHON_PROJECT_NAME) {
+                const pyCode = await compiler.decompilePythonSnippetAsync(template)
+                if (pyCode) {
+                    currentText[pxt.MAIN_PY] = pyCode;
+                }
+            }
+            else {
+                const resp = await compiler.decompileBlocksSnippetAsync(template)
+                const blockXML = resp.outfiles[pxt.MAIN_BLOCKS];
+                if (blockXML) {
+                    currentText[pxt.MAIN_BLOCKS] = blockXML
+                }
             }
         }
 
@@ -2155,6 +2261,27 @@ export class ProjectView
         await mainPkg.setContentAsync(pxt.TUTORIAL_CUSTOM_TS, customTs);
         await mainPkg.saveFilesAsync();
         return Promise.resolve();
+    }
+
+    private async loadTutorialHiddenCategoriesAsync(): Promise<void> {
+        const mainPkg = pkg.mainEditorPkg();
+        const header = mainPkg.header;
+        if (!header || !header.tutorial || !header.tutorial.hiddenNamespaces) {
+            return;
+        }
+
+        await mainPkg.updateConfigAsync(config => {
+            if (!config.toolboxFilter) {
+                config.toolboxFilter = {
+                    namespaces: {},
+                    blocks: {}
+                };
+            }
+
+            for (const category of header.tutorial.hiddenNamespaces) {
+                config.toolboxFilter.namespaces[category] = "hidden";
+            }
+        });
     }
 
     async resetTutorialTemplateCode(keepAssets: boolean): Promise<void> {
@@ -2584,15 +2711,15 @@ export class ProjectView
     }
 
     initDragAndDrop() {
-        draganddrop.setupDragAndDrop(document.body,
-            file => file.size < 1000000 && this.isHexFile(file.name) || this.isBlocksFile(file.name) || this.isZipFile(file.name),
-            files => {
+        draganddrop.addDragAndDropHandler({
+            filter: file => file.size < 1000000 && this.isHexFile(file.name) || this.isBlocksFile(file.name) || this.isZipFile(file.name),
+            dragged: files => {
                 if (files) {
                     pxt.tickEvent("dragandrop.open")
                     this.importFile(files[0]);
                 }
             },
-            url => {
+            draggedUri: url => {
                 if (this.isPNGFile(url)) {
                     pxt.Util.httpRequestCoreAsync({
                         url,
@@ -2601,8 +2728,9 @@ export class ProjectView
                     }).then(resp => this.importUri(url, resp.buffer))
                         .catch(e => core.handleNetworkError(e));
                 }
-            }
-        );
+            },
+            priority: 0
+        });
     }
 
     importUri(url: string, buf: ArrayBuffer) {
@@ -2779,9 +2907,7 @@ export class ProjectView
     ///////////////////////////////////////////////////////////
 
     openHome() {
-        const hasHome = !pxt.shell.isControllerMode()
-            && !pxt.appTarget.appTheme.lockedEditor;
-        if (!hasHome) return;
+        if (!pxt.shell.hasHomeScreen()) return;
 
         this.unloadProjectAsync(true)
     }
@@ -2791,14 +2917,17 @@ export class ProjectView
     }
 
     private editorLoaded() {
-        pxt.tickEvent('app.editor', { projectHeaderId: this.state.header?.id });
+        pxt.tickEvent('app.editor', {
+            projectHeaderId: this.state.header?.id,
+            fileType: this.editorFile?.getExtension()
+        });
     }
 
     unloadProjectAsync(home?: boolean) {
         this.stopSimulator(true); // don't keep simulator around
         this.showKeymap(false); // close keymap if open
         cmds.disconnectAsync(); // turn off any kind of logging
-        if (this.editor) this.editor.unloadFileAsync();
+        if (this.editor) this.editor.unloadFileAsync(home);
         this.extensions.unload();
         this.editorFile = undefined;
 
@@ -2927,12 +3056,22 @@ export class ProjectView
             });
     }
 
+    async newUserCreatedProject(firstProject: boolean): Promise<void> {
+        if (pxt.appTarget.appTheme.nameProjectFirst || pxt.appTarget.appTheme.chooseLanguageRestrictionOnNewProject) {
+            const projectSettings = await this.askForProjectCreationOptionsAsync()
+            const { name, languageRestriction } = projectSettings
+            this.newProject({ name, languageRestriction, firstProject });
+        } else {
+            this.newProject({ firstProject });
+        }
+    }
+
     async createProjectAsync(options: ProjectCreationOptions): Promise<void> {
         pxt.perf.measureStart(Measurements.CreateProjectAsync)
         this.setSideDoc(undefined);
         if (!options.prj) options.prj = pxt.appTarget.blocksprj;
         let cfg = pxt.U.clone(options.prj.config);
-        cfg.name = options.name || lf("Untitled");
+        cfg.name = options.name || pxt.commands.getDefaultProjectName?.() || lf("Untitled");
         cfg.documentation = options.documentation;
         let files: pxt.workspace.ScriptText = Util.clone(options.prj.files)
         if (options.filesOverride) {
@@ -3374,15 +3513,15 @@ export class ProjectView
                         const res = await pxt.commands.showProgramTooLargeErrorAsync(attemptedVariants, core.confirmAsync, saveOnly);
                         if (res?.recompile) {
                             pxt.tickEvent("compile.programTooLargeDialog.recompile");
-                            const oldVariants = pxt.appTarget.multiVariants;
+                            const oldVariants = pxt.appTarget.disabledVariants;
                             this.setState({ compiling: false, isSaving: false });
                             try {
-                                pxt.appTarget.multiVariants = res.useVariants;
+                                pxt.appTarget.disabledVariants = pxt.appTarget.multiVariants.filter(v => !res.useVariants.includes(v));
                                 await this.compile(saveOnly);
                                 return;
                             }
                             finally {
-                                pxt.appTarget.multiVariants = oldVariants;
+                                pxt.appTarget.disabledVariants = oldVariants;
                             }
                         }
                         else {
@@ -3582,7 +3721,7 @@ export class ProjectView
             default:
                 this.maybeShowPackageErrors(true);
                 this.startSimulator(opts);
-                if (opts && opts.clickTrigger) simulator.driver.focus();
+                if (!this.state.fullscreen && opts && opts.clickTrigger) getBoardView().focus();
                 break;
         }
     }
@@ -3665,16 +3804,16 @@ export class ProjectView
     }
 
     setSimulatorFullScreen(enabled: boolean) {
-        if (this.state.collapseEditorTools) {
+        if (this.state.collapseEditorTools && !pxt.appTarget.simulator?.headless) {
             this.expandSimulator();
         }
         if (enabled) {
             document.addEventListener('keydown', this.closeOnEscape);
             simulator.driver.focus();
+            this.closeFlyout();
         } else {
             document.removeEventListener('keydown', this.closeOnEscape);
         }
-        this.closeFlyout();
         this.setState({ fullscreen: enabled });
     }
 
@@ -3774,8 +3913,7 @@ export class ProjectView
             case SimState.Running:
                 return false; // already reunning
         }
-        const hasHome = !pxt.shell.isControllerMode();
-        if (!hasHome) return true;
+        if (!pxt.shell.hasHomeScreen()) return true;
         return !this.state.home;
     }
 
@@ -3795,7 +3933,9 @@ export class ProjectView
         } else {
             simulator.driver.restart(); // fast restart
         }
-        simulator.driver.focus()
+        if (!this.state.fullscreen) {
+            getBoardView().focus();
+        }
         if (!isDebug) {
             this.blocksEditor.clearBreakpoints();
         }
@@ -3805,6 +3945,7 @@ export class ProjectView
         pxt.tickEvent('simulator.start');
         const isDebugMatch = !this.debugOptionsChanged();
         const clickTrigger = opts && opts.clickTrigger;
+        const background = opts && opts.background;
         pxt.debug(`start sim (autorun ${this.state.autoRun})`)
         if (!this.shouldStartSimulator() && isDebugMatch || this.state.home) {
             pxt.log("Ignoring call to start simulator, either already running or we shouldn't start.");
@@ -3812,7 +3953,7 @@ export class ProjectView
         }
 
         await this.saveFileAsync();
-        await this.runSimulator({ debug: this.state.debugging, clickTrigger });
+        await this.runSimulator({ debug: this.state.debugging, clickTrigger, background });
     }
 
     debugOptionsChanged() {
@@ -3821,7 +3962,7 @@ export class ProjectView
         return (!!debugging != simulator.driver.isDebug()) || (!!tracing != simulator.driver.isTracing())
     }
 
-    stopSimulator(unload?: boolean, opts?: pxt.editor.SimulatorStartOptions) {
+    stopSimulator(unload?: boolean, opts?: pxt.editor.SimulatorStartOptions): Promise<void> {
         pxt.perf.measureStart(Measurements.StopSimulator)
         pxt.tickEvent('simulator.stop')
         const clickTrigger = opts && opts.clickTrigger;
@@ -3831,18 +3972,19 @@ export class ProjectView
             this.runToken = null
         }
 
-        if (this.isSimulatorRunning() || unload && simulator.driver?.state !== pxsim.SimulatorState.Unloaded) {
+        if (this.isSimulatorRunning() || unload && simulator.driver.state !== pxsim.SimulatorState.Unloaded) {
             simulator.stop(unload);
         }
 
         const autoRun = this.state.autoRun && !clickTrigger; // if user pressed stop, don't restart
 
         // Only fire setState if something changed
-        if (this.state.simState !== SimState.Stopped || !!this.state.autoRun !== !!autoRun) {
-            this.setState({ simState: SimState.Stopped, autoRun: autoRun });
-        }
+        const setStatePromise = this.state.simState !== SimState.Stopped || !!this.state.autoRun !== !!autoRun ?
+            this.setStateAsync({ simState: SimState.Stopped, autoRun: autoRun }) :
+            Promise.resolve();
 
         pxt.perf.measureEnd(Measurements.StopSimulator)
+        return setStatePromise;
     }
 
     suspendSimulator() {
@@ -3858,16 +4000,16 @@ export class ProjectView
         this.setState({ showMiniSim: visible });
     }
 
-    onHighContrastChanged() {
+    async onThemeChanged() {
         this.clearSerial();
         // Not this.restartSimulator; need full restart to consistently update visuals,
         // and don't want to steal focus.
         if (this.isSimulatorRunning()) {
-            this.stopSimulator();
+            await this.stopSimulator();
             this.startSimulator();
         }
 
-        const highContrast = this.getData<boolean>(auth.HIGHCONTRAST);
+        const highContrast = this.themeManager.isHighContrast(this.themeManager.getCurrentColorTheme()?.id);
         const bodyIsHighContrast = document.body.classList.contains("high-contrast");
         if (highContrast) {
             if (!bodyIsHighContrast) document.body.classList.add("high-contrast");
@@ -3896,6 +4038,16 @@ export class ProjectView
                 ...msg,
                 type: "pxteditor"
             });
+        }
+    }
+
+    onHeaderChanged(path: string) {
+        const parts = path.split("header:");
+        if (parts.length < 2) return;
+        const headerId = parts[1];
+        if (headerId !== this.state.header?.id) return;
+        if (pxt.commands.notifyProjectSaved) {
+            pxt.commands.notifyProjectSaved(this.state.header);
         }
     }
 
@@ -3959,7 +4111,7 @@ export class ProjectView
                         if (!cancellationToken.isCancelled()) {
                             pxt.debug(`sim: run`)
 
-                            const hc = data.getData<boolean>(auth.HIGHCONTRAST)
+                            const hc = this.themeManager.isHighContrast(this.themeManager.getCurrentColorTheme()?.id);
                             if (!pxt.react.isFieldEditorViewVisible?.()) {
                                 simulator.run(pkg.mainPkg, opts.debug, resp, {
                                     mute: this.state.mute === pxt.editor.MuteState.Muted,
@@ -4535,8 +4687,8 @@ export class ProjectView
         }
     }
 
-    showLoginDialog(continuationHash?: string) {
-        this.loginDialog.show(continuationHash);
+    showLoginDialog(continuationHash?: string, dialogMessages?: { signInMessage?: string; signUpMessage?: string }) {
+        this.loginDialog.show(continuationHash, dialogMessages);
     }
 
     showProfileDialog(location?: string) {
@@ -4549,6 +4701,14 @@ export class ProjectView
 
     showLanguagePicker() {
         this.languagePicker.show();
+    }
+
+    showThemePicker() {
+        this.setState( { themePickerOpen: true });
+    }
+
+    hideThemePicker() {
+        this.setState( { themePickerOpen: false });
     }
 
     showImportUrlDialog() {
@@ -4601,7 +4761,9 @@ export class ProjectView
         });
     }
 
-    showExitAndSaveDialog() {
+    showExitAndSaveDialog() {;
+        if (!pxt.shell.hasHomeScreen()) return;
+
         this.setState({ debugging: false })
         if (this.isTutorial()) {
             pxt.tickEvent("tutorial.exit.home", { tutorial: this.state.header?.tutorial?.tutorial });
@@ -4623,7 +4785,7 @@ export class ProjectView
             extensionsVisible: false
         })
 
-        if (this.state.accessibleBlocks) {
+        if (this.getData<boolean>(auth.ACCESSIBLE_BLOCKS)) {
             this.editor.focusToolbox(CategoryNameID.Extensions);
         }
     }
@@ -4997,6 +5159,11 @@ export class ProjectView
         return this.state.tutorialOptions != undefined;
     }
 
+    useTutorialSimSidebarLayout() {
+        const lang = this.isBlocksActive() ? "blocks" : this.isPythonActive() ? "python" : "javascript";
+        return !!pxt.appTarget.appTheme.tutorialSimSidebarLangs?.includes(lang);
+    }
+
     onEditorContentLoaded() {
         if (this.isTutorial()) {
             pxt.tickEvent("tutorial.editorLoaded")
@@ -5042,7 +5209,7 @@ export class ProjectView
             if (!pxt.BrowserUtils.useOldTutorialLayout()) {
                 const tutorialElements = document?.getElementsByClassName("tutorialWrapper");
                 const tutorialEl = tutorialElements?.length === 1 ? (tutorialElements[0] as HTMLElement) : undefined;
-                if (tutorialEl && (pxt.BrowserUtils.isTabletSize() || pxt.appTarget.appTheme.tutorialSimSidebarLayout)) {
+                if (tutorialEl && (pxt.BrowserUtils.isTabletSize() || this.useTutorialSimSidebarLayout())) {
                     this.setState({ editorOffset: tutorialEl.offsetHeight + "px" });
                 } else {
                     this.setState({ editorOffset: undefined });
@@ -5053,6 +5220,7 @@ export class ProjectView
                     const flyoutOnly =
                         this.state.editorState?.hasCategories === false
                         || this.state.tutorialOptions?.metadata?.flyoutOnly
+                        || this.state.tutorialOptions?.metadata?.unifiedToolbox
                         || this.state.tutorialOptions?.metadata?.hideToolbox;
 
                     let headerHeight = 0;
@@ -5111,39 +5279,81 @@ export class ProjectView
     }
 
     ///////////////////////////////////////////////////////////
-    ////////////         High contrast            /////////////
+    ////////////            Theming               /////////////
     ///////////////////////////////////////////////////////////
 
-    toggleHighContrast() {
-        core.toggleHighContrast();
-        pxt.tickEvent("app.highcontrast", { on: core.getHighContrastOnce() ? 1 : 0 });
-        if (this.isSimulatorRunning()) {  // if running, send updated high contrast state.
-            this.startSimulator()
-        }
+    toggleHighContrast(): void {
+        this.setHighContrast(!core.getHighContrastOnce());
     }
 
-    setHighContrast(on: boolean) {
-        return core.setHighContrast(on);
+    setHighContrast(on: boolean): void {
+        if (!pxt.appTarget.appTheme.highContrastColorTheme || !pxt.appTarget.appTheme.defaultColorTheme) {
+            return;
+        }
+        pxt.tickEvent("app.highcontrast", { on: on ? 1 : 0 });
+        sendUpdateFeedbackTheme(on);
+        this.setColorThemeById(on ? pxt.appTarget.appTheme.highContrastColorTheme : pxt.appTarget.appTheme.defaultColorTheme, true);
     }
 
     toggleGreenScreen() {
         const greenScreenOn = !this.state.greenScreen;
+
+        // Switch to default color theme when using greenscreen.
+        if (greenScreenOn && this.themeManager?.getCurrentColorTheme()?.id !== pxt.appTarget.appTheme.defaultColorTheme) {
+            this.setColorThemeById(pxt.appTarget.appTheme.defaultColorTheme, false);
+        }
+
         pxt.tickEvent("app.greenscreen", { on: greenScreenOn ? 1 : 0 });
         this.setState({ greenScreen: greenScreenOn });
     }
 
-    toggleAccessibleBlocks() {
-        this.setAccessibleBlocks(!this.state.accessibleBlocks);
+    async toggleAccessibleBlocks(eventSource: string) {
+        const nextEnabled = !this.getData<boolean>(auth.ACCESSIBLE_BLOCKS);
+        if (nextEnabled) {
+            pxt.storage.setLocal("onboardAccessibleBlocks", "1")
+        }
+        await core.toggleAccessibleBlocks(eventSource)
+        this.reloadEditor();
     }
 
-    setAccessibleBlocks(enabled: boolean) {
-        pxt.tickEvent("app.accessibleblocks", { on: enabled ? 1 : 0 });
-        this.blocksEditor.enableAccessibleBlocks(enabled);
-        this.setState({ accessibleBlocks: enabled })
+    isAccessibleBlocks(): boolean {
+        return this.getData<boolean>(auth.ACCESSIBLE_BLOCKS);
     }
 
     setBannerVisible(b: boolean) {
         this.setState({ bannerVisible: b });
+    }
+
+    setColorThemeById(colorThemeId: string, savePreference: boolean) {
+        if (this.themeManager.getCurrentColorTheme()?.id === colorThemeId) {
+            return;
+        }
+
+        if (this.state.greenScreen && colorThemeId !== pxt.appTarget.appTheme.defaultColorTheme) {
+            this.toggleGreenScreen(); // turn off green screen if switching to a non-default theme
+        }
+
+        pxt.tickEvent("app.setcolortheme", { theme: colorThemeId, savePreference: `${savePreference}` });
+        this.themeManager.switchColorTheme(colorThemeId);
+
+        if (savePreference) {
+            this.updateThemePreference();
+        }
+    }
+
+    private updateThemePreference() {
+        const newThemeId = this.themeManager.getCurrentColorTheme()?.id;
+
+        if (newThemeId) {
+            auth.setThemePrefAsync(newThemeId);
+
+            // Disable high contrast preference (separate from theme pref) if the new theme is not high contrast.
+            // This is only needed while we transition from not having themes to having them. In time, the
+            // auth.HIGHCONTRAST preference can be phased out in favor of the themeId preference.
+            if (!this.themeManager.isHighContrast(newThemeId) && data.getData<boolean>(auth.HIGHCONTRAST)) {
+                auth.setHighContrastPrefAsync(false);
+            }
+        }
     }
 
     ///////////////////////////////////////////////////////////
@@ -5171,17 +5381,52 @@ export class ProjectView
     }
 
     ///////////////////////////////////////////////////////////
-    ////////////             Onboarding           /////////////
+    ////////////               Tours              /////////////
     ///////////////////////////////////////////////////////////
 
-    hideOnboarding() {
-        this.setState({ onboarding: undefined });
+    closeTour() {
+        this.setState({ activeTourConfig: undefined });
     }
 
     async showOnboarding() {
-        const tourSteps: pxt.tour.BubbleStep[] = await parseTourStepsAsync(pxt.appTarget.appTheme?.tours?.editor)
-        this.setState({ onboarding: tourSteps })
+        const tourSteps: pxt.tour.BubbleStep[] = await parseTourStepsAsync(pxt.appTarget.appTheme?.tours?.editor);
+        if (tourSteps.length === 0) {
+            pxt.debug("No tour steps found for onboarding");
+            return;
+        }
+        const config: pxt.tour.TourConfig = {
+            steps: tourSteps,
+            showConfetti: true,
+        }
+        this.showTour(config);
+    }
 
+    async showTour(config: pxt.tour.TourConfig) {
+        this.setState({ activeTourConfig: config });
+    }
+
+    ///////////////////////////////////////////////////////////
+    ////////////            Area menu             /////////////
+    ///////////////////////////////////////////////////////////
+
+    toggleAreaMenu() {
+        // Restore the simulator if needed. If the area menu is open, allow the simulator to
+        // stay fullscreened. The desired behaviour is that the mini sim can be fullscreened
+        // through the area menu, otherwise it has been restored already.
+        if (this.state.fullscreen && !this.state.areaMenuOpen) {
+            this.setSimulatorFullScreen(false);
+        }
+
+        const dialog = Array.from(document.querySelectorAll("[role=dialog]")).find(dialog => (dialog as any).checkVisibility());
+        this.setState((state) => {
+            const { areaMenuOpen } = state;
+            if (state.home || dialog) {
+                // Skip on home page or if a dialog is open.
+                return state;
+            }
+            pxt.tickEvent("app.toggleareamenu", { open: !this.state.areaMenuOpen ? "true" : "false" });
+            return { areaMenuOpen: !areaMenuOpen }
+        });
     }
 
     ///////////////////////////////////////////////////////////
@@ -5283,11 +5528,12 @@ export class ProjectView
         const isSidebarTutorial = pxt.appTarget.appTheme.sidebarTutorial;
         const isTabTutorial = inTutorial && !pxt.BrowserUtils.useOldTutorialLayout();
         const inTutorialExpanded = inTutorial && tutorialOptions.tutorialStepExpanded;
-        const tutorialSimSidebar = pxt.appTarget.appTheme.tutorialSimSidebarLayout && !pxt.BrowserUtils.isTabletSize();
+        const tutorialSimSidebar = !pxt.BrowserUtils.isTabletSize() && this.useTutorialSimSidebarLayout();
         const inDebugMode = this.state.debugging;
         const inHome = this.state.home && !sandbox;
         const inEditor = !!this.state.header && !inHome;
-        const { lightbox, greenScreen, accessibleBlocks } = this.state;
+        const { lightbox, greenScreen } = this.state;
+        const accessibleBlocks = this.getData<boolean>(auth.ACCESSIBLE_BLOCKS)
         const hideTutorialIteration = inTutorial && tutorialOptions.metadata?.hideIteration;
         const hideToolbox = inTutorial && tutorialOptions.metadata?.hideToolbox;
         // flyoutOnly has become a de facto css class for styling tutorials (especially minecraft HOC), so keep it if hideToolbox is true, even if flyoutOnly is false.
@@ -5296,7 +5542,7 @@ export class ProjectView
         const hideMenuBar = targetTheme.hideMenuBar || hideTutorialIteration || (isTabTutorial && pxt.appTarget.appTheme.embeddedTutorial) || pxt.shell.isTimeMachineEmbed();
         const isHeadless = simOpts && simOpts.headless;
         const selectLanguage = targetTheme.selectLanguage;
-        const feedbackEnabled = targetTheme.feedbackEnabled && targetTheme.ocvFrameUrl && targetTheme.ocvAppId;
+        const feedbackEnabled = pxt.U.ocvEnabled();
         const showEditorToolbar = inEditor && !hideEditorToolbar && this.editor.hasEditorToolbar();
         const useSerialEditor = pxt.appTarget.serial && !!pxt.appTarget.serial.useEditor;
         const showSideDoc = sideDocs && this.state.sideDocsLoadUrl && !this.state.sideDocsCollapsed;
@@ -5310,7 +5556,7 @@ export class ProjectView
         const isMultiplayerGame = this.state.isMultiplayerGame;
         const collapseIconTooltip = this.state.collapseEditorTools ? lf("Show the simulator") : lf("Hide the simulator");
         const isApp = cmds.isNativeHost() || pxt.BrowserUtils.isElectron();
-        const hc = this.getData<boolean>(auth.HIGHCONTRAST)
+        const hc = this.themeManager.isHighContrast(this.themeManager.getCurrentColorTheme()?.id);
 
         let rootClassList = [
             "ui",
@@ -5377,12 +5623,11 @@ export class ProjectView
                         header={this.state.header}
                         reloadHeaderAsync={async () => {
                             await this.reloadHeaderAsync()
-                            this.shouldFocusToolbox = !!this.state.accessibleBlocks;
+                            this.shouldFocusToolbox = !!accessibleBlocks;
                         }}
                     />
                 }
                 {greenScreen ? <greenscreen.WebCam close={this.toggleGreenScreen} /> : undefined}
-                {accessibleBlocks && <accessibleblocks.AccessibleBlocksInfo />}
                 {hideMenuBar || inHome ? undefined :
                     <header className="menubar" role="banner">
                         {inEditor ? <accessibility.EditorAccessibilityMenu parent={this} highContrast={hc} /> : undefined}
@@ -5399,7 +5644,7 @@ export class ProjectView
                     showSerialButtons={useSerialEditor}
                     showFileList={showFileList}
                     showFullscreenButton={!isHeadless}
-                    showHostMultiplayerGameButton={isMultiplayerSupported && isMultiplayerGame}
+                    isMultiplayerGame={isMultiplayerSupported && isMultiplayerGame}
                     collapseEditorTools={this.state.collapseEditorTools}
                     simSerialActive={this.state.simSerialActive}
                     devSerialActive={this.state.deviceSerialActive}
@@ -5425,8 +5670,8 @@ export class ProjectView
                         <projects.Projects parent={this} ref={this.handleHomeRef} />
                     </div>
                 </div> : undefined}
-                {showEditorToolbar && <editortoolbar.EditorToolbar ref="editortools" parent={this} />}
                 {sideDocs ? <container.SideDocs ref="sidedoc" parent={this} sideDocsCollapsed={this.state.sideDocsCollapsed} docsUrl={this.state.sideDocsLoadUrl} /> : undefined}
+                {showEditorToolbar && <editortoolbar.EditorToolbar ref="editortools" parent={this} />}
                 {sandbox ? undefined : <scriptsearch.ScriptSearch parent={this} ref={this.handleScriptSearchRef} />}
                 {sandbox ? undefined : <extensions.Extensions parent={this} ref={this.handleExtensionRef} />}
                 {inHome ? <projects.ImportDialog parent={this} ref={this.handleImportDialogRef} /> : undefined}
@@ -5438,12 +5683,14 @@ export class ProjectView
                 {hwDialog ? <projects.ChooseHwDialog parent={this} ref={this.handleChooseHwDialogRef} /> : undefined}
                 {sandbox || !sharingEnabled ? undefined : <share.ShareEditor parent={this} ref={this.handleShareEditorRef} loading={this.state.publishing} />}
                 {selectLanguage ? <lang.LanguagePicker parent={this} ref={this.handleLanguagePickerRef} /> : undefined}
-                {feedbackEnabled && this.state.feedback.showing ? <Feedback onClose={this.hideFeedback} kind={this.state.feedback.kind}/> : undefined}
+                {feedbackEnabled && this.state.feedback.showing ? <FeedbackModal onClose={this.hideFeedback} kind={this.state.feedback.kind}/> : undefined}
                 {sandbox ? <container.SandboxFooter parent={this} /> : undefined}
                 {hideMenuBar ? <div id="editorlogo"><a className="poweredbylogo"></a></div> : undefined}
                 {lightbox ? <sui.Dimmer isOpen={true} active={lightbox} portalClassName={'tutorial'} className={'ui modal'}
                     shouldFocusAfterRender={false} closable={true} onClose={this.hideLightbox} /> : undefined}
-                {this.state.onboarding && <Tour tourSteps={this.state.onboarding} onClose={this.hideOnboarding} />}
+                {this.state.areaMenuOpen && <AreaMenuOverlay parent={this}/>}
+                {this.state.activeTourConfig && <Tour config={this.state.activeTourConfig} onClose={this.closeTour} />}
+                {this.state.themePickerOpen && <ThemePickerModal themes={this.themeManager.getAllColorThemes()} onThemeClicked={theme => this.setColorThemeById(theme?.id, true)} onClose={this.hideThemePicker} />}
             </div>
         );
     }
@@ -5455,6 +5702,10 @@ function render() {
 
 function getEditor() {
     return theEditor
+}
+
+function getBoardView() {
+    return document.getElementById("boardview");
 }
 
 function parseLocalToken() {
@@ -5486,23 +5737,19 @@ function initPacketIO() {
             }
         },
         (type, payload) => {
-            const messageSimulators = pxt.appTarget.simulator?.messageSimulators;
-            if (messageSimulators?.[type]) {
-                window.postMessage({
-                    type: "messagepacket",
-                    broadcast: false,
-                    channel: type,
-                    data: payload,
-                    sender: "packetio",
-                }, "*")
-            }
+            window.postMessage({
+                type: "messagepacket",
+                broadcast: false,
+                channel: type,
+                data: payload,
+                sender: "packetio",
+            }, "*")
         });
 
     window.addEventListener('message', (ev: MessageEvent) => {
         const msg = ev.data
         if (msg.type === 'messagepacket'
             && msg.sender !== "packetio"
-            && pxt.appTarget.simulator?.messageSimulators?.[msg.channel]
             && msg.channel === pxt.HF2.CUSTOM_EV_JACDAC)
             pxt.packetio.sendCustomEventAsync(msg.channel, msg.data)
                 .then(() => { }, err => {
@@ -6170,6 +6417,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 baseUrl: baseUrl,
                 code: useLang,
                 force: force,
+            }).then(async () => {
+                return pxt.Cloud.initRegionAsync();
             }).then(() => {
                 if (pxt.Util.isLocaleEnabled(useLang)) {
                     pxt.BrowserUtils.setCookieLang(useLang);
@@ -6184,6 +6433,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                     targetId, baseUrl, useLang, pxt.Util.liveLocalizationEnabled(), Util.TranslationsKind.Sim)
                     .then(simStrings => simStrings && simulator.setTranslations(simStrings))
             });
+        })
+        .then(() => {
+            // Load theme colors
+            const themeManager = ThemeManager.getInstance(document);
+            const initialThemePrefs = data.getData<pxt.auth.ColorThemeIdsState>(auth.COLOR_THEME_IDS);
+            let initialTheme = initialThemePrefs?.[pxt.appTarget.id];
+            if (!initialTheme || !themeManager.isKnownTheme(initialTheme)) {
+                initialTheme = pxt.appTarget?.appTheme?.defaultColorTheme;
+            }
+
+            // We have a legacy preference stored if the user has enabled high contrast.
+            // Respect it here by switching to the hc color theme.
+            const hcEnabled = data.getData<boolean>(auth.HIGHCONTRAST);
+            if (hcEnabled) {
+                initialTheme = pxt.appTarget?.appTheme?.highContrastColorTheme;
+            }
+
+            if (initialTheme && initialTheme !== themeManager.getCurrentColorTheme()?.id) {
+                return themeManager.switchColorTheme(initialTheme);
+            }
+            return Promise.resolve();
         })
         .then(() => {
             pxt.BrowserUtils.initTheme();
@@ -6216,6 +6486,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             initHashchange();
             socketbridge.tryInit();
             electron.initElectron(theEditor);
+            pxt.tickEvent(
+                "accessibilty.accessibleBlocksEnabledForSession",
+                {
+                    enabled: data.getData<boolean>(auth.ACCESSIBLE_BLOCKS) ? "true" : "false",
+                }
+            );
         })
         .then(() => {
             const showHome = theEditor.shouldShowHomeScreen();
@@ -6277,7 +6553,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
 
             // Check to see if we should show the mini simulator (<= tablet size)
-            if (!theEditor.isTutorial() || pxt.appTarget.appTheme.tutorialSimSidebarLayout || pxt.BrowserUtils.useOldTutorialLayout()) {
+            if (!theEditor.isTutorial() || theEditor.useTutorialSimSidebarLayout() || pxt.BrowserUtils.useOldTutorialLayout()) {
                 if (pxt.BrowserUtils.isTabletSize()) {
                     theEditor.showMiniSim(true);
                 } else {

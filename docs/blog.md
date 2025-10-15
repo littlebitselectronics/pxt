@@ -1,5 +1,25 @@
 # Microsoft MakeCode Blog
 
+## [MakeCode for the micro:bit – 2025 Update](/blog/microbit/2025-update)
+
+It's July and school's out in most of the world, so it's time for our annual MakeCode for the micro:bit update! As well as the 142 bugs that we fixed in this release, here's a rundown of the new features...
+
+**[Continue reading this blog post](/blog/microbit/2025-update)**
+
+## [Summer 2025 – MakeCode Professional Development](/blog/csp/summer-pd-2025)
+
+April showers bring May flowers. For many of us, we are on the home stretch of the academic year already! Which is a good time to start planning for summer training and professional development opportunities.
+
+**[Continue reading this blog post](/blog/csp/summer-pd-2025)**
+
+## [MakeCode Arcade 2025 Update](/blog/arcade/update-mar-2025)
+
+March 24th, 2025 by [Jaqster](https://github.com/jaqster)
+
+Wow, I can't believe it's been 2 years since we shipped an update to MakeCode Arcade! We had over 800 open issues and many pending features...
+
+**[Continue reading this blog post](/blog/arcade/update-mar-2025)**
+
 ## [Display shield extension/simulator for the micro:bit](/blog/microbit/display-shield)
 
 February 3, 2025 by [Thomas Ball](https://github.com/thomasjball)

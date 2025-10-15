@@ -151,7 +151,7 @@ interface Array<T> {
     reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number) => U, initialValue: U): U;
 
 
-    /** Remove the first occurence of an object. Returns true if removed. */
+    /** Remove the first occurrence of an object. Returns true if removed. */
     //% shim=Array_::removeElement weight=48
     removeElement(element: T): boolean;
 
@@ -260,7 +260,7 @@ declare interface String {
      * Returns a string that contains the concatenation of two or more strings.
      * @param other The string to append to the end of the string.
      */
-    //% shim=String_::concat
+    //% shim=String_::concat weight=49
     //% blockId="string_concat" blockNamespace="text"
     // block="join %list=text|%other"
     concat(other: string): string;
@@ -276,7 +276,7 @@ declare interface String {
     charAt(index: number): string;
 
     /** Returns the length of a String object. */
-    //% property shim=String_::length
+    //% property shim=String_::length weight=47
     //% blockId="text_length" block="length of %VALUE" blockBuiltin=true blockNamespace="text"
     length: number;
 
@@ -284,8 +284,10 @@ declare interface String {
      * Return the Unicode value of the character at the specified location.
      * @param index The zero-based index of the desired character. If there is no character at the specified index, NaN is returned.
      */
-    //% shim=String_::charCodeAt
-    //% advanced=true
+    //% shim=String_::charCodeAt weight=46
+    //% help=text/char-code-at
+    //% blockId="string_charcode_at" block="char code from $this=text|at $index" blockNamespace="text"
+    //% this.defl="this"
     charCodeAt(index: number): number;
 
     /**
@@ -295,7 +297,7 @@ declare interface String {
     //% shim=String_::compare
     //% help=text/compare
     //% blockId="string_compare" block="compare %this=text| to %that" blockNamespace="text"
-    //% advanced=true
+    //% this.defl="this"
     compare(that: string): number;
 
     /**
@@ -305,12 +307,16 @@ declare interface String {
      */
     //% helper=stringSubstr
     //% help=text/substr
-    //% blockId="string_substr" block="substring of %this=text|from %start|of length %length" blockNamespace="text"
-    //% advanced=true
+    //% blockId=string_substr_new
+    //% block="substring of $this|from $start||of length $length"
+    //% this.shadow="text"
+    //% this.defl="this"
+    //% blockNamespace="text"
+    //% expandArgumentsInToolbox
     substr(start: number, length?: number): string;
 
     /**
-     * Return the current string with the first occurence of toReplace
+     * Return the current string with the first occurrence of toReplace
      * replaced with the replacer
      * @param toReplace the substring to replace in the current string
      * @param replacer either the string that replaces toReplace in the current string,
@@ -320,7 +326,7 @@ declare interface String {
     replace(toReplace: string, replacer: string | ((sub: string) => string)): string;
 
     /**
-     * Return the current string with each occurence of toReplace
+     * Return the current string with each occurrence of toReplace
      * replaced with the replacer
      * @param toReplace the substring to replace in the current string
      * @param replacer either the string that replaces toReplace in the current string,
@@ -335,7 +341,6 @@ declare interface String {
      * @param end one-past-last character index
      */
     //% helper=stringSlice
-    //% advanced=true
     slice(start: number, end?: number): string;
 
     /** Returns a value indicating if the string is empty */
@@ -343,7 +348,7 @@ declare interface String {
     //% help=text/is-empty
     //% blockId="string_isempty" blockNamespace="text"
     //% block="%this=text| is empty"
-    //% advanced=true
+    //% this.defl="this"
     isEmpty(): boolean;
 
     /**
@@ -355,7 +360,7 @@ declare interface String {
     //% help=text/index-of
     //% blockId="string_indexof" blockNamespace="text"
     //% block="%this=text|find index of %searchValue"
-    //% advanced=true
+    //% this.defl="this"
     indexOf(searchValue: string, start?: number): number;
 
     /**
@@ -367,7 +372,7 @@ declare interface String {
     //% help=text/includes
     //% blockId="string_includes" blockNamespace="text"
     //% block="%this=text|includes %searchValue"
-    //% advanced=true
+    //% this.defl="this"
     includes(searchValue: string, start?: number): boolean;
 
     /**
@@ -379,7 +384,7 @@ declare interface String {
     //% help=text/split
     //% blockId="string_split" blockNamespace="text"
     //% block="split %this=text|at %separator"
-    //% advanced=true
+    //% this.defl="this"
     split(separator?: string, limit?: number): string[];
 
     /**
@@ -400,8 +405,20 @@ declare interface String {
      */
     //% helper=stringToLowerCase
     //% help=text/to-lower-case
-    //% advanced=true
     toLowerCase(): string;
+
+    /**
+     * Return a substring of the current string.
+     * @param start first character index; can be negative from counting from the end, eg:0
+     * @param length number of characters to extract, eg: 10
+     */
+    //% helper=stringSubstr
+    //% help=text/substr
+    //% blockId="string_substr" block="substring of %this=text|from %start|of length %length" blockNamespace="text"
+    //% this.defl="this"
+    //% blockAliasFor="String.substr"
+    //% deprecated
+    __substr(start: number, length?: number): string;
 
     [index: number]: string;
 }
@@ -414,7 +431,6 @@ declare interface String {
 //% help=text/parse-float
 //% blockId="string_parsefloat" block="parse to number %text" blockNamespace="text"
 //% text.defl="123"
-//% advanced=true
 declare function parseFloat(text: string): number;
 
 /**
@@ -469,7 +485,6 @@ declare namespace String {
     //% help=math/from-char-code
     //% shim=String_::fromCharCode weight=1
     //% blockNamespace="text" blockId="stringFromCharCode" block="text from char code %code"
-    //% advanced=true
     function fromCharCode(code: number): string;
 }
 

@@ -10,10 +10,6 @@ import { showModal } from "../transforms/showModal";
 import * as authClient from "../services/authClient";
 import { classList } from "react-common/components/util";
 
-const betaTag = () => {
-    return <div className={css["beta-tag"]}>{lf("Beta")}</div>;
-};
-
 interface HeaderBarProps { }
 
 export const HeaderBar: React.FC<HeaderBarProps> = () => {
@@ -127,6 +123,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
         const items: MenuItem[] = [];
         if (teacherTool.userProfile) {
             items.push({
+                role: "menuitem",
                 id: "signout",
                 title: lf("Sign Out"),
                 label: lf("Sign Out"),
@@ -183,8 +180,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
 
         if (privacyUrl) {
             items.push({
+                role: "link",
                 id: "privacy",
-                title: Strings.Privacy,
                 label: Strings.Privacy,
                 onClick: () => pxt.tickEvent(Ticks.PrivacyStatementClicked),
                 href: privacyUrl,
@@ -193,8 +190,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
 
         if (termsOfUseUrl) {
             items.push({
+                role: "link",
                 id: "termsOfUse",
-                title: Strings.TermsOfUse,
                 label: Strings.TermsOfUse,
                 onClick: () => pxt.tickEvent(Ticks.TermsOfUseClicked),
                 href: termsOfUseUrl,
@@ -216,11 +213,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
             <div className={css["centered-panel"]}>
                 <div className={classList(css["app-title"], "min-2md")}>
                     {Strings.AppTitle}
-                    {betaTag()}
                 </div>
                 <div className={classList(css["app-title"], "min-xs max-2md")}>
                     {Strings.AppTitleShort}
-                    {betaTag()}
                 </div>
             </div>
 

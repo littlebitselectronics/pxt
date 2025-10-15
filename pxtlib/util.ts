@@ -1088,6 +1088,40 @@ namespace ts.pxtc.Util {
         return new Promise(resolve => setTimeout(() => resolve(), ms))
     }
 
+    /**
+     * Utility function to run an action with exponential backoff until a condition is met or a timeout occurs.
+     * @param action - The main action to run.
+     * @param isComplete - A function that checks if the result of the action indicates completion.
+     * @param initialDelayMs - The starting delay to use between the initial attempt and any retry.
+     * @param maxDelayMs - The maximum delay between retries.
+     * @param timeoutMs - The total timeout for the operation.
+     * @param timeoutErrorMsg - The error message to throw if the operation times out.
+     * @param backoffFactor - The factor by which to increase the delay after each retry (default is 1.5).
+     */
+    export async function runWithBackoffAsync<T>(
+        action: () => Promise<T>,
+        isComplete: (result: T) => boolean,
+        initialDelayMs: number,
+        maxDelayMs: number,
+        timeoutMs: number,
+        timeoutErrorMsg: string,
+        backoffFactor: number = 1.5
+    ): Promise<T> {
+        let delay = initialDelayMs;
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < timeoutMs) {
+            const result = await action();
+            if (isComplete(result)) {
+                return result;
+            }
+            await pxt.Util.timeout(delay);
+            delay = Math.min(delay * backoffFactor, maxDelayMs);
+        }
+
+        throw new Error(timeoutErrorMsg);
+    }
+
     // node.js overrides this to use process.cpuUsage()
     export let cpuUs = (): number => {
         // current time in microseconds
@@ -1127,6 +1161,7 @@ namespace ts.pxtc.Util {
                 case "xml": return "application/xml";
                 case "m4a": return "audio/m4a";
                 case "mp3": return "audio/mp3";
+                case "wasm": return "application/wasm";
                 default: return "application/octet-stream";
             }
         else return "application/octet-stream";
@@ -1224,6 +1259,7 @@ namespace ts.pxtc.Util {
         "fr-CA": { englishName: "French (Canada)", localizedName: "Français (Canada)" },
         "ga-IE": { englishName: "Irish", localizedName: "Gaeilge" },
         "gl": { englishName: "Galician", localizedName: "galego" },
+        "gn": { englishName: "Guarani", localizedName: "Avañe'ẽ" },
         "gu-IN": { englishName: "Gujarati", localizedName: "ગુજરાતી" },
         "haw": { englishName: "Hawaiian", localizedName: "ʻŌlelo Hawaiʻi" },
         "hi": { englishName: "Hindi", localizedName: "हिन्दी" },
@@ -1854,6 +1890,121 @@ namespace ts.pxtc.Util {
         const isSupported = supportedExps?.includes(cleanedExpId) ?? false;
         return isSupported;
     }
+
+    export function ocvEnabled() {
+        return pxt.webConfig?.ocv?.appId && pxt.webConfig?.ocv?.iframeEndpoint;
+    }
+
+    // https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+    export function bresenhamLine(x0: number, y0: number, x1: number, y1: number, handler: (x: number, y: number) => void) {
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+
+        if (dx === 0) {
+            const startY = dy >= 0 ? y0 : y1;
+            const endY = dy >= 0 ? y1 : y0;
+            for (let y = startY; y <= endY; y++) {
+                handler(x0, y);
+            }
+            return;
+        }
+
+        const xStep = dx > 0 ? 1 : -1;
+        const yStep = dy > 0 ? 1 : -1;
+        const dErr = Math.abs(dy / dx);
+
+        let err = 0;
+        let y = y0;
+        for (let x = x0; xStep > 0 ? x <= x1 : x >= x1; x += xStep) {
+            handler(x, y);
+            err += dErr;
+            while (err >= 0.5) {
+                if (yStep > 0 ? y <= y1 : y >= y1) {
+                    handler(x, y);
+                }
+                y += yStep;
+                err -= 1;
+            }
+        }
+    }
+
+    /**
+     * Check if the specified feature is enabled for the user (based on pxtarget configuration and region).
+     */
+    export function isFeatureEnabled(featureKey: string): boolean {
+        const feature = pxt.appTarget.appTheme?.enabledFeatures?.[featureKey];
+        if (!feature) return false;
+
+        let enabled = true;
+        const regionNormalised = pxt.Cloud.getRegion() ? pxt.Cloud.getRegion().toUpperCase() : undefined;
+        if (feature.includeRegions) {
+            enabled = regionNormalised && feature.includeRegions.some(r => r.toUpperCase() == regionNormalised);
+        }
+
+        // Include and exclude shouldn't really be used together, but if they are, exclude takes precedence
+        if (enabled && feature.excludeRegions) {
+            enabled = regionNormalised && !feature.excludeRegions.some(r => r.toUpperCase() == regionNormalised);
+        }
+
+        return enabled;
+    }
+
+    /**
+     * Remove potentially sensitive info from the given data to avoid logging it.
+     * Currently only supports string data.
+     */
+    export function cleanData(data: string): string;
+    export function cleanData(data: pxt.Map<string | number>): pxt.Map<string | number>;
+    export function cleanData(data: any): any {
+        if (!data) return data;
+
+        let result: any;
+        if (typeof data === "string") {
+            result = removePropertiesWithPossibleUserInfo(data);
+        } else if (typeof data === "object") {
+            result = {};
+            for (const [key, value] of Object.entries(data)) {
+                result[key] = typeof value === "string" ? removePropertiesWithPossibleUserInfo(value) : value;
+            }
+        } else {
+            result = data;
+        }
+
+        return result;
+    }
+
+    /**
+     * Attempts to remove commonly leaked PII
+     * @param property The property which will be removed if it contains user data
+     * @returns The new value for the property
+     * 
+     * Taken from https://github.com/microsoft/vscode/blob/main/src/vs/platform/telemetry/common/telemetryUtils.ts
+     */
+    function removePropertiesWithPossibleUserInfo(property: string): string {
+        // If for some reason it is undefined we skip it (this shouldn't be possible);
+        if (!property) {
+            return property;
+        }
+
+        const userDataRegexes = [
+            { label: 'Google API Key', regex: /AIza[A-Za-z0-9_\\\-]{35}/ },
+            { label: 'Slack Token', regex: /xox[pbar]\-[A-Za-z0-9]/ },
+            { label: 'GitHub Token', regex: /(gh[psuro]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59})/ },
+            { label: 'Generic Secret', regex: /\b(token|signature|password|passwd|pwd|android:value)[^a-zA-Z0-9]{0,200}/i },
+            { label: 'CLI Credentials', regex: /((login|psexec|(certutil|psexec)\.exe).{1,50}(\s-u(ser(name)?)?\s+.{3,100})?\s-(admin|user|vm|root)?p(ass(word)?)?\s+["']?[^$\-\/\s]|(^|[\s\r\n\\])net(\.exe)?.{1,5}(user\s+|share\s+\/user:| user -? secrets ? set) \s + [^ $\s \/])/ },
+            { label: 'JWT Token', regex: /\beyJ[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+?\b/ },
+            { label: 'Email', regex: /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,63}\b/i }
+        ];
+
+        // Check for common user data in the telemetry events
+        for (const secretRegex of userDataRegexes) {
+            if (secretRegex.regex.test(property)) {
+                return `<REDACTED: ${secretRegex.label}>`;
+            }
+        }
+
+        return property;
+    }
 }
 
 namespace ts.pxtc.BrowserImpl {
@@ -2329,7 +2480,7 @@ namespace ts.pxtc.jsonPatch.tests {
         for (const test of tests) {
             pxt.log(test.comment);
             const patches = ts.pxtc.jsonPatch.diff(test.obja, test.objb);
-            if (deepEqual(patches, test.expected)) {
+            if (U.deepEqual(patches, test.expected)) {
                 pxt.log("succeeded");
             } else {
                 pxt.error("FAILED");
@@ -2395,7 +2546,7 @@ namespace ts.pxtc.jsonPatch.tests {
         for (const test of tests) {
             pxt.log(test.comment);
             ts.pxtc.jsonPatch.patchInPlace(test.obj, test.patches);
-            const equal = deepEqual(test.obj, test.expected);
+            const equal = U.deepEqual(test.obj, test.expected);
             const succeeded = equal && test.validate ? test.validate(test.obj) : true;
             if (succeeded) {
                 pxt.log("succeeded");
@@ -2406,37 +2557,4 @@ namespace ts.pxtc.jsonPatch.tests {
             }
         }
     }
-
-    function deepEqual(a: any, b: any): boolean {
-        if (a === b) { return true; }
-
-        if (a && b && typeof a === 'object' && typeof b === 'object') {
-            const arrA = Array.isArray(a);
-            const arrB = Array.isArray(b);
-
-            if (arrA && arrB) {
-                if (a.length !== b.length) { return false; }
-                for (let i = 0; i < a.length; ++i) {
-                    if (!deepEqual(a[i], b[i])) { return false; }
-                }
-                return true;
-            }
-
-            if (arrA !== arrB) { return false; }
-
-            const keysA = Object.keys(a);
-
-            if (keysA.length !== Object.keys(b).length) { return false; }
-
-            for (const key of keysA) {
-                if (!b.hasOwnProperty(key)) { return false; }
-                if (!deepEqual(a[key], b[key])) { return false; }
-            }
-
-            return true;
-        }
-
-        // True if both are NaN, false otherwise
-        return a !== a && b !== b;
-    };
 }

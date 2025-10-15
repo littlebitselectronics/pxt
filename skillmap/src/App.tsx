@@ -23,7 +23,10 @@ import {
     dispatchSetPageBannerImageUrl,
     dispatchSetPageTheme,
     dispatchSetUserPreferences,
-    dispatchCloseSelectLanguage
+    dispatchCloseSelectLanguage,
+    dispatchCloseSelectTheme,
+    dispatchShowFeedback,
+    dispatchCloseFeedback
 } from './actions/dispatch';
 import { PageSourceStatus, SkillMapState } from './store/reducer';
 import { HeaderBar } from './components/HeaderBar';
@@ -41,23 +44,27 @@ import { Unsubscribe } from 'redux';
 import { UserProfile } from './components/UserProfile';
 import { ReadyResources, ReadyPromise } from './lib/readyResources';
 import { LanguageSelector } from '../../react-common/components/language/LanguageSelector';
+import { ThemePickerModal } from '../../react-common/components/theming/ThemePickerModal';
 
 /* eslint-disable import/no-unassigned-import */
 import './App.css';
 
-// TODO: this file needs to read colors from the target
-import './arcade.css';
+import { ThemeManager } from 'react-common/components/theming/themeManager';
+import { FeedbackModal } from 'react-common/components/controls/Feedback/Feedback';
 
 /* eslint-enable import/no-unassigned-import */
 interface AppProps {
     skillMaps: { [key: string]: SkillMap };
     activityOpen: boolean;
     backgroundImageUrl: string;
+    pixelatedBackground?: boolean;
     theme: SkillGraphTheme;
     signedIn: boolean;
     activityId: string;
     highContrast?: boolean;
     showSelectLanguage: boolean;
+    showSelectTheme: boolean;
+    showFeedback: boolean;
     dispatchAddSkillMap: (map: SkillMap) => void;
     dispatchChangeSelectedItem: (mapId?: string, activityId?: string) => void;
     dispatchClearSkillMaps: () => void;
@@ -65,7 +72,7 @@ interface AppProps {
     dispatchSetPageTitle: (title: string) => void;
     dispatchSetPageDescription: (description: string) => void;
     dispatchSetPageInfoUrl: (infoUrl: string) => void;
-    dispatchSetPageBackgroundImageUrl: (backgroundImageUrl: string) => void;
+    dispatchSetPageBackgroundImageUrl: (backgroundImageUrl: string, pixelatedBackground?: boolean) => void;
     dispatchSetPageBannerImageUrl: (bannerImageUrl: string) => void;
     dispatchSetUser: (user: UserState) => void;
     dispatchSetPageSourceUrl: (url: string, status: PageSourceStatus) => void;
@@ -73,6 +80,9 @@ interface AppProps {
     dispatchSetPageTheme: (theme: SkillGraphTheme) => void;
     dispatchSetUserPreferences: (prefs: pxt.auth.UserPreferences) => void;
     dispatchCloseSelectLanguage: () => void;
+    dispatchCloseSelectTheme: () => void;
+    dispatchShowFeedback: () => void;
+    dispatchCloseFeedback: () => void;
 }
 
 interface AppState {
@@ -88,10 +98,12 @@ class AppImpl extends React.Component<AppProps, AppState> {
     protected unsubscribeChangeListener: Unsubscribe | undefined;
     protected loadedUser: UserState | undefined;
     protected readyPromise: ReadyPromise;
+    protected themeManager: ThemeManager;
 
     constructor(props: any) {
         super(props);
         this.changeLanguage = this.changeLanguage.bind(this);
+        this.changeTheme = this.changeTheme.bind(this);
 
         this.state = {
             cloudSyncCheckHasFinished: false,
@@ -101,6 +113,7 @@ class AppImpl extends React.Component<AppProps, AppState> {
 
         window.addEventListener("hashchange", this.handleHashChange);
         this.cloudSyncCheckAsync();
+        this.themeManager = ThemeManager.getInstance(document);
     }
 
     protected ready = (): Promise<ReadyResources> => this.readyPromise.promise();
@@ -216,13 +229,13 @@ class AppImpl extends React.Component<AppProps, AppState> {
                 }
 
                 if (metadata) {
-                    const { title, description, infoUrl, backgroundImageUrl,
+                    const { title, description, infoUrl, backgroundImageUrl, pixelatedBackground,
                         bannerImageUrl, theme, alternateSources } = metadata;
                     setPageTitle(title);
                     this.props.dispatchSetPageTitle(title);
                     if (description) this.props.dispatchSetPageDescription(description);
                     if (infoUrl) this.props.dispatchSetPageInfoUrl(infoUrl);
-                    if (backgroundImageUrl) this.props.dispatchSetPageBackgroundImageUrl(backgroundImageUrl);
+                    if (backgroundImageUrl) this.props.dispatchSetPageBackgroundImageUrl(backgroundImageUrl, pixelatedBackground);
                     if (bannerImageUrl) this.props.dispatchSetPageBannerImageUrl(bannerImageUrl);
                     if (alternateSources) this.props.dispatchSetPageAlternateUrls(alternateSources);
                     if (theme) this.props.dispatchSetPageTheme(theme);
@@ -349,6 +362,22 @@ class AppImpl extends React.Component<AppProps, AppState> {
         }
     }
 
+    protected async initColorThemeAsync() {
+        // Load theme colors
+        const prefThemeId = await authClient.getColorThemeIdAsync();
+        let initialTheme = this.props.highContrast
+            ? pxt.appTarget?.appTheme?.highContrastColorTheme
+            : (prefThemeId && this.themeManager.isKnownTheme(prefThemeId))
+                ? prefThemeId
+                : pxt.appTarget?.appTheme?.defaultColorTheme;
+
+        if (initialTheme) {
+            if (initialTheme !== this.themeManager.getCurrentColorTheme()?.id) {
+                this.themeManager.switchColorTheme(initialTheme);
+            }
+        }
+    }
+
     protected onMakeCodeFrameLoaded = async (sendMessageAsync: (message: any) => Promise<any>) => {
         this.readyPromise.setSendMessageAsync(sendMessageAsync);
     }
@@ -362,6 +391,7 @@ class AppImpl extends React.Component<AppProps, AppState> {
 
         await authClient.authCheckAsync();
         await this.initLocalizationAsync();
+        await this.initColorThemeAsync();
         await this.parseHashAsync();
         this.readyPromise.setAppMounted();
 
@@ -396,10 +426,18 @@ class AppImpl extends React.Component<AppProps, AppState> {
         authClient.setLanguagePreference(langId).then(() => location.reload());
     }
 
+    changeTheme(theme: pxt.ColorThemeInfo) {
+        pxt.tickEvent(`skillmap.menu.theme.changetheme`, { theme: theme.id });
+        this.themeManager.switchColorTheme(theme.id);
+        authClient.setColorThemeIdAsync(theme.id);
+    }
+
     render() {
-        const { skillMaps, activityOpen, backgroundImageUrl, theme } = this.props;
+        const { skillMaps, activityOpen, backgroundImageUrl, theme, pixelatedBackground } = this.props;
         const { error, showingSyncLoader, forcelang } = this.state;
         const maps = Object.keys(skillMaps).map((id: string) => skillMaps[id]);
+        const feedbackEnabled = pxt.U.ocvEnabled();
+
         return (<div className={`app-container ${pxt.appTarget.id}`}>
                 <HeaderBar />
                 {showingSyncLoader && <div className={"makecode-frame-loader"}>
@@ -409,7 +447,7 @@ class AppImpl extends React.Component<AppProps, AppState> {
                 <div className={`skill-map-container ${activityOpen ? "hidden" : ""}`} style={{ backgroundColor: theme.backgroundColor }}>
                     { error
                         ? <div className="skill-map-error">{error}</div>
-                        : <SkillGraphContainer maps={maps} backgroundImageUrl={backgroundImageUrl} backgroundColor={theme.backgroundColor} strokeColor={theme.strokeColor} />
+                        : <SkillGraphContainer maps={maps} backgroundImageUrl={backgroundImageUrl} backgroundColor={theme.backgroundColor} pixelatedBackground={pixelatedBackground} strokeColor={theme.strokeColor} />
                     }
                     { !error && <InfoPanel onFocusEscape={this.focusCurrentActivity} />}
                 </div>
@@ -420,6 +458,8 @@ class AppImpl extends React.Component<AppProps, AppState> {
                     onLanguageChanged={this.changeLanguage}
                     onClose={this.props.dispatchCloseSelectLanguage}
                 />}
+                {this.props.showSelectTheme && this.themeManager && <ThemePickerModal themes={this.themeManager.getAllColorThemes()} onThemeClicked={this.changeTheme} onClose={this.props.dispatchCloseSelectTheme} />}
+                { feedbackEnabled && this.props.showFeedback && <FeedbackModal kind="rating" onClose={this.props.dispatchCloseFeedback} />}
             </div>);
     }
 
@@ -529,11 +569,15 @@ function mapStateToProps(state: SkillMapState, ownProps: any) {
         skillMaps: state.maps,
         activityOpen: !!state.editorView,
         backgroundImageUrl: state.backgroundImageUrl,
+        pixelatedBackground: state.pixelatedBackground,
         theme: state.theme,
         signedIn: state.auth.signedIn,
         activityId: state.selectedItem?.activityId,
         highContrast: state.auth.preferences?.highContrast,
-        showSelectLanguage: state.showSelectLanguage
+        showSelectLanguage: state.showSelectLanguage,
+        showSelectTheme: state.showSelectTheme,
+        colorThemeId: state.colorThemeId,
+        showFeedback: state.showFeedback,
     };
 }
 interface LocalizationUpdateOptions {
@@ -579,7 +623,10 @@ const mapDispatchToProps = {
     dispatchSetPageTheme,
     dispatchSetUserPreferences,
     dispatchChangeSelectedItem,
-    dispatchCloseSelectLanguage
+    dispatchCloseSelectLanguage,
+    dispatchCloseSelectTheme,
+    dispatchShowFeedback,
+    dispatchCloseFeedback,
 };
 
 const App = connect(mapStateToProps, mapDispatchToProps)(AppImpl);

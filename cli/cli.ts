@@ -14,6 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as child_process from 'child_process';
 import { promisify } from "util";
+const chalk = require('chalk');
 
 import U = pxt.Util;
 import Cloud = pxt.Cloud;
@@ -384,44 +385,42 @@ function pxtFileList(pref: string) {
 }
 
 function checkIfTaggedCommitAsync() {
-    let currentCommit: string;
-
-    return nodeutil.gitInfoAsync(["rev-parse", "HEAD"])
+    return nodeutil.gitInfoAsync(["tag", "--points-at", "HEAD"])
         .then(info => {
-            currentCommit = info.trim();
-            return nodeutil.gitInfoAsync(["ls-remote", "--tags"], undefined, true)
-        })
-        .then(info => {
-            const tagCommits = info.split("\n")
-                .map(line => {
-                    const match = /^([a-fA-F0-9]+)\s+refs\/tags\/v\d+\.\d+\.\d+\^\{\}$/.exec(line);
-                    return match && match[1]
-                });
-
-            return tagCommits.some(t => t === currentCommit)
+            return info
+                .split("\n")
+                .some(tag => /^v\d+\.\d+\.\d+$/.test(tag.trim()));
         });
 }
 
 let readJson = nodeutil.readJson;
 
-async function ciAsync() {
+async function ciAsync(parsed?: commandParser.ParsedCommand) {
+    const intentToPublish = parsed && parsed.flags["publish"];
+    const tagOverride = parsed && parsed.flags["tag"] as string;
     forceCloudBuild = true;
-    const buildInfo = ciBuildInfo();
+    const buildInfo = await ciBuildInfoAsync();
     pxt.log(`ci build using ${buildInfo.ci}`);
     if (!buildInfo.tag)
         buildInfo.tag = "";
     if (!buildInfo.branch)
         buildInfo.branch = "local"
 
-    const { tag, branch, pullRequest } = buildInfo
+    let { tag, branch, pullRequest } = buildInfo
+    if (tagOverride) {
+        tag = tagOverride;
+        pxt.log(`overriding tag to ${tag}`);
+    }
     const atok = process.env.NPM_ACCESS_TOKEN
-    const npmPublish = /^v\d+\.\d+\.\d+$/.exec(tag) && atok;
+    const npmPublish = (intentToPublish || /^v\d+\.\d+\.\d+$/.exec(tag)) && atok;
 
     if (npmPublish) {
         let npmrc = path.join(process.env.HOME, ".npmrc")
-        pxt.log(`setting up ${npmrc}`)
+        pxt.log(`setting up ${npmrc} for publish`)
         let cfg = "//registry.npmjs.org/:_authToken=" + atok + "\n"
         fs.writeFileSync(npmrc, cfg)
+    } else if (intentToPublish) {
+        pxt.log("not publishing, no tag or access token")
     }
 
     process.env["PXT_ENV"] = "production";
@@ -461,7 +460,7 @@ async function ciAsync() {
         const isTaggedCommit = await checkIfTaggedCommitAsync();
         pxt.log(`is tagged commit: ${isTaggedCommit}`);
         await npmPublishAsync();
-        if (branch === "master" && isTaggedCommit) {
+        if (branch === "master" && (intentToPublish || isTaggedCommit)) {
             if (uploadDocs) {
                 await buildWebStringsAsync();
                 await crowdin.uploadBuiltStringsAsync("built/webstrings.json");
@@ -582,22 +581,17 @@ function updateAsync() {
         .then(() => nodeutil.runNpmAsync("install"));
 }
 
-function justBumpPkgAsync() {
+async function justBumpPkgAsync(bumpType: "patch" | "major" | "minor" | string, tagCommit: boolean = true): Promise<string> {
     ensurePkgDir()
-    return nodeutil.needsGitCleanAsync()
-        .then(() => mainPkg.loadAsync())
-        .then(() => {
-            let v = pxt.semver.parse(mainPkg.config.version)
-            v.patch++
-            return queryAsync("New version", pxt.semver.stringify(v))
-        })
-        .then(nv => {
-            let v = pxt.semver.parse(nv)
-            mainPkg.config.version = pxt.semver.stringify(v)
-            mainPkg.saveConfig()
-        })
-        .then(() => nodeutil.runGitAsync("commit", "-a", "-m", mainPkg.config.version))
-        .then(() => nodeutil.runGitAsync("tag", "v" + mainPkg.config.version))
+    await nodeutil.needsGitCleanAsync();
+    await mainPkg.loadAsync();
+    const curVer = pxt.semver.parse(mainPkg.config.version);
+    const newVer = pxt.semver.bump(curVer, bumpType);
+    mainPkg.config.version = await queryAsync("New version", pxt.semver.stringify(newVer));
+    mainPkg.saveConfig();
+    await nodeutil.runGitAsync("commit", "-a", "-m", mainPkg.config.version);
+    if (tagCommit) { await nodeutil.runGitAsync("tag", "v" + mainPkg.config.version); }
+    return mainPkg.config.version;
 }
 
 function tagReleaseAsync(parsed: commandParser.ParsedCommand) {
@@ -644,28 +638,112 @@ function tagReleaseAsync(parsed: commandParser.ParsedCommand) {
         })
 }
 
-function bumpAsync(parsed?: commandParser.ParsedCommand) {
+async function bumpAsync(parsed?: commandParser.ParsedCommand) {
     const bumpPxt = parsed && parsed.flags["update"];
     const upload = parsed && parsed.flags["upload"];
-    if (fs.existsSync(pxt.CONFIG_NAME)) {
-        if (upload) throw U.userError("upload only supported on targets");
+    let pr = parsed && parsed.flags["pr"];
+    let nopr = parsed && parsed.flags["nopr"];
+    let bumpType = parsed && parsed.flags["version"] as string;
+    if (!bumpType) bumpType = "patch";
+    if (bumpType.startsWith("v")) bumpType = bumpType.slice(1);
 
-        return Promise.resolve()
-            .then(() => nodeutil.runGitAsync("pull"))
-            .then(() => justBumpPkgAsync())
-            .then(() => nodeutil.runGitAsync("push", "--tags"))
-            .then(() => nodeutil.runGitAsync("push"))
+    let currBranchName = "";
+    let token = "";
+    let user = "";
+    let owner = "";
+    let repo = "";
+    let branchProtected = false;
+
+    try {
+        currBranchName = await nodeutil.getCurrentBranchNameAsync();
+        token = await nodeutil.getGitHubTokenAsync();
+        user = await nodeutil.getGitHubUserAsync(token);
+        ({ owner, repo } = await nodeutil.getGitHubOwnerAndRepoAsync());
+        branchProtected = await nodeutil.isBranchProtectedAsync(token, owner, repo, currBranchName);
+        if (branchProtected) {
+            console.log(chalk.yellow(`Branch ${currBranchName} is protected.`));
+            pr = true;
+        }
+    } catch (e) {
+        console.warn(chalk.yellow("Unable to determine branch protection status."), e.message);
+    }
+
+    if (nopr) {
+        pr = false;
+    }
+
+    if (fs.existsSync(pxt.CONFIG_NAME)) {
+        if (upload) {
+            U.userError("upload only supported on targets");
+        }
+
+        if (pr) {
+            console.log("Bumping via pull request.");
+            const newBranchName = `${user}/pxt-bump-${nodeutil.timestamp()}`;
+            return Promise.resolve()
+                .then(() => nodeutil.needsGitCleanAsync())
+                .then(() => nodeutil.runGitAsync("pull"))
+                .then(() => nodeutil.createBranchAsync(newBranchName))
+                .then(() => justBumpPkgAsync(bumpType, false)) // don't tag when creating a PR
+                .then((version) => nodeutil.gitPushAsync().then(() => version))
+                .then((version) => nodeutil.createPullRequestAsync({
+                    title: `[pxt-cli] bump version to ${version}`,
+                    body:   "__Do not edit the PR title.__\n" +
+                            "It was automatically generated by `pxt bump` and must follow a specific pattern.\n" +
+                            "GitHub workflows rely on it to trigger version tagging and publishing to npm.",
+                    head: newBranchName,
+                    base: currBranchName,
+                    token,
+                    owner,
+                    repo,
+                }))
+                .then((prUrl) => nodeutil.switchBranchAsync(currBranchName).then(() => prUrl))
+                .then((prUrl) => console.log(`${chalk.green('PR created:')} ${chalk.green.underline(prUrl)}`))
+        } else {
+            console.log("Bumping via direct push.");
+            return Promise.resolve()
+                .then(() => nodeutil.runGitAsync("pull"))
+                .then(() => justBumpPkgAsync(bumpType))
+                .then(() => nodeutil.runGitAsync("push", "--follow-tags"))
+                .then(() => nodeutil.runGitAsync("push"))
+        }
     }
     else if (fs.existsSync("pxtarget.json"))
-        return Promise.resolve()
-            .then(() => nodeutil.runGitAsync("pull"))
-            .then(() => bumpPxt ? bumpPxtCoreDepAsync().then(() => nodeutil.runGitAsync("push")) : Promise.resolve())
-            .then(() => nodeutil.runNpmAsync("version", "patch"))
-            .then(() => nodeutil.runGitAsync("push", "--tags"))
-            .then(() => nodeutil.runGitAsync("push"))
-            .then(() => upload ? uploadTaggedTargetAsync() : Promise.resolve())
+        if (pr) {
+            console.log("Bumping via pull request.");
+            const newBranchName = `${user}/pxt-bump-${nodeutil.timestamp()}`;
+            return Promise.resolve()
+                .then(() => nodeutil.needsGitCleanAsync())
+                .then(() => nodeutil.runGitAsync("pull"))
+                .then(() => nodeutil.createBranchAsync(newBranchName))
+                .then(() => bumpPxt ? bumpPxtCoreDepAsync() : Promise.resolve())
+                .then(() => nodeutil.npmVersionBumpAsync(bumpType, false)) // don't tag when creating a PR
+                .then((version) => nodeutil.gitPushAsync().then(() => version))
+                .then((version) => nodeutil.createPullRequestAsync({
+                    title: `[pxt-cli] bump version to ${version}`,
+                    body:   "__Do not edit the PR title.__\n" +
+                            "It was automatically generated by `pxt bump` and must follow a specific pattern.\n" +
+                            "GitHub workflows rely on it to trigger version tagging and publishing to npm.",
+                    head: newBranchName,
+                    base: currBranchName,
+                    token,
+                    owner,
+                    repo,
+                }))
+                .then((prUrl) => nodeutil.switchBranchAsync(currBranchName).then(() => prUrl))
+                .then((prUrl) => console.log(`${chalk.green('PR created:')} ${chalk.green.underline(prUrl)}`))
+        } else {
+            console.log("Bumping via direct push.");
+            return Promise.resolve()
+                .then(() => nodeutil.runGitAsync("pull"))
+                .then(() => bumpPxt ? bumpPxtCoreDepAsync().then(() => nodeutil.runGitAsync("push")) : Promise.resolve())
+                .then(() => nodeutil.runNpmAsync("version", bumpType))
+                .then(() => nodeutil.runGitAsync("push", "--follow-tags"))
+                .then(() => nodeutil.runGitAsync("push"))
+                .then(() => upload ? uploadTaggedTargetAsync() : Promise.resolve())
+        }
     else {
-        throw U.userError("Couldn't find package or target JSON file; nothing to bump")
+        U.userError("Couldn't find package or target JSON file; nothing to bump")
     }
 }
 
@@ -686,11 +764,11 @@ function uploadTaggedTargetAsync() {
             internalBuildTargetAsync()
                 .then(() => internalCheckDocsAsync(true))
                 .then(() => info))
-        .then(info => {
+        .then(async info => {
             const repoSlug = "microsoft/pxt-" + pxt.appTarget.id
             setCiBuildInfo(info[0], info[1], info[2], repoSlug)
             process.env['PXT_RELEASE_REPO'] = "https://git:" + pxt.github.token + "@github.com/" + repoSlug + "-built"
-            let v = pkgVersion()
+            let v = await pkgVersionAsync()
             pxt.log("uploading " + v)
             return uploadCoreAsync({
                 label: "v" + v,
@@ -702,9 +780,9 @@ function uploadTaggedTargetAsync() {
         })
 }
 
-function pkgVersion() {
+async function pkgVersionAsync() {
     let ver = readJson("package.json")["version"]
-    const info = ciBuildInfo()
+    const info = await ciBuildInfoAsync()
     if (!info.tag)
         ver += "-" + (info.commit ? info.commit.slice(0, 6) : "local")
     return ver
@@ -719,11 +797,11 @@ function targetFileList() {
     return lst;
 }
 
-function uploadTargetAsync(label: string) {
+async function uploadTargetAsync(label: string) {
     return uploadCoreAsync({
         label,
         fileList: pxtFileList("node_modules/pxt-core/").concat(targetFileList()),
-        pkgversion: pkgVersion(),
+        pkgversion: await pkgVersionAsync(),
         fileContent: {}
     })
 }
@@ -813,7 +891,7 @@ function gitUploadAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
                         console.log(r.filename + ": OK," + r.size + " " + r.hash)
                     }))
         })
-        .then(() => {
+        .then(async () => {
             let roottree: Map<GitEntry> = {}
             let get = (tree: GitTree, path: string): GitEntry => {
                 let subt = U.lookup(tree, path)
@@ -836,7 +914,7 @@ function gitUploadAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
                 let e = lookup(roottree, fn)
                 e.hash = uplReqs[fn].hash
             }
-            const info = ciBuildInfo()
+            const info = await ciBuildInfoAsync()
             let data: CommitInfo = {
                 message: "Upload from " + info.commitUrl,
                 parents: [],
@@ -852,7 +930,7 @@ function gitUploadAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
         })
 }
 
-function uploadToGitRepoAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
+async function uploadToGitRepoAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
     let label = opts.label
     if (!label) {
         console.log('no label; skip release upload');
@@ -909,7 +987,7 @@ function uploadToGitRepoAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
         cwd: trgPath,
         args: cred.concat(args)
     })
-    const info = ciBuildInfo()
+    const info = await ciBuildInfoAsync()
     return Promise.resolve()
         .then(() => {
             if (fs.existsSync(trgPath)) {
@@ -917,7 +995,7 @@ function uploadToGitRepoAsync(opts: UploadOptions, uplReqs: Map<BlobReq>) {
                 if (cfg.indexOf("url = " + repoUrl) > 0) {
                     return gitAsync(["pull", "--depth=3"])
                 } else {
-                    throw U.userError(trgPath + " already exists; please remove it")
+                    U.userError(trgPath + " already exists; please remove it")
                 }
             } else {
                 return nodeutil.spawnAsync({
@@ -1267,8 +1345,9 @@ function uploadCoreAsync(opts: UploadOptions) {
 
     // check size
     const maxSize = checkFileSize(opts.fileList);
-    if (maxSize > 30000000) // 30Mb max
-        U.userError(`file too big for upload`);
+    const maxAllowedFileSize = (pxt.appTarget.cloud.maxFileSize || (30000000)); // default to 30Mb
+    if (maxSize > maxAllowedFileSize)
+        U.userError(`file too big for upload: ${maxSize} bytes, max is ${maxAllowedFileSize} bytes`);
     pxt.log('');
 
     if (opts.localDir)
@@ -1642,9 +1721,9 @@ function isLocalBuild() {
     return !(isTravis() || isGithubAction() || isAzurePipelines());
 }
 
-function ciBuildInfo(): CiBuildInfo {
+async function ciBuildInfoAsync(): Promise<CiBuildInfo> {
     if (isTravis()) return travisInfo();
-    else if (isGithubAction()) return githubActionInfo();
+    else if (isGithubAction()) return await githubActionInfoAsync();
     else if (isAzurePipelines()) return travisInfo(); // azure pipelines uses same info
     else {
         // local build
@@ -1672,7 +1751,7 @@ function ciBuildInfo(): CiBuildInfo {
         }
     }
 
-    function githubActionInfo(): CiBuildInfo {
+    async function githubActionInfoAsync(): Promise<CiBuildInfo> {
         // https://help.github.com/en/actions/automating-your-workflow-with-github-actions/using-environment-variables#default-environment-variables
         const repoSlug = process.env.GITHUB_REPOSITORY;
         const commit = process.env.GITHUB_SHA;
@@ -1680,9 +1759,10 @@ function ciBuildInfo(): CiBuildInfo {
         // branch build refs/heads/...
         // tag build res/tags/...
         const branch = ref.replace(/^refs\/(heads|tags)\//, '');
-        const tag = /^refs\/tags\//.test(ref) ? branch : undefined;
-        const eventName = process.env.GITHUB_EVENT_NAME;
+        const isTagPush = /^refs\/tags\//.test(ref);
+        const tag = isTagPush ? branch : await nodeutil.getLocalTagPointingAtHeadAsync();
 
+        const eventName = process.env.GITHUB_EVENT_NAME;
         pxt.log(`event name: ${eventName}`);
 
         // PR: not on master or not a release number
@@ -1830,11 +1910,29 @@ function saveThemeJson(cfg: pxt.TargetBundle, localDir?: boolean, packaged?: boo
             if (extraType.label) {
                 targetStrings[`{id:type}${extraType.label}`] = extraType.label;
             }
+            else {
+                targetStrings[`{id:type}${extraType.typeName}`] = extraType.typeName;
+            }
 
             if (extraType.defaultName) {
                 targetStrings[`{id:var}${extraType.defaultName}`] = extraType.defaultName;
             }
         });
+    }
+
+    if (typeof cfg.appTheme?.assetEditor === "object") {
+        for (const key of Object.keys(cfg.appTheme.assetEditor)) {
+            const entry = cfg.appTheme.assetEditor[key];
+            if (typeof entry === "object" && entry.label) {
+                targetStrings[`{id:assetType}${entry.label}`] = entry.label;
+            }
+        }
+    }
+
+    if (cfg.appTheme?.pxtJsonOptions?.length) {
+        for (const option of cfg.appTheme.pxtJsonOptions) {
+            targetStrings[`{id:setting}${option.label}`] = option.label;
+        }
     }
 
     // walk options in pxt.json
@@ -1946,6 +2044,18 @@ ${gcards.map(gcard => `[${gcard.name}](${gcard.url})`).join(',\n')}
                 targetStrings[`{id:hardware-description}${opt.description}`] = opt.description;
         }
     }
+
+    const themeFiles = getThemeFilePaths();
+    for(const themePath of themeFiles) {
+        if (nodeutil.fileExistsSync(themePath)) {
+            const theme = nodeutil.readJson(themePath);
+            const name = theme["name"];
+            if (name) {
+                targetStrings[`{id:color-theme-name}${name}`] = name;
+            }
+        }
+    }
+
     // extract strings from editor
     ["editor", "fieldeditors", "cmds"]
         .filter(d => nodeutil.existsDirSync(d))
@@ -2153,6 +2263,7 @@ function buildReactAppAsync(app: string, parsed: commandParser.ParsedCommand, op
             if (!opts.expandedPxtTarget) {
                 // read pxtarget.json, save into 'pxtTargetBundle' global variable
                 let cfg = readLocalPxTarget();
+                updateColorThemes(cfg);
                 nodeutil.writeFileSync(`${appRoot}/public/blb/target.js`, "// eslint-disable-next-line \n" + targetJsPrefix + JSON.stringify(cfg));
             } else {
                 nodeutil.cp("built/target.js", `${appRoot}/public/blb`);
@@ -2169,6 +2280,7 @@ function buildReactAppAsync(app: string, parsed: commandParser.ParsedCommand, op
 
             nodeutil.cp("targetconfig.json", `${appRoot}/public/blb`);
             nodeutil.cp("node_modules/pxt-core/built/pxtlib.js", `${appRoot}/public/blb`);
+            nodeutil.cp("node_modules/pxt-core/built/web/pxtrcdeps.js", `${appRoot}/public/blb`);
             if (opts.includePxtSim) {
                 nodeutil.cp("node_modules/pxt-core/built/pxtsim.js", `${appRoot}/public/blb`);
                 nodeutil.cp("node_modules/pxt-core/built/web/worker.js", `${appRoot}/public/blb`);
@@ -2282,6 +2394,75 @@ function updateTOC(cfg: pxt.TargetBundle) {
     }
 }
 
+function getThemeFilePaths() {
+    const sharedThemeFiles = fs.existsSync("node_modules/pxt-core/theme/color-themes")
+    ? nodeutil
+          .allFiles("node_modules/pxt-core/theme/color-themes", { maxDepth: 1, includeDirs: false })
+          .filter((f) => /\.json$/i.test(f))
+    : [];
+
+    const targetThemeFiles = fs.existsSync("theme/color-themes")
+        ? nodeutil
+            .allFiles("theme/color-themes", { maxDepth: 1, includeDirs: false })
+            .filter((f) => /\.json$/i.test(f))
+        : [];
+
+    // Target takes precedence, so include those at the end (will overwrite shared themes)
+    return sharedThemeFiles.concat(targetThemeFiles);
+}
+
+function updateColorThemes(cfg: pxt.TargetBundle) {
+    pxt.log("Loading color themes...");
+    const themeFiles = getThemeFilePaths();
+
+    for (const themeFile of themeFiles) {
+        const themeFileDir = path.dirname(themeFile);
+        const fileData = fs.readFileSync(themeFile, "utf8");
+        const themeData = JSON.parse(fileData);
+        const theme: pxt.ColorThemeInfo = {
+            id: themeData.id,
+            name: themeData.name,
+            weight: themeData.weight,
+            monacoBaseTheme: themeData.monacoBaseTheme,
+            colors: themeData.colors
+        };
+
+        for (const overrideFile of themeData.overrideFiles ?? []) {
+            if (!overrideFile) {
+                // Skip empty entries
+                continue;
+            }
+
+            // Strip leading slashes, convert \ to /, and lowercase the path
+            const combinedPath = path.join(themeFileDir, overrideFile);
+            let cssText = fs.readFileSync(combinedPath, "utf8");
+            theme.overrideCss = theme.overrideCss ? `${theme.overrideCss}\n${cssText}` : cssText;
+        }
+
+        if (!cfg.colorThemeMap) {
+            cfg.colorThemeMap = {};
+        }
+
+        if (cfg.colorThemeMap[theme.id]) {
+            // Only overwrite specified fields
+            // This allows target themes to be built off of shared base themes and only specify certain changes.
+            const existingTheme = cfg.colorThemeMap[theme.id];
+            cfg.colorThemeMap[theme.id] = {
+                ...existingTheme,
+                ...theme,
+                colors: {
+                    ...existingTheme.colors,
+                    ...theme.colors
+                }
+            };
+        } else {
+            cfg.colorThemeMap[theme.id] = theme;
+        }
+
+        pxt.log(`Loaded theme ${theme.id}`);
+    }
+}
+
 function rebundleAsync() {
     return buildTargetCoreAsync({ quick: true })
         .then(() => buildSimAsync());
@@ -2355,6 +2536,7 @@ async function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
     let cfg = readLocalPxTarget()
     updateDefaultProjects(cfg);
     updateTOC(cfg);
+    updateColorThemes(cfg);
 
     cfg.bundledpkgs = {}
     pxt.setAppTarget(cfg);
@@ -2381,7 +2563,7 @@ async function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
     const hexCachePath = path.resolve(process.cwd(), "built", "hexcache");
     nodeutil.mkdirP(hexCachePath);
 
-    pxt.log(`building target.json in ${process.cwd()}...`)
+    pxt.log(`building target.json in ${process.cwd()}...`);
 
     let builtInfo: pxt.Map<pxt.PackageApiInfo> = {};
 
@@ -2394,7 +2576,7 @@ async function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
 
     await buildWebStringsAsync();
     if (!options.quick) await internalGenDocsAsync(false, true)
-    if (pxt.appTarget.cacheusedblocksdirs) cfg.tutorialInfo = await internalCacheUsedBlocksAsync();
+    if (pxt.appTarget.cacheusedblocksdirs && !options.quick) cfg.tutorialInfo = await internalCacheUsedBlocksAsync();
 
     await forEachBundledPkgAsync(async (pkg, dirname) => {
         pxt.log(`building bundled ${dirname}`);
@@ -2551,7 +2733,7 @@ async function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
     const compressedBuiltInfo = compressApiInfo(builtInfo);
     cfg.apiInfo = compressedBuiltInfo;
 
-    const info = ciBuildInfo()
+    const info = await ciBuildInfoAsync()
     cfg.versions = {
         branch: info.branch,
         tag: info.tag,
@@ -2579,6 +2761,7 @@ async function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
         delete targetlight.compile.compilerExtension;
     const targetlightjson = nodeutil.stringify(targetlight);
     nodeutil.writeFileSync("built/targetlight.json", targetlightjson)
+    nodeutil.writeFileSync("built/targetlight.js", targetJsPrefix + targetlightjson)
     nodeutil.writeFileSync("built/sim.webmanifest", nodeutil.stringify(webmanifest))
 
     console.log("target.json built.");
@@ -2963,17 +3146,17 @@ class SnippetHost implements pxt.Host {
 
         if (module.id === "this") {
             if (filename === "pxt-core.d.ts") {
-                const contents = fs.readFileSync(path.join(this.getRepoDir(), "libs", "pxt-common", "pxt-core.d.ts"), 'utf8');
+                const contents = fs.readFileSync(path.join(this.getPxtRepoDir(), "libs", "pxt-common", "pxt-core.d.ts"), 'utf8');
                 this.writeFile(module, filename, contents);
                 return contents;
             }
             else if (filename === "pxt-helpers.ts") {
-                const contents = fs.readFileSync(path.resolve(this.getRepoDir(), "libs", "pxt-common", "pxt-helpers.ts"), 'utf8');
+                const contents = fs.readFileSync(path.resolve(this.getPxtRepoDir(), "libs", "pxt-common", "pxt-helpers.ts"), 'utf8');
                 this.writeFile(module, filename, contents);
                 return contents;
             }
             else if (filename === "pxt-python.d.ts" || filename === "pxt-python-helpers.ts") {
-                const contents = fs.readFileSync(path.resolve(this.getRepoDir(), "libs", "pxt-python", filename), 'utf8');
+                const contents = fs.readFileSync(path.resolve(this.getPxtRepoDir(), "libs", "pxt-python", filename), 'utf8');
                 this.writeFile(module, filename, contents);
                 return contents;
             }
@@ -2983,10 +3166,16 @@ class SnippetHost implements pxt.Host {
         return null;
     }
 
-    private getRepoDir() {
+    private getPxtRepoDir() {
         const cwd = process.cwd();
-        const i = cwd.lastIndexOf(path.sep + "pxt" + path.sep);
-        return cwd.substr(0, i + 5);
+        let p = path.parse(cwd);
+        while (p.base) {
+            if (p.base === "pxt") {
+                return path.format(p);
+            }
+            p = path.parse(p.dir);
+        }
+        return path.join(cwd, "node_modules", "pxt-core");
     }
 
     writeFile(module: pxt.Package, filename: string, contents: string) {
@@ -4045,7 +4234,7 @@ function copyCommonFiles() {
 
 function getCachedAsync(url: string, path: string) {
     return (readFileAsync(path, "utf8") as Promise<string>)
-        .then(v => v, (e: any) => {
+        .then(v => v, (e: any): any => {
             //console.log(`^^^ fetch ${id} ${Date.now() - start}ms`)
             return null
         })
@@ -4167,7 +4356,7 @@ function testDirAsync(parsed: commandParser.ParsedCommand) {
         } else {
             let start = Date.now()
             if (currBase != ti.base) {
-                throw U.userError("Base directory: " + ti.base + " not found.")
+                U.userError("Base directory: " + ti.base + " not found.")
             } else {
                 let tsf = findTestFile()
                 let files = mainPkg.config.files
@@ -4883,7 +5072,7 @@ function buildCoreAsync(buildOpts: BuildCoreOptions): Promise<pxtc.CompileResult
                 console.log(compileResult.times)
 
             switch (buildOpts.mode) {
-                case BuildOption.GenDocs:
+                case BuildOption.GenDocs: {
                     const apiInfo = pxtc.getApiInfo(res.ast, compileOptions.jres)
                     // keeps apis from this module only
                     for (const infok in apiInfo.byQName) {
@@ -4914,6 +5103,7 @@ function buildCoreAsync(buildOpts: BuildCoreOptions): Promise<pxtc.CompileResult
                         }
                     }
                     return null
+                }
                 case BuildOption.Deploy:
                     if (pxt.commands.hasDeployFn())
                         return pxt.commands.deployAsync(res)
@@ -5583,6 +5773,85 @@ export async function buildShareSimJsAsync(parsed: commandParser.ParsedCommand) 
     console.log(`saved prebuilt ${id} to ${outputLocation}`);
 }
 
+export async function buildCoreDeclarationFiles(parsed: commandParser.ParsedCommand) {
+    const shareId = (parsed && parsed.flags["shareid"] as string)?.trim();
+    const writeCombined = !!(parsed && parsed.flags["combined"]);
+    const writeIndex = !!(parsed && parsed.flags["index"]);
+
+    console.log(shareId ? `Building .d.ts for ${shareId}` : `Building .d.ts for blocksprj`);
+    const cwd = process.cwd();
+    const builtFolder = path.join(cwd, "temp", shareId ? `${shareId}dts` : "dts");
+    nodeutil.mkdirP(builtFolder);
+    process.chdir(cwd);
+
+    const host = shareId ? new Host() : new SnippetHost("decl-build", { "main.ts" : "" }, { "blocksprj": "*" });
+    const mainPkg = new pxt.MainPackage(host);
+
+    if (shareId) {
+        mainPkg._verspec = `pub:${shareId}`;
+        await mainPkg.host().downloadPackageAsync(mainPkg);
+    }
+
+    console.log("installing")
+    await mainPkg.installAllAsync();
+    console.log("installed")
+    const opts = await mainPkg.getCompileOptionsAsync();
+    console.log("created compiler options")
+    opts.tsCompileOptions = opts.tsCompileOptions ?? {};
+    opts.tsCompileOptions.declaration = true;
+    opts.tsCompileOptions.emitBlockCommentsAsJsDocs = true;
+    await rimrafAsync(builtFolder, {});
+
+    const tsProg = pxtc.getTSProgram(opts);
+    console.log("compiled")
+
+    let combined = ""
+    const writeDts = (fileName: string, data: string) => {
+        console.log(`writing ${fileName}`);
+        const writePath = path.join(builtFolder, fileName);
+        nodeutil.mkdirP(path.parse(writePath).dir);
+        fs.writeFileSync(writePath, data);
+        if (writeCombined) combined += data + "\n\n";
+    }
+
+    const filenames: string[] = [];
+
+    // pre-created
+    for (const file of tsProg.getSourceFiles()) {
+        if (file.fileName.endsWith(".d.ts")) {
+            filenames.push(file.fileName);
+            writeDts(
+                file.fileName,
+                file.getFullText()
+            );
+        }
+    }
+
+    // generated via build
+    tsProg.emit(
+        /** targetSourceFile **/ undefined,
+        (fileName: string, data: string) => {
+            if (!data?.trim()) return;
+            filenames.push(fileName);
+            writeDts(fileName, data);
+        },
+        /** cancellation token **/ undefined,
+        /** emitOnlyDtsFiles **/ true,
+        /** customTransformers -> I believe where we should apply culling of deprecated blocks */
+    );
+
+    if (writeCombined) {
+        console.log(`writing combined.d.ts`)
+        fs.writeFileSync(path.join(builtFolder, "combined.d.ts"), combined);
+    }
+
+    if (writeIndex) {
+        console.log(`writing index.d.ts`)
+        const indexContent = filenames.map(fn => `/// <reference path="./${fn}" />`).join("\n");
+        fs.writeFileSync(path.join(builtFolder, "index.d.ts"), indexContent);
+    }
+}
+
 export function gendocsAsync(parsed: commandParser.ParsedCommand) {
     const docs = !!parsed.flags["docs"];
     const locs = !!parsed.flags["locs"];
@@ -5940,7 +6209,7 @@ function internalCheckDocsAsync(compileSnippets?: boolean, re?: string, fix?: bo
 
     const maxFileSize = checkFileSize(nodeutil.allFiles("docs", { maxDepth: 10, allowMissing: true, includeDirs: true, ignoredFileMarker: ".ignorelargefiles" }));
     if (!pxt.appTarget.ignoreDocsErrors
-        && maxFileSize > (pxt.appTarget.cloud.maxFileSize || (5000000)))
+        && maxFileSize > (pxt.appTarget.cloud.maxFileSize || (30000000)))
         U.userError(`files too big in docs folder`);
 
     // scan and fix image links
@@ -6928,7 +7197,15 @@ ${pxt.crowdin.KEY_VARIABLE} - crowdin key
         onlineHelp: true,
         flags: {
             update: { description: "(package only) Updates pxt-core reference to the latest release" },
-            upload: { description: "(package only) Upload after bumping" }
+            upload: { description: "(package only) Upload after bumping" },
+            pr: { description: "Bump via pull request rather than direct push" },
+            nopr: { description: "Bump via direct push rather than pull request (overrides --pr)" },
+            version: {
+                description: "Which part of the version to bump, or a complete version number to assign. Defaults to 'patch'",
+                argument: "version",
+                type: "string",
+                possibleValues: ["patch", "minor", "major", /^v?\d+\.\d+\.\d+$/]
+            },
         }
     }, bumpAsync);
 
@@ -6993,6 +7270,27 @@ ${pxt.crowdin.KEY_VARIABLE} - crowdin key
             },
         },
     }, buildShareSimJsAsync)
+
+    p.defineCommand({
+        name: "buildcoredts",
+        help: "build d.ts files for core packages",
+        flags: {
+            shareId: {
+                description: "Share ID to build for",
+                argument: "shareid",
+                type: "string",
+                aliases: ["s"]
+            },
+            combined: {
+                description: "Build combined d.ts file for all core packages",
+                aliases: ["c"]
+            },
+            index: {
+                description: "Build index.d.ts file for all core packages",
+                aliases: ["i"]
+            },
+        }
+    }, buildCoreDeclarationFiles)
 
     simpleCmd("clean", "removes built folders", cleanAsync);
     advancedCommand("cleangen", "remove generated files", cleanGenAsync);
@@ -7264,7 +7562,17 @@ ${pxt.crowdin.KEY_VARIABLE} - crowdin key
     p.defineCommand({
         name: "ci",
         help: "run automated build in a continuous integration environment",
-        aliases: ["travis", "githubactions", "buildci"]
+        aliases: ["travis", "githubactions", "buildci"],
+        flags: {
+            "publish": {
+                description: "publish to npm regardless of whether this is a tagged release",
+            },
+            "tag": {
+                description: "override the default tag name",
+                type: "string",
+                argument: "tag"
+            }
+        }
     }, ciAsync);
     advancedCommand("uploadfile", "upload file under <CDN>/files/PATH", uploadFileAsync, "<path>");
     advancedCommand("service", "simulate a query to web worker", serviceAsync, "<operation>");
@@ -7284,10 +7592,10 @@ ${pxt.crowdin.KEY_VARIABLE} - crowdin key
         name: "buildskillmap",
         aliases: ["skillmap"],
         advanced: true,
-        help: "Serves the skill map webapp",
+        help: "Serves the skillmap webapp",
         flags: {
             serve: {
-                description: "Serve the skill map locally after building (npm start)"
+                description: "Serve the skillmap locally after building (npm start)"
             },
             docs: {
                 description: "Path to local docs folder to copy into skillmap",

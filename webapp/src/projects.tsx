@@ -5,18 +5,18 @@ import * as ReactDOM from "react-dom";
 import * as data from "./data";
 import * as sui from "./sui";
 import * as core from "./core";
-import * as cloudsync from "./cloudsync";
 import * as auth from "./auth";
-import * as identity from "./identity";
 import * as codecard from "./codecard"
 import * as carousel from "./carousel";
 import { showAboutDialogAsync } from "./dialogs";
 import { fireClickOnEnter } from "./util";
+import { sendUpdateFeedbackTheme } from "../../react-common/components/controls/Feedback/FeedbackEventListener";
+import { ThemeManager } from "../../react-common/components/theming/themeManager";
 
 import IProjectView = pxt.editor.IProjectView;
 import ISettingsProps = pxt.editor.ISettingsProps;
 import UserInfo = pxt.editor.UserInfo;
-import { sendUpdateFeedbackTheme } from "../../react-common/components/controls/Feedback/FeedbackEventListener";
+import { Dropdown, DropdownItem } from "../../react-common/components/controls/Dropdown";
 
 
 // This Component overrides shouldComponentUpdate, be sure to update that if the state is updated
@@ -161,7 +161,7 @@ export class Projects extends auth.Component<ISettingsProps, ProjectsState> {
                     </div>
                     <div className="column right aligned" style={{ zIndex: 1 }}>
                         {pxt.appTarget.compile || (pxt.appTarget.cloud && pxt.appTarget.cloud.sharing && pxt.appTarget.cloud.importing) ?
-                            <sui.Button key="import" icon="upload" className="import-dialog-btn" textClass="landscape only" text={lf("Import")} title={lf("Import a project")} onClick={this.importProject} /> : undefined}
+                            <sui.Button key="import" icon="upload" className="import-dialog-btn neutral" textClass="landscape only" text={lf("Import")} title={lf("Import a project")} onClick={this.importProject} /> : undefined}
                     </div>
                 </div>
                 <div className="content">
@@ -237,6 +237,7 @@ export class ProjectSettingsMenu extends data.Component<ProjectSettingsMenuProps
 
         this.showLanguagePicker = this.showLanguagePicker.bind(this);
         this.toggleHighContrast = this.toggleHighContrast.bind(this);
+        this.showThemePicker = this.showThemePicker.bind(this);
         this.showResetDialog = this.showResetDialog.bind(this);
         this.showReportAbuse = this.showReportAbuse.bind(this);
         this.showAboutDialog = this.showAboutDialog.bind(this);
@@ -251,7 +252,12 @@ export class ProjectSettingsMenu extends data.Component<ProjectSettingsMenuProps
 
     toggleHighContrast() {
         pxt.tickEvent("home.togglecontrast", undefined, { interactiveConsent: true });
-        core.toggleHighContrast();
+        this.props.parent.toggleHighContrast();
+    }
+
+    showThemePicker() {
+        pxt.tickEvent("home.showthemepicker", undefined, { interactiveConsent: true });
+        this.props.parent.showThemePicker();
     }
 
     toggleGreenScreen() {
@@ -260,8 +266,7 @@ export class ProjectSettingsMenu extends data.Component<ProjectSettingsMenuProps
     }
 
     toggleAccessibleBlocks() {
-        pxt.tickEvent("home.toggleaccessibleblocks", undefined, { interactiveConsent: true });
-        this.props.parent.toggleAccessibleBlocks();
+        this.props.parent.toggleAccessibleBlocks("homesettings");
     }
 
     showResetDialog() {
@@ -295,18 +300,18 @@ export class ProjectSettingsMenu extends data.Component<ProjectSettingsMenuProps
 
     renderCore() {
         const hasIdentity = pxt.auth.hasIdentity();
-        const highContrast = this.getData<boolean>(auth.HIGHCONTRAST)
+        const highContrast = ThemeManager.isCurrentThemeHighContrast()
         const targetTheme = pxt.appTarget.appTheme;
         // Targets with identity show github user on the profile screen.
         const githubUser = !hasIdentity && this.getData("github:user") as UserInfo;
         const reportAbuse = pxt.appTarget.cloud && pxt.appTarget.cloud.sharing && pxt.appTarget.cloud.importing;
         const showDivider = targetTheme.selectLanguage || targetTheme.highContrast || githubUser;
-        const showFeedbackOption = targetTheme.feedbackEnabled && targetTheme.ocvFrameUrl && targetTheme.ocvAppId;
+        const showFeedbackOption = pxt.U.ocvEnabled();
         sendUpdateFeedbackTheme(highContrast);
 
         return <sui.DropdownMenu role="menuitem" icon={'setting large'} title={lf("Settings")} className="item icon more-dropdown-menuitem" ref={ref => this.dropdown = ref}>
             {targetTheme.selectLanguage && <sui.Item icon='xicon globe' role="menuitem" text={lf("Language")} onClick={this.showLanguagePicker} />}
-            {targetTheme.highContrast && <sui.Item role="menuitem" text={highContrast ? lf("High Contrast Off") : lf("High Contrast On")} onClick={this.toggleHighContrast} />}
+            <sui.Item role="menuitem" icon="paint brush" text={lf("Theme")} onClick={this.showThemePicker} />
             {githubUser && <div className="ui divider"></div>}
             {githubUser && <div className="ui item" title={lf("Unlink {0} from GitHub", githubUser.name)} role="menuitem" onClick={this.signOutGithub}>
                 <div className="avatar" role="presentation">
@@ -318,7 +323,7 @@ export class ProjectSettingsMenu extends data.Component<ProjectSettingsMenuProps
             {reportAbuse ? <sui.Item role="menuitem" icon="warning circle" text={lf("Report Abuse...")} onClick={this.showReportAbuse} /> : undefined}
             <sui.Item role="menuitem" icon='sign out' text={lf("Reset")} onClick={this.showResetDialog} />
             <sui.Item role="menuitem" text={lf("About...")} onClick={this.showAboutDialog} />
-            {showFeedbackOption ? <sui.Item role="menuitem" icon="comment" text={lf("Give Feedback")} onClick={this.showFeedbackDialog} /> : undefined}
+            {showFeedbackOption ? <sui.Item role="menuitem" icon="comment" text={lf("Feedback")} onClick={this.showFeedbackDialog} /> : undefined}
         </sui.DropdownMenu>;
     }
 }
@@ -344,6 +349,7 @@ class HeroBanner extends data.Component<ISettingsProps, HeroBannerState> {
 
     protected handleRefreshCard = (backwards?: boolean) => {
         pxt.debug(`next hero carousel`);
+
         if (this.prevGalleries?.length) {
             const cardIndex = this.state.cardIndex;
             const nextOffset = backwards ? this.prevGalleries.length - 1 : 1;
@@ -521,6 +527,8 @@ class HeroBanner extends data.Component<ISettingsProps, HeroBannerState> {
         return <div className="ui segment getting-started-segment hero"
             style={{ backgroundImage: encodedBkgd }}
             onKeyDown={this.onKeyDown}
+            role="region"
+            aria-label={lf("Banner")}
             onPointerDown={this.onPointerDown} onTouchStart={this.onTouchstart}
             onPointerUp={this.onPointerUp} onTouchEnd={this.onTouchEnd}
         >
@@ -543,9 +551,9 @@ class HeroBanner extends data.Component<ISettingsProps, HeroBannerState> {
                         this.handleCardClick
                     )}
                 </div>}
-                {isGallery && <div key="cards" className="dots">
+                {isGallery && <div key="cards" className="dots" tabIndex={0} role="group" aria-label={lf("Carousel controls")}>
                     {cards.map((card, i) => <button key={"dot" + i} className={`ui button empty circular label  clear ${i === cardIndex && "active"}`}
-                        onClick={handleSetCard(i)} aria-label={lf("View {0} hero image", card.title || card.name)} title={lf("View {0} hero image", card.title || card.name)}>
+                        onClick={handleSetCard(i)} aria-label={lf("View {0} hero image", card.title || card.name)} tabIndex={-1} title={lf("View {0} hero image", card.title || card.name)}>
                     </button>)}
                 </div>}
             </div>
@@ -623,19 +631,6 @@ export class ProjectsCarousel extends data.Component<ProjectsCarouselProps, Proj
     fetchLocalData(): pxt.workspace.Header[] {
         const headers = this.getData(`headers:`) || [];
         return headers;
-    }
-
-    newProject(firstProject?: boolean) {
-        pxt.tickEvent("projects.new", undefined, { interactiveConsent: true });
-        if (pxt.appTarget.appTheme.nameProjectFirst || pxt.appTarget.appTheme.chooseLanguageRestrictionOnNewProject) {
-            this.props.parent.askForProjectCreationOptionsAsync()
-                .then(projectSettings => {
-                    const { name, languageRestriction } = projectSettings
-                    this.props.parent.newProject({ name, languageRestriction, firstProject });
-                })
-        } else {
-            this.props.parent.newProject({ firstProject });
-        }
     }
 
     showScriptManager() {
@@ -730,6 +725,7 @@ export class ProjectsCarousel extends data.Component<ProjectsCarouselProps, Proj
                                 tallCard={hasTags}
                                 tutorialStep={scr.tutorialStep}
                                 tutorialLength={scr.tutorialLength}
+                                selected={!scr.directOpen ? selectedIndex === index : undefined}
                             />
                         )}
                     </carousel.Carousel>
@@ -763,12 +759,12 @@ export class ProjectsCarousel extends data.Component<ProjectsCarouselProps, Proj
             const showCloudProjectsCard = auth.hasIdentity() && !auth.loggedIn() && pxt.storage.getLocal(auth.HAS_USED_CLOUD);
 
             const headersToShow = headers
-                .filter(h => !h.tutorial?.metadata?.hideIteration)
+                .filter(h => !pxt.tutorial.shouldFilterProject(h.tutorial?.metadata))
                 .slice(0, ProjectsCarousel.NUM_PROJECTS_HOMESCREEN);
             const isFirstProject = (!headers || headers?.length == 0);
             return <carousel.Carousel tickId="myprojects" bleedPercent={20}>
                 {showNewProject && <div role="button" className="ui card link buttoncard newprojectcard" title={lf("Creates a new empty project")}
-                    onClick={() => this.newProject(isFirstProject)} onKeyDown={fireClickOnEnter} >
+                    onClick={() => this.props.parent.newUserCreatedProject(isFirstProject)} onKeyDown={fireClickOnEnter} >
                     <div className="content">
                         <sui.Icon icon="huge add circle" />
                         <span className="header">{lf("New Project")}</span>
@@ -823,6 +819,7 @@ interface ProjectsCodeCardProps extends pxt.CodeCard {
     id?: string;
     index?: number;
     tallCard?: boolean;
+    selected?: boolean;
     onCardClick: (e: any, scr: any, index?: number, id?: string) => void;
     onLabelClick?: (e: any, scr: any, index?: number, id?: string) => void;
 }
@@ -845,7 +842,7 @@ export class ProjectsCodeCard extends sui.StatelessUIElement<ProjectsCodeCardPro
     }
 
     renderCore() {
-        let { scr, onCardClick, onLabelClick, onClick, cardType, imageUrl, className, ...rest } = this.props;
+        let { scr, onCardClick, onLabelClick, onClick, cardType, imageUrl, className, selected, ...rest } = this.props;
 
         className = className || "";
         // compute icon
@@ -864,7 +861,7 @@ export class ProjectsCodeCard extends sui.StatelessUIElement<ProjectsCodeCardPro
                 className = 'file ' + className;
         }
         return <codecard.CodeCardView role="button" className={className} imageUrl={imageUrl} cardType={cardType} {...rest} onClick={this.handleClick}
-            onLabelClicked={onLabelClick ? this.handleLabelClick : undefined} />
+            onLabelClicked={onLabelClick ? this.handleLabelClick : undefined} selected={selected} />
     }
 }
 
@@ -934,6 +931,7 @@ export class ProjectsDetail extends data.Component<ProjectsDetailProps, Projects
     protected getActionIcon(onClick: any, type: pxt.CodeCardType, editor?: pxt.CodeCardEditorType, actionIcon?: string): JSX.Element {
         const { youTubeId, youTubePlaylistId } = this.props;
         let icon = "file text";
+        let ariaLabel = lf("Open code editor");
         if (actionIcon) {
             icon = actionIcon;
         } else {
@@ -952,18 +950,24 @@ export class ProjectsDetail extends data.Component<ProjectsDetailProps, Projects
                     break;
                 case "forumUrl":
                     icon = "comments"
+                    ariaLabel = lf("Open Microsoft MakeCode forum");
                     break;
                 case "forumExample":
                     icon = "pencil"
                     break;
                 case "template":
                 default:
-                    if (youTubeId || youTubePlaylistId) icon = "youtube";
+                    if (youTubeId || youTubePlaylistId) {
+                        icon = "youtube";
+                        ariaLabel = lf("Open YouTube video");
+                    } else {
+                        ariaLabel = lf("Open instructions");
+                    }
                     break;
             }
         }
         return this.isLink(type) && type != "forumExample" // TODO (shakao)  migrate forumurl to otherAction json in md
-            ? <sui.Link role="presentation" className="link button attached" icon={icon} href={this.getUrl()} target="_blank" tabIndex={-1} />
+            ? <sui.Link role="link" className="link button attached" icon={icon} href={this.getUrl()} target="_blank" tabIndex={-1} ariaLabel={ariaLabel}/>
             : <sui.Item role="presentation" className="button attached" icon={icon} onClick={onClick} tabIndex={-1} />
     }
 
@@ -1016,19 +1020,31 @@ export class ProjectsDetail extends data.Component<ProjectsDetailProps, Projects
         return () => onClick(scr, action);
     }
 
-    handleOpenForumUrlInEditor() {
+    async handleOpenForumUrlInEditor() {
         pxt.tickEvent('projects.actions.forum', undefined, { interactiveConsent: true });
-        const { url } = this.props;
-        pxt.discourse.extractSharedIdFromPostUrl(url)
-            .then(projectId => {
-                // if we have a projectid, load it
-                if (projectId)
-                    window.location.hash = "pub:" + projectId; // triggers reload
-                else {
-                    core.warningNotification(lf("Oops, we could not find the program in the forum."));
-                }
-            })
-            .catch(core.handleNetworkError)
+        const { url, scr } = this.props;
+
+        let projectId: string;
+        if (scr?.shareUrl) {
+            projectId = pxt.Cloud.parseScriptId(scr.shareUrl);
+        }
+
+        if (!projectId) {
+            try {
+                projectId = await pxt.discourse.extractSharedIdFromPostUrl(url);
+            }
+            catch (e) {
+                core.handleNetworkError(e);
+                return;
+            }
+        }
+
+        if (projectId) {
+            window.location.hash = "pub:" + projectId; // triggers reload
+        }
+        else {
+            core.warningNotification(lf("Oops, we could not find the program in the forum."));
+        }
     }
 
     isYouTubeOnline(): boolean {
@@ -1049,7 +1065,7 @@ export class ProjectsDetail extends data.Component<ProjectsDetailProps, Projects
         const { name, description, largeImageUrl, videoUrl,
             youTubeId, youTubePlaylistId, buttonLabel, actionIcon, cardType, tags, otherActions } = this.props;
 
-        const highContrast = this.getData<boolean>(auth.HIGHCONTRAST)
+        const highContrast = ThemeManager.isCurrentThemeHighContrast();
         const tagColors: pxt.Map<string> = pxt.appTarget.appTheme.tagColors || {};
         const descriptions = description && description.split("\n");
         const image = !highContrast && (largeImageUrl || (youTubeId && `https://img.youtube.com/vi/${youTubeId}/0.jpg`));
@@ -1491,7 +1507,7 @@ export class NewProjectDialog extends data.Component<ISettingsProps, NewProjectD
     show = () => {
         pxt.tickEvent('newprojectdialog.show', undefined, { interactiveConsent: false });
         this.setState({
-            name: "",
+            name: pxt.commands.getDefaultProjectName?.() || "",
             emoji: "",
             visible: true,
             languageRestriction: pxt.editor.LanguageRestriction.Standard
@@ -1564,18 +1580,21 @@ export class NewProjectDialog extends data.Component<ISettingsProps, NewProjectD
         ];
 
         const mobile = pxt.BrowserUtils.isMobile();
-        const langOpts: sui.SelectItem[] = [
+        const langOpts: DropdownItem[] = [
             {
-                value: pxt.editor.LanguageRestriction.Standard,
-                display: python ? lf("Blocks, {0}, and {1}", "JavaScript", "Python") : lf("Blocks and {0}", "JavaScript")
+                id: pxt.editor.LanguageRestriction.Standard,
+                label: python ? lf("Blocks, {0}, and {1}", "JavaScript", "Python") : lf("Blocks and {0}", "JavaScript"),
+                title: python ? lf("Blocks, {0}, and {1}", "JavaScript", "Python") : lf("Blocks and {0}", "JavaScript")
             },
             python && {
-                value: pxt.editor.LanguageRestriction.PythonOnly,
-                display: lf("{0} Only", "Python")
+                id: pxt.editor.LanguageRestriction.PythonOnly,
+                label: lf("{0} Only", "Python"),
+                title: lf("{0} Only", "Python")
             },
             {
-                value: pxt.editor.LanguageRestriction.JavaScriptOnly,
-                display: lf("{0} Only", "JavaScript")
+                id: pxt.editor.LanguageRestriction.JavaScriptOnly,
+                label: lf("{0} Only", "JavaScript"),
+                title: lf("{0} Only", "JavaScript")
             }
         ];
         const classes = this.props.parent.createModalClasses("newproject");
@@ -1598,7 +1617,13 @@ export class NewProjectDialog extends data.Component<ISettingsProps, NewProjectD
             {chooseLanguageRestrictionOnNewProject && <div>
                 <br />
                 <sui.ExpandableMenu title={lf("Code options")} onShow={this.onExpandedMenuShow} onHide={this.onExpandedMenuHide}>
-                    <sui.Select options={langOpts} onChange={this.handleLanguageChange} aria-label={lf("Select Language")} />
+                    <Dropdown
+                        className="language-restriction-dropdown"
+                        id="language-restriction-dropdown"
+                        items={langOpts}
+                        selectedId={this.state.languageRestriction}
+                        onItemSelected={this.handleLanguageChange}
+                    />
                 </sui.ExpandableMenu>
             </div>}
         </sui.Modal>

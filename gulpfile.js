@@ -9,9 +9,11 @@ const concat = require("gulp-concat");
 const header = require("gulp-header");
 const replace = require("gulp-replace");
 const ju = require("./jakeutil");
+const yargs = require('yargs');
 
 const exec = ju.exec;
 const rimraf = ju.rimraf;
+const argv = yargs.argv;
 
 const isWin32 = os.platform() === "win32";
 
@@ -102,6 +104,13 @@ const buildpxtjs = () => gulp.src([
     `))
     .pipe(gulp.dest("built"));
 
+const pxtrcdeps = () => gulp.src([
+    "node_modules/dompurify/dist/purify.min.js",
+])
+    .pipe(concat("pxtrcdeps.js"))
+    .pipe(gulp.dest("built/web"));
+
+
 const copySubappsConfig = () => gulp.src("cli/webapps-config.json")
     .pipe(gulp.dest("built"));
 
@@ -122,7 +131,7 @@ function initWatch() {
         gulp.parallel(pxtblocks, pxteditor, pxtservices),
         gulp.parallel(pxtrunner, cli, pxtcommon),
         gulp.parallel(updatestrings, browserifyEmbed),
-        gulp.parallel(pxtjs, pxtdts, pxtapp, pxtworker, pxtembed),
+        gulp.parallel(pxtjs, pxtdts, pxtapp, pxtworker, pxtembed, pxtrcdeps),
         targetjs,
         reactCommon,
         webapp,
@@ -179,7 +188,7 @@ const targetjs = () => exec("node built/pxt.js buildtarget", true);
 
 const buildcss = () => exec("node built/pxt.js buildcss", true);
 
-const pxtTravis = () => exec("node built/pxt.js travis", true);
+const pxtTravis = () => exec(`node built/pxt.js travis ${argv.publish ? "--publish" : ""}`, true);
 
 function compileTsProject(dirname, destination, useOutdir, filename) {
     if (!destination) destination = "built";
@@ -228,6 +237,7 @@ function updatestrings() {
         "pxtpy",
         "pxtsim",
         "webapp/src",
+        "react-common"
     ], true);
 }
 
@@ -547,7 +557,7 @@ function createWebappTasks(root, outname) {
                         .pipe(concat(`${outname}.html`))
                         .pipe(gulp.dest("webapp/public")));
 
-    const result = gulp.series(cleanWebapp, buildWebapp, gulp.series(copyWebappCss, copyWebappJs, copyWebappHtml));
+    const result = gulp.series(cleanWebapp, pxtrcdeps, buildWebapp, gulp.series(copyWebappCss, copyWebappJs, copyWebappHtml));
 
     exports[outname] = result;
 
@@ -748,7 +758,7 @@ const buildAll = gulp.series(
     gulp.parallel(pxteditor, pxtblocks, pxtservices),
     gulp.parallel(pxtrunner, cli, pxtcommon),
     browserifyEmbed,
-    gulp.parallel(pxtjs, pxtdts, pxtapp, pxtworker, pxtembed),
+    gulp.parallel(pxtjs, pxtdts, pxtapp, pxtworker, pxtembed, pxtrcdeps),
     targetjs,
     reactCommon,
     gulp.parallel(buildcss, buildSVGIcons),

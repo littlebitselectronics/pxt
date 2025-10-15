@@ -178,6 +178,15 @@ export class EditorDriver extends IframeDriver {
         );
     }
 
+    async showThemePicker() {
+        await this.sendRequest(
+            {
+                type: "pxteditor",
+                action: "showthemepicker"
+            } as pxt.editor.EditorMessageRequest
+        );
+    }
+
     async toggleHighContrast() {
         await this.sendRequest(
             {
@@ -192,6 +201,15 @@ export class EditorDriver extends IframeDriver {
             {
                 type: "pxteditor",
                 action: "togglegreenscreen"
+            } as pxt.editor.EditorMessageRequest
+        );
+    }
+
+    async toggleAccessibleBlocks() {
+        await this.sendRequest(
+            {
+                type: "pxteditor",
+                action: "togglekeyboardcontrols"
             } as pxt.editor.EditorMessageRequest
         );
     }
@@ -453,6 +471,17 @@ export class EditorDriver extends IframeDriver {
                 action: "precachetutorial",
                 data
             } as pxt.editor.PrecacheTutorialRequest
+        );
+    }
+
+    async setColorTheme(colorThemeId: string, savePreference: boolean) {
+        await this.sendRequest (
+            {
+                type: "pxteditor",
+                action: "setcolorthemebyid",
+                colorThemeId,
+                savePreference
+            } as pxt.editor.EditorMessageSetColorThemeRequest
         );
     }
 

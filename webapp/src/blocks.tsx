@@ -1,9 +1,9 @@
-/// <reference path="../../localtypings/navigationController.d.ts"/>
-
 import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as Blockly from "blockly";
 import * as pkg from "./package";
+import * as data from "./data";
+import * as auth from "./auth";
 import * as core from "./core";
 import * as toolboxeditor from "./toolboxeditor"
 import * as compiler from "./compiler"
@@ -17,15 +17,15 @@ import { CreateFunctionDialog } from "./createFunction";
 import { initializeSnippetExtensions } from './snippetBuilder';
 
 import * as pxtblockly from "../../pxtblocks";
-import { NavigationController, Navigation } from "@blockly/keyboard-navigation";
+import { KeyboardNavigation } from '@blockly/keyboard-navigation';
 import { WorkspaceSearch } from "@blockly/plugin-workspace-search";
-
 
 import Util = pxt.Util;
 import { DebuggerToolbox } from "./debuggerToolbox";
-import { ErrorList } from "./errorList";
+import { ErrorDisplayInfo, ErrorList, StackFrameDisplayInfo } from "./errorList";
 import { resolveExtensionUrl } from "./extensionManager";
 import { experiments, initEditorExtensionsAsync } from "../../pxteditor";
+import { ErrorHelpException, ErrorHelpTourResponse, getErrorHelpAsTour } from "./errorHelp";
 
 
 import IProjectView = pxt.editor.IProjectView;
@@ -33,9 +33,14 @@ import MuteState = pxt.editor.MuteState;
 import SimState = pxt.editor.SimState;
 
 
-import { DuplicateOnDragConnectionChecker } from "../../pxtblocks/plugins/duplicateOnDrag";
+import { DuplicateOnDragConnectionChecker, shouldDuplicateOnDrag } from "../../pxtblocks/plugins/duplicateOnDrag";
 import { PathObject } from "../../pxtblocks/plugins/renderer/pathObject";
 import { Measurements } from "./constants";
+import { flow, initCopyPaste } from "../../pxtblocks";
+import { initContextMenu } from "../../pxtblocks/contextMenu";
+import { HIDDEN_CLASS_NAME } from "../../pxtblocks/plugins/flyout/blockInflater";
+import { AIFooter } from "../../react-common/components/controls/AIFooter";
+import { CREATE_VAR_BTN_ID } from "../../pxtblocks/builtins/variables";
 
 interface CopyDataEntry {
     version: 1;
@@ -46,7 +51,6 @@ interface CopyDataEntry {
     headerId: string;
 }
 
-
 export class Editor extends toolboxeditor.ToolboxEditor {
     editor: Blockly.WorkspaceSvg;
     currFile: pkg.File;
@@ -55,21 +59,25 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     loadingXml: boolean;
     loadingXmlPromise: Promise<any>;
     compilationResult: pxtblockly.BlockCompilationResult;
-    isFirstBlocklyLoad = true;
+    shouldFocusWorkspace = false;
     functionsDialog: CreateFunctionDialog = null;
 
     showCategories: boolean = true;
     breakpointsByBlock: pxt.Map<number>; // Map block id --> breakpoint ID
     breakpointsSet: number[]; // the IDs of the breakpoints set.
+    currentFlyoutKey: string;
 
-    private errorChangesListeners: pxt.Map<(errors: pxtblockly.BlockDiagnostic[]) => void> = {};
+    private ignoreFlyoutPreviousNode = false;
+
     protected intersectionObserver: IntersectionObserver;
+    private errors: ErrorDisplayInfo[] = [];
 
     protected debuggerToolbox: DebuggerToolbox;
     protected highlightedStatement: pxtc.LocationInfo;
 
     // Blockly plugins
-    protected navigationController: NavigationController;
+    protected keyboardNavigation: KeyboardNavigation;
+
     protected workspaceSearch: WorkspaceSearch;
 
     public nsMap: pxt.Map<toolbox.BlockDefinition[]>;
@@ -77,8 +85,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     constructor(parent: IProjectView) {
         super(parent);
 
-        this.listenToBlockErrorChanges = this.listenToBlockErrorChanges.bind(this)
         this.onErrorListResize = this.onErrorListResize.bind(this)
+        this.getDisplayInfoForBlockError = this.getDisplayInfoForBlockError.bind(this)
+        this.getDisplayInfoForException = this.getDisplayInfoForException.bind(this)
+        this.createTourFromResponse = this.createTourFromResponse.bind(this)
+        this.getErrorHelp = this.getErrorHelp.bind(this)
+        this.startDebugger = this.startDebugger.bind(this);
     }
     setBreakpointsMap(breakpoints: pxtc.Breakpoint[], procCallLocations: pxtc.LocationInfo[]): void {
         if (!breakpoints || !this.compilationResult) return;
@@ -160,7 +172,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     setVisible(v: boolean) {
         super.setVisible(v);
         this.isVisible = v;
-        let classes = '#blocksEditor .blocklyToolboxDiv, #blocksEditor .blocklyWidgetDiv, #blocksEditor .blocklyToolboxDiv';
+        let classes = '#blocksEditor .blocklyToolbox, #blocksEditor .blocklyWidgetDiv, #blocksEditor .blocklyToolbox';
         if (this.isVisible) {
             pxt.Util.toArray(document.querySelectorAll(classes)).forEach((el: HTMLElement) => el.style.display = '');
             // Fire a resize event since the toolbox may have changed width and height.
@@ -208,7 +220,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             if (this.loadingXml) return
             pxt.debug(`loading blockly`)
             pxt.perf.measureStart(Measurements.DomUpdateLoadBlockly)
-            this.loadingXml = true
+            this.loadingXml = true;
+
+            const flyout = this.editor.getFlyout() as pxtblockly.CachingFlyout;
+            if (flyout && typeof flyout.clearBlockCache === 'function') {
+                flyout.clearBlockCache();
+            }
 
             const loadingDimmer = document.createElement("div");
             loadingDimmer.className = "ui active dimmer";
@@ -227,6 +244,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
                     // Initialize blocks in Blockly and update our toolbox
                     pxtblockly.initialize(this.blockInfo);
+
                     this.nsMap = this.partitionBlocks();
                     this.refreshToolbox();
 
@@ -237,7 +255,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
                     this.resize();
                     Blockly.svgResize(this.editor);
-                    this.isFirstBlocklyLoad = false;
+                    this.shouldFocusWorkspace = true;
                 }).finally(() => {
                     try {
                         // It's possible Blockly reloads and the loading dimmer is no longer a child of the editorDiv
@@ -296,12 +314,18 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         return this.serializeBlocks();
     }
 
-    private serializeBlocks(normalize?: boolean): string {
+    /**
+     * Serializes the blocks in the editor to XML.
+     * @param normalize Whether to normalize the XML (remove id, x, y attributes)
+     * @param forceKeepIds Whether to force keeping the block ids in the XML
+     * @returns The serialized XML string
+     */
+    private serializeBlocks(normalize?: boolean, forceKeepIds?: boolean): string {
         // store ids when using github
-        let xml = pxtblockly.saveWorkspaceXml(this.editor,
-            !normalize && this.parent.state
+        let xml = pxtblockly.saveWorkspaceXml(this.editor, forceKeepIds ||
+            (!normalize && this.parent.state
             && this.parent.state.header
-            && !!this.parent.state.header.githubId);
+            && !!this.parent.state.header.githubId));
         // strip out id, x, y attributes
         if (normalize) xml = xml.replace(/(x|y|id)="[^"]*"/g, '')
         pxt.debug(xml)
@@ -329,6 +353,10 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             this.updateGrayBlocks();
 
             this.typeScriptSaveable = true;
+
+            if (this.shouldFocusWorkspace) {
+                this.focusWorkspace();
+            }
         } catch (e) {
             pxt.log(e);
             pxtblockly.clearWithoutEvents(this.editor);
@@ -423,7 +451,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
          * @param {string} message The message to display to the user.
          * @param {function()=} opt_callback The callback when the alert is dismissed.
          */
-        Blockly.dialog.setAlert(function (message, opt_callback) {
+        Blockly.dialog.setAlert((message, opt_callback) => {
+            this.setFlyoutForceOpen(true);
             return core.confirmAsync({
                 hideCancel: true,
                 header: lf("Alert"),
@@ -433,6 +462,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 body: message,
                 size: "tiny"
             }).then(() => {
+                this.setFlyoutForceOpen(false);
                 if (opt_callback) {
                     opt_callback();
                 }
@@ -445,7 +475,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
          * @param {string} message The message to display to the user.
          * @param {!function(boolean)} callback The callback for handling user response.
          */
-        Blockly.dialog.setConfirm(function (message, callback) {
+        Blockly.dialog.setConfirm((message, callback) => {
+            this.setFlyoutForceOpen(true);
             return core.confirmAsync({
                 header: lf("Confirm"),
                 body: message,
@@ -457,11 +488,14 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 disagreeIcon: "cancel",
                 size: "tiny"
             }).then(b => {
+                this.setFlyoutForceOpen(false);
                 callback(b == 1);
             })
         });
 
-        pxtblockly.external.setPrompt(function (message, defaultValue, callback, options?: Partial<core.PromptOptions>) {
+
+        pxtblockly.external.setPrompt((message, defaultValue, callback, options?: Partial<core.PromptOptions>) => {
+            this.setFlyoutForceOpen(true);
             return core.promptAsync({
                 header: message,
                 initialValue: defaultValue,
@@ -470,6 +504,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 size: "tiny",
                 ...options
             }).then(value => {
+                this.setFlyoutForceOpen(false);
                 callback(value);
             })
         }, true);
@@ -482,6 +517,19 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     private initBlocklyToolbox() {
+        if (pxt.shell.isReadOnly()) {
+            return;
+        }
+
+        // Remove unwanted additional tab stop from the editor.
+        // We add tabindex to the tree wrapping the toolbox categories (excluding search) instead.
+        const toolboxDiv = this.getToolboxDiv();
+
+        // toolbox div might not exist if this is a read-only editor
+        if (toolboxDiv) {
+            toolboxDiv.removeAttribute("tabindex");
+        }
+
         let editor = this;
         /**
          * Move the toolbox to the edge.
@@ -490,17 +538,78 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         (Blockly as any).Toolbox.prototype.position = function () {
             oldToolboxPosition.call(this);
             editor.resizeToolbox();
-        }
+        };
 
         /**
          * Override blockly methods to support our custom toolbox.
+         *
+         * We don't generally use this selection but keyboard nav will trigger
+         * it to select the first category and clear the selection.
          */
         const that = this;
+        Blockly.Toolbox.prototype.getFocusableElement = function() {
+            return that.getToolboxDiv()?.querySelector(".blocklyTreeRoot [role=tree]") as HTMLElement ?? that.getBlocksAreaDiv();
+        };
+        Blockly.Toolbox.prototype.getRestoredFocusableNode = function() {
+            return null;
+        };
+        Blockly.Toolbox.prototype.onTreeFocus = function() {
+            return;
+        };
+        Blockly.Toolbox.prototype.setSelectedItem = function (newItem: Blockly.ISelectableToolboxItem | null) {
+            if (newItem === null) {
+                that.hideFlyout();
+            }
+        };
+        Blockly.Toolbox.prototype.clearSelection = function () {
+            that.hideFlyout();
+            that.toolbox.clearExpandedItem();
+        };
+        const oldToolboxOnTreeBlur = Blockly.Toolbox.prototype.onTreeBlur;
+        (Blockly.Toolbox as any).prototype.onTreeBlur = function (nextTree: Blockly.IFocusableTree | null) {
+            // If the search box is focused and there are search results, the flyout is set to forceOpen.
+            // Otherwise, the flyout closes and then re-opens causing an unpleasant visual effect.
+            if ((that.editor.getFlyout() as pxtblockly.CachingFlyout).forceOpen) {
+                that.toolbox.clear();
+                that.toolbox.clearExpandedItem();
+                that.setFlyoutForceOpen(false);
+                return;
+            }
+            oldToolboxOnTreeBlur.call(this, nextTree);
+        };
         (Blockly.WorkspaceSvg as any).prototype.refreshToolboxSelection = function () {
             let ws = this.isFlyout ? this.targetWorkspace : this;
             if (ws && !ws.currentGesture_ && ws.toolbox_ && ws.toolbox_.flyout_) {
                 that.toolbox.refreshSelection();
             }
+        };
+        const oldWorkspaceSvgGetRestoredFocusableNode = Blockly.WorkspaceSvg.prototype.getRestoredFocusableNode;
+        Blockly.WorkspaceSvg.prototype.getRestoredFocusableNode = function (previousNode: Blockly.IFocusableNode | null) {
+            // Specifically handle flyout case to work with the caching flyout implementation
+            if (this.isFlyout &&
+                (!previousNode || that.isFlyoutItemDisposed(previousNode, previousNode instanceof Blockly.BlockSvg ? previousNode : null) || that.ignoreFlyoutPreviousNode)
+            ) {
+                const flyout = that.editor.getFlyout();
+                const node = that.getDefaultFlyoutCursorIfNeeded(flyout);
+                if (node) {
+                    const flyoutCursor = flyout.getWorkspace().getCursor();
+                    // Work around issue with a flyout label being the first item in the flyout.
+                    // Set the cursor node here so the cursor doesn't fall back to last focused block.
+                    flyoutCursor.setCurNode(node);
+                }
+                that.ignoreFlyoutPreviousNode = false;
+                return node;
+            }
+            return oldWorkspaceSvgGetRestoredFocusableNode.call(this, previousNode);
+        };
+        const oldWorkspaceSvgOnTreeBlur = Blockly.WorkspaceSvg.prototype.onTreeBlur;
+        (Blockly.WorkspaceSvg as any).prototype.onTreeBlur = function (nextTree: Blockly.IFocusableNode | null): void {
+            // Keep the flyout open whe a variable is created.
+            if ((that.editor.getFlyout() as pxtblockly.CachingFlyout)?.forceOpen) {
+                that.setFlyoutForceOpen(false);
+                return;
+            }
+            oldWorkspaceSvgOnTreeBlur.call(this, nextTree);
         };
         const oldHideChaff = (Blockly as any).hideChaff;
         (Blockly as any).hideChaff = function (opt_allowToolbox?: boolean) {
@@ -531,29 +640,98 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         };
     }
 
-    private initAccessibleBlocks() {
-        const enabled = pxt.appTarget.appTheme?.accessibleBlocks;
-        if (enabled && !this.navigationController) {
-            this.navigationController = new NavigationController() as any;
-
-            this.navigationController.init();
-            this.navigationController.addWorkspace(this.editor);
-
-            (Navigation as any).prototype.focusToolbox = (workspace: Blockly.WorkspaceSvg) => {
-                const toolbox = this.toolbox;
-                if (!toolbox) return;
-                this.focusToolbox();
-                this.navigationController.navigation.resetFlyout(workspace, false);
-                this.navigationController.navigation.setState(workspace, "toolbox");
-            }
+    private unregisterBlocklyShortcutIfExists(shortcutName: string) {
+        if (Blockly.ShortcutRegistry.registry.getRegistry()[shortcutName]) {
+            Blockly.ShortcutRegistry.registry.unregister(shortcutName);
         }
     }
 
-    public enableAccessibleBlocks(enable: boolean) {
-        if (enable) {
-            this.navigationController.enable(this.editor);
-        } else {
-            this.navigationController.disable(this.editor);
+    private initAccessibleBlocks() {
+        if (!this.keyboardNavigation) {
+            // Keyboard navigation plugin (note message text is actually in Blockly)
+            // Excludes text used only in the shortcut dialog that we don't use.
+            Object.assign(Blockly.Msg, {
+                EDIT_BLOCK_CONTENTS: lf("Edit Block contents"),
+                MOVE_BLOCK: lf("Move Block"),
+                // Longer versions not used (COMMAND_KEY, OPTION_KEY), short ones used in hints.
+                CONTROL_KEY: lf("Ctrl"),
+                ALT_KEY: lf("Alt"),
+                CUT_SHORTCUT: lf("Cut"),
+                COPY_SHORTCUT: lf("Copy"),
+                PASTE_SHORTCUT: lf("Paste"),
+                HELP_PROMPT: lf("Press %1 for help on keyboard controls"),
+                KEYBOARD_NAV_UNCONSTRAINED_MOVE_HINT: lf("Hold %1 and use arrow keys to move anywhere, then %2 to accept the position"),
+                KEYBOARD_NAV_CONSTRAINED_MOVE_HINT: lf("Use the arrow keys to move, then %1 to accept the position"),
+                KEYBOARD_NAV_COPIED_HINT: lf("Copied. Press %1 to paste."),
+                KEYBOARD_NAV_CUT_HINT: lf("Cut. Press %1 to paste."),
+                // Used for Blocky's toast's close aria label.
+                CLOSE: lf("Close")
+            });
+
+            // Unregister shortcuts that will be re-created when the keyboard nav plugin registers
+            this.unregisterBlocklyShortcutIfExists("keyboard_nav_copy");
+            this.unregisterBlocklyShortcutIfExists("keyboard_nav_cut");
+            this.unregisterBlocklyShortcutIfExists("keyboard_nav_paste");
+
+            this.keyboardNavigation = new KeyboardNavigation(this.editor, {
+                allowCrossWorkspacePaste: true
+            });
+            Blockly.keyboardNavigationController.setIsActive(true);
+
+            const listShortcuts = Blockly.ShortcutRegistry.registry.getRegistry()["list_shortcuts"];
+            Blockly.ShortcutRegistry.registry.unregister(listShortcuts.name);
+            Blockly.ShortcutRegistry.registry.register({
+                ...listShortcuts,
+                keyCodes: [
+                    Blockly.ShortcutRegistry.registry.createSerializedKey(Blockly.utils.KeyCodes.SLASH, [
+                        Blockly.utils.KeyCodes.META,
+                    ]),
+                    Blockly.ShortcutRegistry.registry.createSerializedKey(Blockly.utils.KeyCodes.SLASH, [
+                        Blockly.utils.KeyCodes.CTRL,
+                    ]),
+                ]
+            });
+
+            const cleanUpWorkspace = Blockly.ShortcutRegistry.registry.getRegistry()["clean_up_workspace"];
+            Blockly.ShortcutRegistry.registry.unregister(cleanUpWorkspace.name);
+            Blockly.ShortcutRegistry.registry.register({
+                ...cleanUpWorkspace,
+                // The default key is 'c' to "clean up workspace". Use 'f' instead to align with "format code".
+                keyCodes: [Blockly.ShortcutRegistry.registry.createSerializedKey(Blockly.utils.KeyCodes.F, null)],
+                callback: (workspace) => {
+                    flow(workspace, { useViewWidth: true });
+                    return true
+                }
+            });
+
+            const startMoveShortcut = Blockly.ShortcutRegistry.registry.getRegistry()["start_move"];
+            Blockly.ShortcutRegistry.registry.unregister(startMoveShortcut.name);
+            Blockly.ShortcutRegistry.registry.register({
+                ...startMoveShortcut,
+                callback: (workspace, e, shortcut, scope) => {
+                    maybeCloneBlockForMove(workspace);
+
+                    return startMoveShortcut.callback!(workspace, e, shortcut, scope);
+                }
+            });
+
+
+            const startMoveContextMenuEntry = Blockly.ContextMenuRegistry.registry.getItem("move");
+            Blockly.ContextMenuRegistry.registry.unregister(startMoveContextMenuEntry.id);
+            Blockly.ContextMenuRegistry.registry.register({
+                ...startMoveContextMenuEntry,
+                callback: (scope: Blockly.ContextMenuRegistry.Scope, menuOpenEvent: Event, menuSelectEvent: Event, location: Blockly.utils.Coordinate) => {
+                    maybeCloneBlockForMove(scope.block?.workspace || scope.workspace);
+
+                    return startMoveContextMenuEntry.callback!(scope, menuOpenEvent, menuSelectEvent, location);
+                }
+            } as Blockly.ContextMenuRegistry.RegistryItem);
+
+            // This must come after plugin initialization to override context menu
+            // precondition functions set by the keyboard navigation plugin.
+            // We want to customize this behavior and have access to clipboard data to
+            // determined whether paste should be enabled.
+            pxtblockly.initAccessibleBlocksContextMenuItems();
         }
     }
 
@@ -597,6 +775,9 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     private markIncomplete = false;
     isIncomplete() {
+        // first check to see if we're still in the process of loading a file
+        if (!this.typeScriptSaveable) return true;
+
         const incomplete = this.editor?.isDragging();
         if (incomplete) this.markIncomplete = true;
         return incomplete;
@@ -616,7 +797,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         // Increase the Blockly connection radius
         Blockly.config.snapRadius = 48;
         Blockly.config.connectingSnapRadius = 96;
-
         this.editor = Blockly.inject(blocklyDiv, this.getBlocklyOptions(forceHasCategories)) as Blockly.WorkspaceSvg;
         pxtblockly.contextMenu.setupWorkspaceContextMenu(this.editor);
 
@@ -638,21 +818,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.editor.addChangeListener((ev: any) => {
             Blockly.Events.disableOrphans(ev);
 
-            // Blockly doesn't automatically resize highlight outlines. If an event
-            // occurs that could have changed the size of a block, go ahead and refresh
-            // the associated highlights
-            if (ev.type === "block_field_intermediate_change" || ev.type === "change") {
-                if (ev.blockId) {
-                    const block = this.editor.getBlockById(ev.blockId);
-                    fixHighlight(block);
-                }
-            }
-            else if (ev.type === "drag") {
-                for (const block of this.editor.getAllBlocks(false)) {
-                    (block.pathObject as PathObject).resizeHighlight();
-                }
-            }
-
             const ignoredChanges = [
                 Blockly.Events.UI,
                 Blockly.Events.SELECTED,
@@ -665,6 +830,28 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
             if (shouldEventHideFlyout(ev)) {
                 this.hideFlyout();
+            }
+
+            if (ev.type === "var_create") {
+                if (this.currentFlyoutKey === "variables" && this.editor.getFlyout()?.isVisible()) {
+                    // Prevents toolbox selection from clearing when creating a variable via keyboard
+                    // inside workspace onTreeBlur.
+                    this.setFlyoutForceOpen(true);
+                    // refresh the flyout when a new variable is created
+                    this.showVariablesFlyout();
+                    // Workspace onTreeBlur is not called if the var is created via mouse, so reset state.
+                    this.setFlyoutForceOpen(false);
+
+                    if (this.keyboardNavigation) {
+                        const flyout = this.editor.getFlyout();
+                        const flyoutWorkspace = flyout.getWorkspace();
+                        const newCreateVarButtonNode = flyoutWorkspace.lookUpFocusableNode(CREATE_VAR_BTN_ID);
+                        if (newCreateVarButtonNode) {
+                            const flyoutCursor = flyout.getWorkspace().getCursor();
+                            flyoutCursor.setCurNode(newCreateVarButtonNode);
+                        }
+                    }
+                }
             }
 
             if ((ignoredChanges.indexOf(ev.type) === -1)
@@ -708,7 +895,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 }
                 else {
                     if (shouldRestartSim) {
-                        this.parent.startSimulator();
+                        this.parent.startSimulator({background: true});
                     }
                 }
             }
@@ -735,6 +922,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         })
 
 
+        const accessibleBlocksEnabled = data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)
         if (this.shouldShowCategories()) {
             this.renderToolbox();
         }
@@ -742,7 +930,17 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.initPrompts();
         this.initBlocklyToolbox();
         this.initWorkspaceSounds();
-        this.initAccessibleBlocks();
+        initContextMenu();
+        initCopyPaste(accessibleBlocksEnabled);
+        // This must come after initCopyPaste and initContextMenu.
+        // initCopyPaste overrides the default cut, copy, paste shortcuts.
+        // The keyboard navigation plugin utilizes these cut, copy and paste shortcuts
+        // and wraps them with additional behaviours (e.g., toast notifications).
+        // initContextMenu overrides the default context menu options. The plugin
+        // decorates the duplicate block context menu item to display the shortcut.
+        if (accessibleBlocksEnabled) {
+            this.initAccessibleBlocks();
+        }
         this.initWorkspaceSearch();
         this.setupIntersectionObserver();
         this.resize();
@@ -812,6 +1010,14 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         }
     }
 
+    focusWorkspace() {
+        const accessibleBlocksEnabled = data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)
+        if (accessibleBlocksEnabled) {
+            (this.editor.getSvgGroup() as SVGElement).focus();
+            Blockly.hideChaff();
+        }
+    }
+
     hasUndo() {
         const undoStack = this.editor?.getUndoStack();
         const redoStack = this.editor?.getRedoStack();
@@ -864,17 +1070,29 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         return "blocksArea"
     }
 
+    startDebugger() {
+        pxt.tickEvent('errorList.startDebugger', {lang: "blocks"}, { interactiveConsent: true })
+        this.parent.toggleDebugging()
+    }
+
     display(): JSX.Element {
         let flyoutOnly = this.parent.state.editorState && this.parent.state.editorState.hasCategories === false;
-        let showErrorList = pxt.appTarget.appTheme.blocksErrorList;
+        let showErrorList = pxt.Util.isFeatureEnabled("blocksErrorList") && !pxt.shell.isTimeMachineEmbed() && !this.parent.state.debugging;
         return (
             <div className="blocksAndErrorList">
                 <div className="blocksEditorOuter">
                     <div id="blocksEditor"></div>
                     <toolbox.ToolboxTrashIcon flyoutOnly={flyoutOnly} />
                 </div>
-                {showErrorList && <ErrorList isInBlocksEditor={true} listenToBlockErrorChanges={this.listenToBlockErrorChanges}
-                    onSizeChange={this.onErrorListResize} />}
+                {showErrorList && (
+                    <ErrorList
+                        errors={this.errors}
+                        onSizeChange={this.onErrorListResize}
+                        getErrorHelp={this.getErrorHelp}
+                        showLoginDialog={this.parent.showLoginDialog}
+                        startDebugger={this.startDebugger}
+                    />
+                )}
             </div>
         )
     }
@@ -883,14 +1101,142 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.parent.fireResize();
     }
 
-    listenToBlockErrorChanges(handlerKey: string, handler: (errors: pxtblockly.BlockDiagnostic[]) => void) {
-        this.errorChangesListeners[handlerKey] = handler;
+    onExceptionDetected(exception: pxsim.DebuggerBreakpointMessage) {
+        const displayInfo: ErrorDisplayInfo = this.getDisplayInfoForException(exception);
+        this.errors = [displayInfo];
     }
 
-    private onBlockErrorChanges(errors: pxtblockly.BlockDiagnostic[]) {
-        for (let listener of pxt.U.values(this.errorChangesListeners)) {
-            listener(errors)
+    private onBlockErrorChanges(errors: ErrorDisplayInfo[]) {
+        this.errors = errors;
+    }
+
+    private getDisplayInfoForBlockError(blockId: string, message: string, preventsRunning: boolean): ErrorDisplayInfo {
+        return {
+            message: message,
+            preventsRunning: preventsRunning,
+            onClick: () => {
+                this.clearHighlightedStatements();
+                this.editor.highlightBlock(blockId);
+                this.editor.centerOnBlock(blockId, true);
+            },
+            metadata: {
+                blockId: blockId
+            }
         }
+    }
+
+    private getDisplayInfoForException(exception: pxsim.DebuggerBreakpointMessage): ErrorDisplayInfo {
+        const message = pxt.Util.rlf(exception.exceptionMessage);
+        const stackFrames: StackFrameDisplayInfo[] = exception.stackframes?.map(frame => {
+            const locInfo = frame.funcInfo as pxtc.FunctionLocationInfo;
+            if (!locInfo?.functionName) {
+                return undefined;
+            }
+
+            const blockId = locInfo.functionName === "<main>" /* Root JS function, therefore On Start block */ ?
+                this.editor.getBlocksByType(ts.pxtc.ON_START_TYPE)?.[0]?.id :
+                (this.compilationResult ? pxtblockly.findBlockIdByLine(this.compilationResult.sourceMap, { start: locInfo.line, length: locInfo.endLine - locInfo.line }) : undefined);
+
+            if (!blockId) {
+                return undefined;
+            }
+
+            // Get human-readable block text
+            const block = this.editor.getBlockById(blockId);
+            if (!block) {
+                return undefined;
+            }
+
+            let blockText = pxtblockly.getBlockText(block);
+            if (blockText.length > 100) {
+                blockText = blockText.substring(0, 97) + "...";
+            }
+
+            return {
+                message: blockText ? lf("at the '{0}' block", blockText) : lf("at {0}", locInfo.functionName),
+                onClick: () => {
+                    this.clearHighlightedStatements();
+                    this.editor.highlightBlock(blockId);
+                    this.editor.centerOnBlock(blockId, true);
+                },
+                metadata: {
+                    blockId: blockId
+                }
+            };
+        }).filter(f => !!f) ?? undefined;
+
+        return {
+            message,
+            stackFrames
+        };
+    }
+
+    /**
+     * Provides a user-facing explanation of the errors in the error list.
+     */
+    async getErrorHelp() {
+        const code = this.serializeBlocks(false, true /* forceKeepIds */);
+        try {
+            const helpResponse = await getErrorHelpAsTour(this.errors, "blocks", code);
+            const tour = this.createTourFromResponse(helpResponse);
+            this.parent.showTour(tour);
+        } catch (e) {
+            pxt.reportException(e);
+
+            if (e instanceof ErrorHelpException) {
+                core.errorNotification(e.getUserFacingMessage());
+            } else {
+                core.errorNotification(lf("Something went wrong. Please try again later."));
+            }
+        }
+    }
+
+    /**
+     * Converts an ErrorHelpTourRespone into an actual tour, which mostly involves
+     * ensuring all provided ids are valid and setting up the corresponding target queries.
+     */
+    private createTourFromResponse = (response: ErrorHelpTourResponse): pxt.tour.TourConfig => {
+        const validBlockIds = this.parent.getBlocks().map((b) => b.id);
+
+        const tourSteps: pxt.tour.BubbleStep[] = [];
+        let invalidBlockIdCount = 0;
+        for (const step of response.explanationSteps) {
+            const tourStep = {
+                title: lf("Error Explanation"),
+                description: step.message,
+                location: pxt.tour.BubbleLocation.Center,
+                bubbleStyle: "yellow",
+            } as pxt.tour.BubbleStep;
+
+            if (step.elementId) {
+                if (validBlockIds.includes(step.elementId)) {
+                    tourStep.targetQuery = `g[data-id="${step.elementId}"]:not(.blocklyFlyout g)`;
+                    tourStep.location = pxt.tour.BubbleLocation.Right;
+                    tourStep.onStepBegin = () => this.editor.centerOnBlock(step.elementId, true);
+                } else {
+                    // Do not add the tour target, but keep the step in case it's still helpful.
+                    pxt.tickEvent("errorHelp.invalidBlockId");
+                    invalidBlockIdCount++;
+                }
+            }
+
+            tourSteps.push(tourStep);
+        }
+        return {
+            steps: tourSteps,
+            showConfetti: false,
+            numberFinalStep: true,
+            footer: <AIFooter onFeedbackSelected={positive => this.handleErrorHelpFeedback(positive, {
+                    type: "tour",
+                    tourStepCount: response.explanationSteps.length,
+                    errorCount: this.errors.length,
+                    invalidBlockIdCount: invalidBlockIdCount,
+                })} />
+        };
+    }
+
+    private handleErrorHelpFeedback(positive: boolean, responseData: any) {
+        pxt.tickEvent("errorHelp.feedback", { ...responseData, positive: positive + "" });
     }
 
     getBlocksAreaDiv() {
@@ -904,7 +1250,15 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     getBlocklyToolboxDiv(): HTMLDivElement {
         const blocksArea = this.getBlocksAreaDiv();
-        return blocksArea ? blocksArea.getElementsByClassName('blocklyToolboxDiv')[0] as HTMLDivElement : undefined;
+        return blocksArea ? blocksArea.getElementsByClassName('blocklyToolbox')[0] as HTMLDivElement : undefined;
+    }
+
+    getToolboxDiv(): HTMLDivElement {
+        return this.getBlocklyToolboxDiv();
+    }
+
+    getEditorAreaDiv(): HTMLElement {
+        return this.getBlocksAreaDiv();
     }
 
     handleToolboxRef = (c: toolbox.Toolbox) => {
@@ -916,17 +1270,63 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     public moveFocusToFlyout() {
-        if (this.navigationController) {
-            this.navigationController.navigation.focusFlyout(this.editor);
+        if (this.keyboardNavigation) {
+            // It's the nested workspace focus tree that takes focus for navigation.
+            Blockly.FocusManager.getFocusManager().focusTree(this.editor.getFlyout().getWorkspace())
+            this.setDefaultFlyoutCursorIfNeeded(this.editor.getFlyout());
         }
+    }
 
-        (this.editor.getInjectionDiv() as HTMLDivElement).focus();
+    // Modified from blockly-keyboard-experimentation plugin
+    // https://github.com/google/blockly-keyboard-experimentation/blob/main/src/navigation.ts
+    // This modification is required to workaround the fact that cached blocks are not disposed in MakeCode.
+    private isFlyoutItemDisposed(
+        node: Blockly.IFocusableNode,
+        sourceBlock: Blockly.BlockSvg | null,
+    ) {
+        if (sourceBlock?.disposed || sourceBlock?.hasDisabledReason(HIDDEN_CLASS_NAME)) {
+            return true;
+        }
+        if (node instanceof Blockly.FlyoutButton) {
+            return node.getSvgRoot().parentNode === null;
+        }
+        if (!sourceBlock) {
+            return true;
+        }
+        return false;
+    }
+
+    // Modified from blockly-keyboard-experimentation plugin
+    // https://github.com/google/blockly-keyboard-experimentation/blob/main/src/navigation.ts
+    getDefaultFlyoutCursorIfNeeded(flyout: Blockly.IFlyout): Blockly.IBoundedElement & Blockly.IFocusableNode | null {
+        const flyoutCursor = flyout.getWorkspace().getCursor();
+        if (!flyoutCursor) {
+            return null;
+        }
+        const curNode = flyoutCursor.getCurNode();
+        const sourceBlock = flyoutCursor.getSourceBlock();
+        if (curNode && !this.isFlyoutItemDisposed(curNode, sourceBlock)) {
+            return null;
+        }
+        const flyoutContents = flyout.getContents();
+        const defaultFlyoutItem = flyoutContents[0];
+        if (!defaultFlyoutItem) return null;
+        return defaultFlyoutItem.getElement();
+    }
+
+    // Split from getDefaultFlyoutCursorIfNeeded in order to return the default flyout cursor separately
+    private setDefaultFlyoutCursorIfNeeded(flyout: Blockly.IFlyout): void {
+        const defaultFlyoutItemElement = this.getDefaultFlyoutCursorIfNeeded(flyout)
+        if (defaultFlyoutItemElement) {
+            const flyoutCursor = flyout.getWorkspace().getCursor();
+            flyoutCursor.setCurNode(defaultFlyoutItemElement);
+        }
     }
 
     renderToolbox(immediate?: boolean) {
         if (pxt.shell.isReadOnly()) return;
         const blocklyToolboxDiv = this.getBlocklyToolboxDiv();
-        const blocklyToolbox = <div className="blocklyToolbox">
+        const blocklyToolbox = <div className="blocklyToolboxCategoryGroup" tabIndex={-1} onFocus={this.handleToolboxContentsFocusCapture}>
             <toolbox.Toolbox ref={this.handleToolboxRef} editorname="blocks" parent={this} />
             {<div id="debuggerToolbox"></div>}
         </div>;
@@ -934,6 +1334,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         ReactDOM.render(blocklyToolbox, blocklyToolboxDiv);
 
         if (!immediate) this.toolbox.showLoading();
+    }
+
+    private handleToolboxContentsFocusCapture = (e: React.FocusEvent) => {
+        if (e.target === e.currentTarget) {
+            (this.getBlocklyToolboxDiv().querySelector("[role=tree]") as HTMLElement).focus()
+        }
     }
 
     updateToolbox() {
@@ -961,6 +1367,16 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         pxt.perf.measureEnd(Measurements.UpdateToolbox)
     }
 
+    focusToolbox(itemToFocus?: string): void {
+        if (this.debuggerToolbox) {
+            this.debuggerToolbox.focus();
+        } else if (this.toolbox) {
+            this.toolbox.focus(itemToFocus);
+        } else if (this.editor.getFlyout()) {
+            this.moveFocusToFlyout();
+        }
+    }
+
     showPackageDialog() {
         pxt.tickEvent("blocks.addpackage");
         if (this.editor.getToolbox()) this.editor.getToolbox().clearSelection();
@@ -968,11 +1384,11 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     showVariablesFlyout() {
-        this.showFlyoutInternal_(Blockly.Variables.flyoutCategory(this.editor), "variables");
+        this.showFlyoutInternal_(Blockly.Variables.flyoutCategory(this.editor, true), "variables");
     }
 
     showFunctionsFlyout() {
-        this.showFlyoutInternal_(pxtblockly.createFunctionsFlyoutCategory(this.editor), "functions");
+        this.showFlyoutInternal_(pxtblockly.createFunctionsFlyoutCategory(this.editor), "functions", true);
     }
 
     getViewState() {
@@ -1015,6 +1431,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         if (!this._loadBlocklyPromise) {
             pxt.perf.measureStart(Measurements.LoadBlockly)
             pxtblockly.applyMonkeyPatches();
+            pxtblockly.registerFlyoutInflaters();
             this._loadBlocklyPromise = pxt.BrowserUtils.loadBlocklyAsync()
                 .then(() => {
                     // Initialize the "Make a function" button
@@ -1055,6 +1472,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                             window.open(url, 'docs');
                         }
                     });
+
+                    const accessibleBlocksEnabled = data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)
+                    if (accessibleBlocksEnabled) {
+                        KeyboardNavigation.registerKeyboardNavigationStyles();
+                    }
+
                     this.prepareBlockly();
                 })
                 .then(() => initEditorExtensionsAsync())
@@ -1066,6 +1489,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     loadFileAsync(file: pkg.File): Promise<void> {
         Util.assert(!this.delayLoadXml);
         const init = this.loadingXmlPromise || Promise.resolve();
+
+        this.typeScriptSaveable = false;
 
         return init
             .then(() => this.loadBlocklyAsync())
@@ -1104,9 +1529,11 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             })
     }
 
-    unloadFileAsync(): Promise<void> {
+    unloadFileAsync(unloadToHome?: boolean): Promise<void> {
         this.delayLoadXml = undefined;
+        this.errors = [];
         if (this.toolbox) this.toolbox.clearSearch();
+        if (unloadToHome) this.shouldFocusWorkspace = false;
         return Promise.resolve();
     }
 
@@ -1130,6 +1557,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         if (!tsfile || !tsfile.diagnostics) return;
 
         // only show errors
+        const errorDisplayInfo: ErrorDisplayInfo[] = [];
         let diags = tsfile.diagnostics.filter(d => d.category == ts.pxtc.DiagnosticCategory.Error);
         let sourceMap = this.compilationResult.sourceMap;
 
@@ -1141,6 +1569,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     let txt = ts.pxtc.flattenDiagnosticMessageText(diag.messageText, "\n");
                     b.setWarningText(txt, pxtblockly.PXT_WARNING_ID);
                     setHighlightWarningAsync(b, true);
+                    errorDisplayInfo.push(this.getDisplayInfoForBlockError(bid, txt, true));
                 }
             }
         })
@@ -1152,10 +1581,11 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 if (b) {
                     b.setWarningText(d.message, pxtblockly.PXT_WARNING_ID);
                     setHighlightWarningAsync(b, true);
+                    errorDisplayInfo.push(this.getDisplayInfoForBlockError(d.blockId, d.message, false));
                 }
             }
         })
-        this.onBlockErrorChanges(this.compilationResult.diagnostics);
+        this.onBlockErrorChanges(errorDisplayInfo);
         this.setBreakpointsFromBlocks();
     }
 
@@ -1173,22 +1603,73 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 if (brk) {
                     const b = this.editor.getBlockById(bid) as Blockly.BlockSvg;
                     b.setWarningText(brk ? brk.exceptionMessage : undefined, pxtblockly.PXT_WARNING_ID);
-                    // ensure highlight is in the screen when a breakpoint info is available
-                    // TODO: make warning mode look good
-                    // b.setHighlightWarning(brk && !!brk.exceptionMessage);
-                    const p = b.getRelativeToSurfaceXY();
-                    const c = b.getHeightWidth();
-                    const s = this.editor.scale;
-                    const m = this.editor.getMetrics();
-                    // don't center if block is still on the screen
-                    const marginx = 4;
-                    const marginy = 4;
-                    if (p.x * s < m.viewLeft + marginx
-                        || (p.x + c.width) * s > m.viewLeft + m.viewWidth - marginx
-                        || p.y * s < m.viewTop + marginy
-                        || (p.y + c.height) * s > m.viewTop + m.viewHeight - marginy) {
-                        // move the block towards the center
-                        this.editor.centerOnBlock(bid);
+
+                    // scroll the workspace so that the block is visible. if the block is too tall or too wide
+                    // to fit in the workspace view, then try to align it with the left/top edge of the block
+                    const xy = b.getRelativeToSurfaceXY();
+                    const scale = this.editor.scale;
+                    const metrics = this.editor.getMetrics();
+
+                    // this margin is in screen pixels
+                    const margin = 20;
+
+                    let scrollX = metrics.viewLeft;
+                    let scrollY = metrics.viewTop;
+
+                    const blockWidth = b.width * scale + margin * 2;
+                    const blockHeight = b.height * scale + margin * 2;
+
+                    // in RTL workspaces, the x coordinate for the block is the right side
+                    const blockLeftEdge = this.editor.RTL ? (xy.x - b.width) * scale - margin : xy.x * scale - margin;
+                    const blockRightEdge = blockLeftEdge + blockWidth;
+
+                    const blockTopEdge = xy.y * scale - margin;
+                    const blockBottomEdge = blockTopEdge + blockHeight;
+
+                    const viewBottom = metrics.viewTop + metrics.viewHeight;
+                    const viewRight = metrics.viewLeft + metrics.viewWidth;
+
+                    if (metrics.viewTop > blockTopEdge) {
+                        scrollY = blockTopEdge;
+                    }
+                    else if (viewBottom < blockBottomEdge) {
+                        if (blockHeight > metrics.viewHeight) {
+                            scrollY = blockTopEdge;
+                        }
+                        else {
+                            scrollY = blockBottomEdge - metrics.viewHeight;
+                        }
+                    }
+
+                    if (this.editor.RTL) {
+                        // for RTL, we want to align to the right edge
+                        if (viewRight < blockRightEdge) {
+                            scrollX = blockRightEdge - metrics.viewWidth;
+                        }
+                        else if (metrics.viewLeft > blockLeftEdge) {
+                            if (blockWidth > metrics.viewWidth) {
+                                scrollX = blockRightEdge - metrics.viewWidth;
+                            }
+                            else {
+                                scrollX = blockLeftEdge;
+                            }
+                        }
+                    }
+                    else if (metrics.viewLeft > blockLeftEdge) {
+                        scrollX = blockLeftEdge;
+                    }
+                    else if (viewRight < blockRightEdge) {
+                        if (blockWidth > metrics.viewWidth) {
+                            scrollX = blockLeftEdge;
+                        }
+                        else {
+                            scrollX = blockRightEdge - metrics.viewWidth;
+                        }
+                    }
+
+                    if (scrollX !== metrics.viewLeft || scrollY !== metrics.scrollTop) {
+                        // scroll coordinates are negative
+                        this.editor.scroll(-scrollX, -scrollY);
                     }
                 }
                 return true;
@@ -1205,7 +1686,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
         if (this.debuggerToolbox) {
             const visibleVars = Blockly.Variables.allUsedVarModels(this.editor)
-                .map((variable: Blockly.VariableModel) => pxtc.escapeIdentifier(variable.name));
+                .map((variable: Blockly.VariableModel) => pxtc.escapeIdentifier(variable.getName()));
 
             this.debuggerToolbox.setBreakpoint(brk, visibleVars);
         }
@@ -1269,7 +1750,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             plugins: {
                 'blockDragger': pxtblockly.BlockDragger,
                 'connectionChecker': DuplicateOnDragConnectionChecker,
-                'flyoutsVerticalToolbox': pxtblockly.VerticalFlyout,
+                'flyoutsVerticalToolbox': pxtblockly.CachingFlyout,
                 'connectionPreviewer': pxtblockly.ConnectionPreviewer
             },
             move: {
@@ -1326,6 +1807,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             const refreshBlockly = () => {
                 this.delayLoadXml = this.getCurrentSource();
                 this.editor = undefined;
+                this.cleanupKeyboardNavigation();
                 this.prepareBlockly(hasCategories);
                 this.domUpdate();
                 this.editor.scrollCenter();
@@ -1344,6 +1826,18 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             }
         }
         pxt.perf.measureEnd(Measurements.RefreshToolbox)
+    }
+
+    cleanupKeyboardNavigation() {
+        if (this.keyboardNavigation) {
+            // This event doesn't always get cleaned up properly when a move is completed.
+            // Clear out any lingering registrations just in case.
+            // (This is already patched in blockly, but we need an update to get it)
+            this.unregisterBlocklyShortcutIfExists("commitMove");
+            this.keyboardNavigation.dispose();
+            this.keyboardNavigation = undefined;
+            initCopyPaste(false, true); // Re-initialize old copy/paste handlers
+        }
     }
 
     filterToolbox(showCategories?: boolean) {
@@ -1408,9 +1902,17 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     public hideFlyout() {
         if (this.editor.getToolbox()) {
+            this.ignoreFlyoutPreviousNode = true;
             this.editor.getFlyout().hide();
         }
         if (this.toolbox) this.toolbox.clear();
+    }
+
+    public setFlyoutForceOpen(forceOpen: boolean) {
+        const flyout = this.editor.getFlyout() as pxtblockly.CachingFlyout
+        if (flyout && typeof flyout.setForceOpen === 'function') {
+            flyout.setForceOpen(forceOpen);
+        }
     }
 
     ///////////////////////////////////////////////////////////
@@ -1424,6 +1926,13 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         // note that we don't need to clear the flyout SVG cache since those
         // will regenerate themselves more precisely based on the hash of the
         // input blocks xml.
+
+        // Avoid the focus manager remembering prior workspace node selections.
+        const focusManager = Blockly.getFocusManager();
+        if (focusManager.isRegistered(this.editor)) {
+            focusManager.unregisterTree(this.editor);
+            focusManager.registerTree(this.editor, true);
+        }
     }
 
     clearFlyoutCaches() {
@@ -1611,7 +2120,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 // Cache blocks xml list for later
                 this.flyoutBlockXmlCache[cacheKey] = this.flyoutXmlList;
             }
-            this.showFlyoutInternal_(this.flyoutXmlList, cacheKey);
+            this.showFlyoutInternal_(this.flyoutXmlList, cachable && cacheKey, !cachable);
         }
     }
 
@@ -1672,7 +2181,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             this.flyoutXmlList.push(label);
         }
         this.showFlyoutInternal_(this.flyoutXmlList, "search");
-        this.toolbox.setSearch();
     }
 
     private showTopBlocksFlyout() {
@@ -1695,30 +2203,19 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.showFlyoutInternal_(this.flyoutXmlList);
     }
 
-    private showFlyoutInternal_(xmlList: Element[], flyoutName: string = "default") {
-        const flyout = this.editor.getFlyout() as pxtblockly.VerticalFlyout;
-        flyout.show(xmlList, flyoutName);
+    private showFlyoutInternal_(xmlList: Element[], flyoutName: string = "default", skipCache = false) {
+        this.currentFlyoutKey = flyoutName;
+        const flyout = this.editor.getFlyout();
+        flyout.show(xmlList);
         flyout.scrollToStart();
     }
 
     // For editors that have no toolbox
     showFlyoutOnlyToolbox() {
         // Show a Flyout only with all the blocks
-        const allCategories = this.getAllCategories();
-        let allBlocks: toolbox.BlockDefinition[] = [];
-        allCategories.forEach(category => {
-            const blocks = category.blocks;
-            allBlocks = allBlocks.concat(blocks);
-            if (category.subcategories) category.subcategories.forEach(subcategory => {
-                const subblocks = subcategory.blocks;
-                allBlocks = allBlocks.concat(subblocks);
-            })
-        });
+        this.injectCategoryStyles();
 
-        let container = document.createElement("div");
-        ReactDOM.render(<toolbox.ToolboxStyle categories={allCategories} />, container);
-        document.getElementById('editorcontent').appendChild(container);
-
+        let allBlocks = this.getAllBlocks();
         let xmlList: Element[] = [];
         allBlocks.forEach((block) => {
             const blockXmlList = this.getBlockXml(block);
@@ -1901,8 +2398,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         }
 
         function variableIsAssigned(name: string, editor: Blockly.WorkspaceSvg) {
-            const varModel = editor.getVariable(name);
-            const varUses = varModel && editor.getVariableUsesById(varModel.getId());
+            const varModel = editor.getVariableMap().getVariable(name);
+            const varUses = varModel && Blockly.Variables.getVariableUsesById(editor, varModel.getId());
             return varUses && varUses.some(b => b.type == "variables_set" || b.type == "variables_change");
         }
     }
@@ -1925,7 +2422,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             }
         });
 
-        this.editor.options.readOnly = debugging || pxt.shell.isReadOnly();
+        this.editor.setIsReadOnly(debugging || pxt.shell.isReadOnly());
     }
 
     protected enableBreakpoint(block: Blockly.Block, enabled: boolean) {
@@ -1948,29 +2445,27 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         }
     }
 
-    protected pasteCallback = () => {
+    protected pasteCallback = (workspace: Blockly.Workspace, ev: Event) => {
         const data = getCopyData();
         if (!data?.data || !this.editor || !this.canPasteData(data)) return false;
 
-        this.pasteAsync(data);
+        // Prevent a clipboard API paste event which can result in a file load
+        // or confusing error about unsupported file types.
+        ev.preventDefault();
+
+        this.pasteAsync(data, ev.type === "pointerdown" ? ev as PointerEvent : undefined);
         return true;
     }
 
-    protected async pasteAsync(data: CopyDataEntry) {
+    protected async pasteAsync(data: CopyDataEntry, ev?: PointerEvent) {
         const copyData = data.data;
         const copyWorkspace = this.editor;
         const copyCoords = copyWorkspace.id === data.workspaceId ? data.coord : undefined;
 
         // this pasting code is adapted from Blockly/core/shortcut_items.ts
         const doPaste = () => {
-            if (!copyCoords) {
-                // If we don't have location data about the original copyable, let the
-                // paster determine position.
-                return !!Blockly.clipboard.paste(copyData, copyWorkspace);
-            }
-
-            const { left, top, width, height } = copyWorkspace
-                .getMetricsManager()
+            const metricsManager = copyWorkspace.getMetricsManager();
+            const { left, top, width, height } = metricsManager
                 .getViewMetrics(true);
             const viewportRect = new Blockly.utils.Rect(
                 top,
@@ -1979,7 +2474,21 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 left + width
             );
 
-            if (viewportRect.contains(copyCoords.x, copyCoords.y)) {
+            if (ev) {
+                // if we have a pointer event, then paste at that location
+                const injectionDivBBox = copyWorkspace.getInjectionDiv().getBoundingClientRect();
+                const pixelViewport = metricsManager.getViewMetrics();
+                const workspaceSvgOffset = metricsManager.getAbsoluteMetrics();
+
+                const offsetX = ((ev.clientX - injectionDivBBox.left - workspaceSvgOffset.left) / pixelViewport.width);
+                const offsetY = ((ev.clientY - injectionDivBBox.top - workspaceSvgOffset.top) / pixelViewport.height);
+
+                const contextMenuCoords = new Blockly.utils.Coordinate(left + offsetX * width, top + offsetY * height);
+
+                return !!Blockly.clipboard.paste(copyData, copyWorkspace, contextMenuCoords);
+            }
+
+            if (copyCoords && viewportRect.contains(copyCoords.x, copyCoords.y)) {
                 // If the original copyable is inside the viewport, let the paster
                 // determine position.
                 return !!Blockly.clipboard.paste(copyData, copyWorkspace);
@@ -2046,7 +2555,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     }
 
     protected pastePrecondition = (scope: Blockly.ContextMenuRegistry.Scope) => {
-        if (scope.workspace !== this.editor) return "hidden";
+        if (
+            (scope.workspace && scope.workspace !== this.editor) ||
+            (scope.block && scope.block.workspace !== this.editor)
+        )
+            return "hidden";
+
 
         const data = getCopyData();
 
@@ -2102,7 +2616,6 @@ async function setHighlightWarningAsync(block: Blockly.BlockSvg, enabled: boolea
     block.setHighlighted(enabled);
     if (enabled) {
         await Blockly.renderManagement.finishQueuedRenders();
-        (block.pathObject as PathObject).resizeHighlight();
     }
 }
 
@@ -2111,28 +2624,16 @@ function isBreakpointSet(block: Blockly.BlockSvg) {
     return !!existing?.isEnabled();
 }
 
-function fixHighlight(block: Blockly.BlockSvg) {
-    (block.pathObject as PathObject).resizeHighlight();
-
-    const connectedTo = block.outputConnection?.targetBlock();
-
-    if (connectedTo) {
-        fixHighlight(connectedTo);
-    }
-}
-
 function shouldEventHideFlyout(ev: Blockly.Events.Abstract) {
-    if (ev.type === "var_create" || ev.type === "marker_move") {
+    if (
+        ev.type === Blockly.Events.VAR_CREATE ||
+        ev.type === Blockly.Events.TOOLBOX_ITEM_SELECT ||
+        ev.type === Blockly.Events.BLOCK_DRAG ||
+        // Selected events are fired late when using 'T' to open the toolbox during a keyboard-driven block move.
+        ev.type === Blockly.Events.SELECTED ||
+        ev.type === Blockly.Events.BLOCK_MOVE
+    ) {
         return false;
-    }
-
-    // If a block is selected when the user clicks on a flyout button (e.g. "Make a Variable"),
-    // a selected event will fire unselecting the block before the var_create event is fired.
-    // Make sure we don't close the flyout in the case where a block is simply being unselected.
-    if (ev.type === "selected") {
-        if (!(ev as Blockly.Events.Selected).newElementId) {
-            return false;
-        }
     }
 
     return true;
@@ -2165,21 +2666,30 @@ function resolveLocalizedMarkdown(url: string) {
 }
 
 // adapted from Blockly/core/shortcut_items.ts
-function copy(workspace: Blockly.WorkspaceSvg, e: Event) {
+function copy(workspace: Blockly.WorkspaceSvg, e: Event, _shortcut: Blockly.ShortcutRegistry.KeyboardShortcut, scope: Blockly.ContextMenuRegistry.Scope) {
     // Prevent the default copy behavior, which may beep or otherwise indicate
     // an error due to the lack of a selection.
     e.preventDefault();
     workspace.hideChaff();
-    const selected = Blockly.common.getSelected();
-    if (!selected || !Blockly.isCopyable(selected)) return false;
+    const focused = scope.focusedNode;
 
-    const copyData = selected.toCopyData();
+    // If copying a block in the flyout via the context menu, the workspace is the flyout,
+    // otherwise (using the keyboard shortcut) the workspace is the main workspace.
+    // If the workspace is the main workspace, calling hideChaff will close the flyout,
+    // so focus the main workspace after that happens.
+    if ((focused as Blockly.BlockSvg).isInFlyout && !workspace.isFlyout) {
+        Blockly.getFocusManager().focusTree(workspace);
+    }
+
+    if (!focused || !Blockly.isCopyable(focused)) return false;
+    const copyData = focused.toCopyData();
+
     const copyWorkspace =
-        selected.workspace instanceof Blockly.WorkspaceSvg
-            ? selected.workspace
+        focused.workspace instanceof Blockly.WorkspaceSvg
+            ? focused.workspace
             : workspace;
-    const copyCoords = Blockly.isDraggable(selected)
-        ? selected.getRelativeToSurfaceXY()
+    const copyCoords = Blockly.isDraggable(focused)
+        ? focused.getRelativeToSurfaceXY()
         : null;
 
     if (copyData) {
@@ -2195,30 +2705,32 @@ function copy(workspace: Blockly.WorkspaceSvg, e: Event) {
 }
 
 // adapted from Blockly/core/shortcut_items.ts
-function cut(workspace: Blockly.WorkspaceSvg, e: Event) {
-    const selected = Blockly.common.getSelected();
+function cut(workspace: Blockly.WorkspaceSvg, _e: Event, _shortcut: Blockly.ShortcutRegistry.KeyboardShortcut, scope: Blockly.ContextMenuRegistry.Scope) {
+    const focused = scope.focusedNode;
 
-    if (selected instanceof Blockly.BlockSvg) {
-        const copyData = selected.toCopyData();
+    if (focused instanceof Blockly.BlockSvg) {
+        const copyData = focused.toCopyData();
         const copyWorkspace = workspace;
-        const copyCoords = selected.getRelativeToSurfaceXY();
+        const copyCoords = focused.getRelativeToSurfaceXY();
         saveCopyData(
             copyData,
             copyCoords,
             copyWorkspace,
             pkg.mainEditorPkg().header.id
         );
-        selected.checkAndDelete();
+        if (!shouldDuplicateOnDrag(focused)) {
+            focused.checkAndDelete();
+        }
         return true;
     } else if (
-        Blockly.isDeletable(selected) &&
-        selected.isDeletable() &&
-        Blockly.isCopyable(selected)
+        Blockly.isDeletable(focused) &&
+        focused.isDeletable() &&
+        Blockly.isCopyable(focused)
     ) {
-        const copyData = selected.toCopyData();
+        const copyData = focused.toCopyData();
         const copyWorkspace = workspace;
-        const copyCoords = Blockly.isDraggable(selected)
-            ? selected.getRelativeToSurfaceXY()
+        const copyCoords = Blockly.isDraggable(focused)
+            ? focused.getRelativeToSurfaceXY()
             : null;
         saveCopyData(
             copyData,
@@ -2226,7 +2738,7 @@ function cut(workspace: Blockly.WorkspaceSvg, e: Event) {
             copyWorkspace,
             pkg.mainEditorPkg().header.id
         );
-        selected.dispose();
+        focused.dispose();
         return true;
     }
     return false;
@@ -2264,4 +2776,25 @@ function getCopyData(): CopyDataEntry | undefined {
 
 function copyDataKey() {
     return "copyData";
+}
+
+function maybeCloneBlockForMove(workspace: Blockly.WorkspaceSvg) {
+    const block = workspace?.getCursor()?.getSourceBlock();
+
+    if (block && shouldDuplicateOnDrag(block)) {
+        Blockly.Events.setGroup(true);
+        const xml = Blockly.Xml.blockToDom(block);
+        const clone = Blockly.Xml.domToBlock(xml as Element, workspace);
+        clone.setShadow(false);
+
+        const position = block.getRelativeToSurfaceXY();
+        const snapRadius = Blockly.config.snapRadius;
+
+        clone.moveBy(
+            position.x + snapRadius,
+            position.y + snapRadius,
+        );
+
+        Blockly.getFocusManager().focusNode(clone as Blockly.BlockSvg);
+    }
 }

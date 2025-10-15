@@ -5,7 +5,8 @@ import * as React from "react";
 
 import { connect } from 'react-redux';
 import { dispatchSaveAndCloseActivity, dispatchShowResetUserModal, dispatchShowLoginModal,
-    dispatchShowUserProfile, dispatchSetUserPreferences, dispatchShowSelectLanguage } from '../actions/dispatch';
+    dispatchShowUserProfile, dispatchSetUserPreferences, dispatchShowSelectLanguage,
+    dispatchShowSelectTheme, dispatchShowFeedback } from '../actions/dispatch';
 import { SkillMapState } from '../store/reducer';
 import { isLocal, resolvePath, tickEvent } from "../lib/browserUtils";
 
@@ -30,6 +31,8 @@ interface HeaderBarProps {
     dispatchShowUserProfile: () => void;
     dispatchSetUserPreferences: (preferences?: pxt.auth.UserPreferences) => void;
     dispatchShowSelectLanguage: () => void;
+    dispatchShowSelectTheme: () => void;
+    dispatchShowFeedback: () => void;
 }
 
 export class HeaderBarImpl extends React.Component<HeaderBarProps> {
@@ -38,27 +41,23 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
         const items: MenuItem[] = [];
 
         if (this.props.preferences) {
-            const highContrast = this.props.preferences?.highContrast;
             items.push({
-                id: "highcontrast",
-                title: highContrast ? lf("High Contrast Off") : lf("High Contrast On"),
-                label: highContrast ? lf("High Contrast Off") : lf("High Contrast On"),
+                role: "menuitem",
+                id: "theme",
+                title: lf("Theme"),
+                label: lf("Theme"),
                 onClick: () => {
-                    const newHighContrastPref = !this.props.preferences.highContrast;
-                    tickEvent("skillmap.highcontrast", { on: newHighContrastPref ? 1 : 0});
-                    authClient.setHighContrastPrefAsync(newHighContrastPref);
-                    this.props.dispatchSetUserPreferences({
-                        ...this.props.preferences,
-                        highContrast: newHighContrastPref
-                    })
+                    tickEvent("skillmap.theme");
+                    this.props.dispatchShowSelectTheme();
                 }
-            })
+            });
         }
 
         // We hide the language option when activities are open to avoid
         // reloading the workspace and losing unsaved work.
         if (!this.props.activityOpen) {
             items.push({
+                role: "menuitem",
                 id: "language",
                 title: lf("Language"),
                 label: lf("Language"),
@@ -71,18 +70,27 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
 
         if (this.props.showReportAbuse) {
             items.push({
+                role: "link",
                 id: "report",
-                title: lf("Report Abuse"),
                 label: lf("Report Abuse"),
-                onClick: () => {
-                    tickEvent("skillmap.reportabuse");
-                    window.open(this.reportAbuseUrl);
-                }
+                href: this.reportAbuseUrl,
+                onClick: () => tickEvent("skillmap.reportabuse")
             })
+        }
+
+        if (pxt.U.ocvEnabled()) {
+            items.push({
+                role: "menuitem",
+                id: "feedback",
+                title: lf("Feedback"),
+                label: lf("Feedback"),
+                onClick: this.onFeedbackClicked
+            });
         }
 
         if (!this.props.activityOpen) {
             items.push({
+                role: "menuitem",
                 id: "reset",
                 title: lf("Reset All"),
                 label: lf("Reset All"),
@@ -120,14 +128,6 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
 
     protected getHelpItems(): MenuItem[] {
         const items: MenuItem[] = [];
-        if (this.props.activityOpen) {
-            items.push({
-                id: "feedback",
-                title: lf("Feedback"),
-                label: lf("Feedback"),
-                onClick: this.onBugClicked
-            });
-        }
         return items;
     }
 
@@ -142,12 +142,14 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
 
         if (signedIn) {
             items.push({
+                role: "menuitem",
                 id: "profile",
                 title: lf("My Profile"),
                 label: lf("My Profile"),
                 onClick: this.onProfileClicked
             });
             items.push({
+                role: "menuitem",
                 id: "signout",
                 title: lf("Sign Out"),
                 label: lf("Sign Out"),
@@ -167,7 +169,7 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
         return <div className="user-menu">
             {signedIn
             ?  <MenuDropdown id="profile-dropdown" items={items} label={avatarElem || initialsElem} title={lf("Profile Settings")}/>
-             : <Button className="menu-button inverted" rightIcon="xicon cloud-user" title={lf("Sign In")} label={lf("Sign In")} onClick={ () => {
+             : <Button className="menu-button" rightIcon="xicon cloud-user" title={lf("Sign In")} label={lf("Sign In")} onClick={ () => {
                 pxt.tickEvent(`skillmap.usermenu.signin`);
                 this.props.dispatchShowLoginModal();
             }}/>}
@@ -214,9 +216,9 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
         }
     }
 
-    onBugClicked = () => {
-        tickEvent("skillmap.bugreport");
-        (window as any).usabilla_live?.("click");
+    onFeedbackClicked = () => {
+        tickEvent("skillmap.feedbackclicked");
+        this.props.dispatchShowFeedback();
     }
 
     onLogoutClicked = async () => {
@@ -264,7 +266,9 @@ const mapDispatchToProps = {
     dispatchShowLoginModal,
     dispatchShowUserProfile,
     dispatchSetUserPreferences,
-    dispatchShowSelectLanguage
+    dispatchShowSelectLanguage,
+    dispatchShowSelectTheme,
+    dispatchShowFeedback
 };
 
 export const HeaderBar = connect(mapStateToProps, mapDispatchToProps)(HeaderBarImpl);
