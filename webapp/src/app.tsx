@@ -205,7 +205,8 @@ export class ProjectView
             isMultiplayerGame: false,
             activeTourConfig: undefined,
             mute: pxt.editor.MuteState.Unmuted,
-            feedback: {showing: false, kind: "generic"} // state that tracks if the feedback modal is showing and what kind
+            feedback: {showing: false, kind: "generic"}, // state that tracks if the feedback modal is showing and what kind
+            errorListCollapsed: true // error pane is collapsed by default
         };
         if (!this.settings.editorFontSize) this.settings.editorFontSize = /mobile/i.test(navigator.userAgent) ? 15 : 19;
         if (!this.settings.fileHistory) this.settings.fileHistory = [];
@@ -324,9 +325,11 @@ export class ProjectView
      * Run a global action based on shortcuts triggered in sim or main window.
      */
     private runGlobalAction(action: pxsim.GlobalAction) {
-        if (!data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)) {
+        // Escape always works to exit fullscreen, other actions require accessible blocks
+        if (action !== "escape" && !data.getData<boolean>(auth.ACCESSIBLE_BLOCKS)) {
             return;
         }
+
         switch (action) {
             case "escape": {
                 this.setSimulatorFullScreen(false);
@@ -393,7 +396,8 @@ export class ProjectView
             // it's a go, let's add
             for (const ghid of ghids) {
                 pxt.debug(`adding ${ghid.fullName}`)
-                const { config, version } = await pxt.github.downloadLatestPackageAsync(ghid);
+                const useProxy = pxt.github.shouldUseProxyForRepo(ghid.fullName);
+                const { config, version } = await pxt.github.downloadLatestPackageAsync(ghid, useProxy);
                 await p.setDependencyAsync(config.name, version);
             }
             this.reloadHeaderAsync();
@@ -1935,7 +1939,13 @@ export class ProjectView
             pxt.BrowserUtils.changeHash("#editor", true);
             // Clear the focus.
             document.getElementById("root").focus();
-            /* await */ cmds.maybeReconnectAsync(false, true);
+            /** TODO: Resolve race condition that makes this having a delay necessary.
+             * Without this delay, in some circumstances (e.g. extensions being added) the reconnect will go through
+             * but webusb state will be lost right afterwards and the download icon will change from webusb connected
+             * to normal save icon (with some inconsistency on whether clicking download automatically reconnects,
+             * or requires further attention in form of disconnect/reconnect or page refresh)
+             */
+            /* await */ pxt.Util.delay(500).then(() => cmds.maybeReconnectAsync(false, true));
             this.editorLoaded();
         }
     }
@@ -2712,7 +2722,7 @@ export class ProjectView
 
     initDragAndDrop() {
         draganddrop.addDragAndDropHandler({
-            filter: file => file.size < 1000000 && this.isHexFile(file.name) || this.isBlocksFile(file.name) || this.isZipFile(file.name),
+            filter: () => true,
             dragged: files => {
                 if (files) {
                     pxt.tickEvent("dragandrop.open")
@@ -3178,7 +3188,7 @@ export class ProjectView
         const { name, path, loadBlocks, prj, preferredEditor } = options;
         core.showLoading("changingcode", lf("loading..."));
         this.loadingExample = true;
-        return this.loadActivityFromMarkdownAsync(path, name.toLowerCase(), preferredEditor)
+        return this.loadActivityFromMarkdownAsync(path, name?.toLowerCase(), preferredEditor)
             .then(r => {
                 const { filename, md, features, autoChooseBoard: autoChooseBoardMeta } = (r || {});
                 const autoChooseBoard = !prj && autoChooseBoardMeta;
@@ -4308,7 +4318,10 @@ export class ProjectView
     async renderByBlockIdAsync(req: pxt.editor.EditorMessageRenderByBlockIdRequest): Promise<pxt.editor.EditorMessageRenderByBlockIdResponse> {
         const blocksInfo = await compiler.getBlocksAsync();
         const blockInfo = blocksInfo.blocksById[req.blockId];
-        const symbolInfo: pxtc.SymbolInfo = blocksInfo.apis.byQName[blockInfo.qName];
+        let symbolInfo: pxtc.SymbolInfo = blocksInfo.apis.byQName[blockInfo.qName];
+        if (!symbolInfo) {
+            symbolInfo = pxtblockly.blockSymbol(blockInfo.attributes.blockId)
+        }
         const compileInfo: pxt.blocks.BlockCompileInfo = pxt.blocks.compileInfo(symbolInfo);
         const xml = pxtblockly.createToolboxBlock(blocksInfo, symbolInfo, compileInfo, false, 3);
         return this.renderXmlInner(xml.outerHTML, req.snippetMode, req.layout);
@@ -4455,10 +4468,10 @@ export class ProjectView
         return this.getShareUrl(script.shortid || script.id, false);
     }
 
-    async publishAsync (name: string, screenshotUri?: string, forceAnonymous?: boolean): Promise<pxt.editor.ShareData> {
+    async publishAsync (name: string, description?: string,screenshotUri?: string, forceAnonymous?: boolean): Promise<pxt.editor.ShareData> {
         pxt.tickEvent("menu.embed.publish", undefined, { interactiveConsent: true });
-        if (name && this.state.projectName != name) {
-            await this.updateHeaderNameAsync(name);
+        if ((name && this.state.projectName != name) || description !== undefined) {
+            await this.updateHeaderNameAsync(name, description);
         }
 
         const hasIdentity = auth.hasIdentity() && this.isLoggedIn();
@@ -4531,7 +4544,7 @@ export class ProjectView
             }
 
             const meta: workspace.ScriptMeta = {
-                description: mpkg.config.description,
+                description: mpkg.config.description?.substring(0, pxt.MAX_DESCRIPTION_LENGTH),
             };
 
             const blocksSize = this.blocksEditor.contentSize();
@@ -4605,18 +4618,20 @@ export class ProjectView
         }
     }
 
-    updateHeaderNameAsync(name: string): Promise<void> {
+    updateHeaderNameAsync(name: string, description?: string): Promise<void> {
         // nothing to do?
-        if (pkg.mainPkg.config.name == name)
+        if (pkg.mainPkg.config.name == name && (description === undefined || pkg.mainPkg.config.description == description))
             return Promise.resolve();
 
         //Save the name in the target MainPackage as well
         pkg.mainPkg.config.name = name;
+        pkg.mainPkg.config.description = description !== undefined ? description : pkg.mainPkg.config.description;
 
         pxt.debug('saving project name to ' + name);
         let f = pkg.mainEditorPkg().lookupFile("this/" + pxt.CONFIG_NAME);
         let config = JSON.parse(f.content) as pxt.PackageConfig;
         config.name = name;
+        config.description = description !== undefined ? description : config.description;
         return f.setContentAsync(pxt.Package.stringifyConfig(config))
             .then(() => {
                 if (this.state.header)
@@ -6271,7 +6286,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     let theme = pxt.appTarget.appTheme;
     const isControllerIFrame = theme.allowParentController || pxt.shell.isControllerMode()
     // disable auth in iframe scenarios
-    if (isControllerIFrame)
+    if (isControllerIFrame && !pxt.BrowserUtils.isSkillmapEditor())
         pxt.auth.enableAuth(false);
     enableAnalytics()
 

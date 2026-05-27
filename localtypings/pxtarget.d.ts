@@ -424,6 +424,7 @@ declare namespace pxt {
         disableLiveTranslations?: boolean; // don't load translations from crowdin
         extendEditor?: boolean; // whether a target specific editor.js is loaded
         extendFieldEditors?: boolean; // wether a target specific fieldeditors.js is loaded
+        extendScriptPage?: boolean; // if set to true, builds scriptpage.js from scriptPage/ folder when building target
         highContrast?: boolean; // simulator has a high contrast mode
         print?: boolean; //Print blocks and text feature
         greenScreen?: boolean; // display webcam stream in background
@@ -539,6 +540,8 @@ declare namespace pxt {
         pxtJsonOptions?: PxtJsonOption[];
         enabledFeatures?: pxt.Map<FeatureFlag>;
         forceEnableAiErrorHelp?: boolean; // Enables the AI Error Help feature, regardless of geo setting.
+        shareHomepageContent?: boolean; // Show buttons to share links to homepage content more easily
+        showProjectDescription?: boolean; // Show project description in pxtjson editor and share dialog
     }
 
     interface DownloadDialogTheme {
@@ -880,6 +883,9 @@ declare namespace ts.pxtc {
         blockImage?: boolean; // for enum variable, specifies that it should use an image from a predefined location
         blockCombine?: boolean;
         blockCombineShadow?: string;
+        blockCombineGetHelp?: string;
+        blockCombineSetHelp?: string;
+        blockCombineChangeHelp?: string;
         blockSetVariable?: string; // show block with variable assigment in toolbox. Set equal to a name to control the var name
         fixedInstances?: boolean;
         fixedInstance?: boolean;
@@ -1368,6 +1374,7 @@ declare namespace pxt.tour {
         sansQuery?: string; // Use this to exclude an element from the cutout
         sansLocation?: BubbleLocation; // relative location of element to exclude
         onStepBegin?: () => void;
+        onStepEnd?: () => void;
         bubbleStyle?: "yellow"; // Currently just have default (unset) & yellow styles. May add more in the future...
     }
     interface TourConfig {

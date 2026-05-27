@@ -795,7 +795,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         pxsim.U.clear(blocklyDiv);
 
         // Increase the Blockly connection radius
-        Blockly.config.snapRadius = 48;
+        Blockly.config.snapRadius = 28;
         Blockly.config.connectingSnapRadius = 96;
         this.editor = Blockly.inject(blocklyDiv, this.getBlocklyOptions(forceHasCategories)) as Blockly.WorkspaceSvg;
         pxtblockly.contextMenu.setupWorkspaceContextMenu(this.editor);
@@ -956,6 +956,10 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 if (entry.intersectionRatio > 0) {
                     this.intersectionObserver.unobserve(entry.target);
                     this.editor.refreshTheme();
+                    const flyoutWorkspace = this.editor.getFlyout()?.getWorkspace();
+                    if (flyoutWorkspace) {
+                        flyoutWorkspace.refreshTheme();
+                    }
                 }
             })
         });
@@ -1046,12 +1050,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     zoomIn() {
         if (!this.editor) return;
-        this.editor.zoomCenter(0.8);
+        this.editor.zoomCenter(5);
     }
 
     zoomOut() {
         if (!this.editor) return;
-        this.editor.zoomCenter(-0.8);
+        this.editor.zoomCenter(-5);
     }
 
     setScale(scale: number) {
@@ -1088,6 +1092,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     <ErrorList
                         errors={this.errors}
                         onSizeChange={this.onErrorListResize}
+                        collapsedByUser={this.parent.state.errorListCollapsed}
+                        onUserCollapse={this.setErrorListCollapsePreference}
                         getErrorHelp={this.getErrorHelp}
                         showLoginDialog={this.parent.showLoginDialog}
                         startDebugger={this.startDebugger}
@@ -1099,6 +1105,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     onErrorListResize() {
         this.parent.fireResize();
+    }
+
+    protected setErrorListCollapsePreference = (collapsed: boolean) => {
+        this.parent.setState({
+            errorListCollapsed: collapsed
+        });
     }
 
     onExceptionDetected(exception: pxsim.DebuggerBreakpointMessage) {
@@ -1196,8 +1208,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
      * ensuring all provided ids are valid and setting up the corresponding target queries.
      */
     private createTourFromResponse = (response: ErrorHelpTourResponse): pxt.tour.TourConfig => {
-        const validBlockIds = this.parent.getBlocks().map((b) => b.id);
-
         const tourSteps: pxt.tour.BubbleStep[] = [];
         let invalidBlockIdCount = 0;
         for (const step of response.explanationSteps) {
@@ -1209,10 +1219,24 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             } as pxt.tour.BubbleStep;
 
             if (step.elementId) {
-                if (validBlockIds.includes(step.elementId)) {
+                const targetBlock = this.editor?.getBlockById(step.elementId);
+                if (targetBlock) {
+                    const targetBlockRoot = targetBlock.getRootBlock();
+                    const isInsideCollapsedBlock = targetBlockRoot.isCollapsed() && targetBlockRoot.id !== step.elementId;
                     tourStep.targetQuery = `g[data-id="${step.elementId}"]:not(.blocklyFlyout g)`;
                     tourStep.location = pxt.tour.BubbleLocation.Right;
-                    tourStep.onStepBegin = () => this.editor.centerOnBlock(step.elementId, true);
+
+                    tourStep.onStepBegin = () => {
+                        if (isInsideCollapsedBlock) {
+                            targetBlockRoot.setCollapsed(false);
+                            targetBlockRoot.bringToFront();
+                            targetBlockRoot.render();
+                        }
+                        this.editor.centerOnBlock(step.elementId, true);
+                    };
+                    if (isInsideCollapsedBlock) {
+                        tourStep.onStepEnd = () => targetBlockRoot.setCollapsed(true);
+                    }
                 } else {
                     // Do not add the tour target, but keep the step in case it's still helpful.
                     pxt.tickEvent("errorHelp.invalidBlockId");
@@ -1233,6 +1257,15 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     invalidBlockIdCount: invalidBlockIdCount,
                 })} />
         };
+    }
+
+    private getVisibleBlockAncestorId(blockId: string): string | undefined {
+        const block = this.editor?.getBlockById(blockId) as Blockly.BlockSvg;
+        const rootBlock = block?.getRootBlock() as Blockly.BlockSvg;
+        if (!block || !rootBlock) {
+            return undefined;
+        }
+        return rootBlock.isCollapsed() ? rootBlock.id : blockId;
     }
 
     private handleErrorHelpFeedback(positive: boolean, responseData: any) {
@@ -1761,7 +1794,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 controls: false,
                 maxScale: 2.5,
                 minScale: .2,
-                scaleSpeed: 1.5,
+                scaleSpeed: 1.08,
                 startScale: pxt.BrowserUtils.isMobile() ? 0.7 : 0.9,
                 pinch: true,
                 wheel: true
@@ -2151,6 +2184,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     protected showFlyoutBlocks(ns: string, color: string, blocks: toolbox.BlockDefinition[]) {
         const filters = this.parent.state.editorState ? this.parent.state.editorState.filters : undefined;
+        let configBlocksShown = new Set<string>();
         blocks.sort((f1, f2) => {
             // Sort the blocks
             return (f2.attributes.weight != undefined ? f2.attributes.weight : 50)
@@ -2161,6 +2195,19 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 blockXmlList = this.getButtonXml(block as toolbox.ButtonDefinition);
             } else {
                 blockXmlList = this.getBlockXml(block as toolbox.BlockDefinition);
+
+                if (blockXmlList?.some(element => element?.getAttribute("data-isBlockConfigOverride") === "true")) {
+                    // Some builtin blocks appear in the toolbox multiple times, for example the if/else
+                    // and lists_create_with blocks. If one of those has its XML overridden by a block config,
+                    // we need to make sure we only show it once since all of the snippets will have the same
+                    // overridden XML.
+                    if (configBlocksShown.has(block.attributes.blockId)) {
+                        blockXmlList = undefined;
+                    }
+                    else {
+                        configBlocksShown.add(block.attributes.blockId);
+                    }
+                }
             }
             if (blockXmlList) this.flyoutXmlList = this.flyoutXmlList.concat(blockXmlList);
         })
@@ -2243,12 +2290,29 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     private getBlockXml(block: toolbox.BlockDefinition, ignoregap?: boolean, shadow?: boolean): Element[] {
         const that = this;
         let blockXml: Element;
+
+        // Check for custom config in scope of the current tutorial step.
+        const currTutorialStep = this.parent.state.tutorialOptions?.tutorialStep;
+        const currTutorialStepInfo = currTutorialStep !== undefined ? this.parent.state.tutorialOptions.tutorialStepInfo[currTutorialStep] : undefined;
+        if (currTutorialStepInfo?.localBlockConfig?.blocks) {
+            blockXml = getBlockConfigXml(block, currTutorialStepInfo.localBlockConfig);
+        }
+
+        // Check for custom config in the tutorial's global scope.
+        if (!blockXml && this.parent.state.tutorialOptions?.globalBlockConfig?.blocks) {
+            blockXml = getBlockConfigXml(block, this.parent.state.tutorialOptions.globalBlockConfig);
+        }
+
+        if (blockXml) {
+            blockXml.setAttribute("data-isBlockConfigOverride", "true");
+        }
+
         // Check if the block is built in, ignore it as it's already defined in snippets
         if (block.attributes.blockBuiltin) {
             pxt.log("ignoring built in block: " + block.attributes.blockId);
             return undefined;
         }
-        if (block.builtinBlock) {
+        if (block.builtinBlock && !blockXml) {
             // function_return is conditionally added to the toolbox, so it needs a special case
             if (block.attributes.blockId === "function_return") {
                 return [pxtblockly.mkReturnStatementBlock()];
@@ -2271,29 +2335,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             if (fn) {
                 if (!shouldShowBlock(fn)) return undefined;
                 let comp = pxt.blocks.compileInfo(fn);
-
-                function getBlockConfigXml(blockConfig: pxt.tutorial.TutorialBlockConfig): Element | undefined {
-                    const entry = blockConfig.blocks.find(entry => entry.blockId === block.attributes.blockId);
-                    if (entry) {
-                        const xml = Blockly.utils.xml.textToDom(entry.xml);
-                        xml.setAttribute("gap", `${pxt.appTarget.appTheme
-                            && pxt.appTarget.appTheme.defaultBlockGap && pxt.appTarget.appTheme.defaultBlockGap.toString() || 8}`);
-                        return xml;
-                    }
-                    return undefined;
-                }
-
-                // Check for custom config in scope of the current tutorial step.
-                const currTutorialStep = this.parent.state.tutorialOptions?.tutorialStep;
-                const currTutorialStepInfo = currTutorialStep !== undefined ? this.parent.state.tutorialOptions.tutorialStepInfo[currTutorialStep] : undefined;
-                if (currTutorialStepInfo?.localBlockConfig?.blocks) {
-                    blockXml = getBlockConfigXml(currTutorialStepInfo.localBlockConfig);
-                }
-
-                // Check for custom config in the tutorial's global scope.
-                if (!blockXml && this.parent.state.tutorialOptions?.globalBlockConfig?.blocks) {
-                    blockXml = getBlockConfigXml(this.parent.state.tutorialOptions.globalBlockConfig);
-                }
 
                 // Create the block XML from block definition.
                 if (!blockXml) {
@@ -2368,7 +2409,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 pxt.log("Couldn't find block for: " + block.attributes.blockId);
                 pxt.log(block);
             }
-        } else {
+        } else if (!blockXml) {
             blockXml = Blockly.utils.xml.textToDom(block.blockXml);
         }
         if (blockXml) {
@@ -2797,4 +2838,15 @@ function maybeCloneBlockForMove(workspace: Blockly.WorkspaceSvg) {
 
         Blockly.getFocusManager().focusNode(clone as Blockly.BlockSvg);
     }
+}
+
+function getBlockConfigXml(block: toolbox.BlockDefinition, blockConfig: pxt.tutorial.TutorialBlockConfig): Element | undefined {
+    const entry = blockConfig.blocks.find(entry => entry.blockId === block.attributes.blockId);
+    if (entry) {
+        const xml = Blockly.utils.xml.textToDom(entry.xml);
+        xml.setAttribute("gap", `${pxt.appTarget.appTheme
+            && pxt.appTarget.appTheme.defaultBlockGap && pxt.appTarget.appTheme.defaultBlockGap.toString() || 8}`);
+        return xml;
+    }
+    return undefined;
 }

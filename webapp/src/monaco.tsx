@@ -664,6 +664,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     {showErrorList && (
                         <ErrorList
                             onSizeChange={this.setErrorListState}
+                            collapsedByUser={this.parent.state.errorListCollapsed}
+                            onUserCollapse={this.setErrorListCollapsePreference}
                             errors={this.errors}
                             startDebugger={this.startDebugger}
                             getErrorHelp={this.getErrorHelp}
@@ -957,6 +959,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 errorListState: newState
             });
         }
+    }
+
+    protected setErrorListCollapsePreference = (collapsed: boolean) => {
+        this.parent.setState({
+            errorListCollapsed: collapsed
+        });
     }
 
     prepare() {
@@ -1283,7 +1291,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         if (!this.editor) return;
         if (this.parent.settings.editorFontSize >= MAX_EDITOR_FONT_SIZE) return;
         let currentFont = this.getEditorFontSize();
-        this.parent.settings.editorFontSize = currentFont + 1;
+        this.parent.settings.editorFontSize = currentFont + 3;
         this.editor.updateOptions({ fontSize: this.parent.settings.editorFontSize });
         this.forceDiagnosticsUpdate();
     }
@@ -1292,7 +1300,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         if (!this.editor) return;
         if (this.parent.settings.editorFontSize <= MIN_EDITOR_FONT_SIZE) return;
         let currentFont = this.getEditorFontSize();
-        this.parent.settings.editorFontSize = currentFont - 1;
+        this.parent.settings.editorFontSize = currentFont - 3;
         this.editor.updateOptions({ fontSize: this.parent.settings.editorFontSize });
         this.forceDiagnosticsUpdate();
     }
@@ -1604,12 +1612,12 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             });
     }
 
-    unloadFileAsync(): Promise<void> {
+    unloadFileAsync(unloadToHome?: boolean): Promise<void> {
         if (this.toolbox)
             this.toolbox.clearSearch();
         this.setErrors([]);
         this.parent.setState({errorListNote: undefined});
-        if (this.currFile && this.currFile.getName() == "this/" + pxt.CONFIG_NAME) {
+        if (this.currFile && this.currFile.getName() == "this/" + pxt.CONFIG_NAME && !unloadToHome) {
             // Reload the header if a change was made to the config file: pxt.json
             return this.parent.reloadHeaderAsync();
         }
@@ -2007,7 +2015,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
     private filterBlocks(subns: string, blocks: toolbox.BlockDefinition[]) {
         return blocks.filter((block => !(block.attributes.blockHidden)
             && !(block.attributes.deprecated && !this.parent.isTutorial())
-            && (block.name.indexOf('_') != 0)
+            && (block.name.indexOf('_') != 0 || block.attributes.blockAliasFor)
             && ((!subns && !block.attributes.subcategory && !block.attributes.advanced)
                 || (subns && ((block.attributes.advanced && subns == lf("more"))
                     || (block.attributes.subcategory && subns == block.attributes.subcategory))))));
