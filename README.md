@@ -55,7 +55,7 @@ If you run `npm i` afterwards (in either the target or pxt), you might need to r
 
 ## Build
 
-First, install [Node](https://nodejs.org/en/): minimum version 8.
+First, install [Node](https://nodejs.org/en/): minimum version 18; Node 24 (Active LTS) recommended. See `.nvmrc`.
 
 To build the PXT command line tools:
 
