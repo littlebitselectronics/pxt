@@ -66,6 +66,7 @@ declare namespace pxt.editor {
         | "renderxml"
         | "renderbyblockid"
         | "setscale"
+        | "updatefilters"
         | "startactivity"
         | "saveproject"
         | "compile"
@@ -1028,6 +1029,7 @@ declare namespace pxt.editor {
         handleExtensionRequest(request: pxt.editor.ExtensionRequest): void;
 
         fireResize(): void;
+        updateFilters(filters?: pxt.editor.ProjectFilters): void;
         updateEditorLogo(left: number, rgba?: string): number;
 
         loadBlocklyAsync(): Promise<void>;

@@ -95,6 +95,15 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                                 return Promise.resolve()
                                     .then(() => projectView.editor.setScale(zoommsg.scale));
                             }
+                            case "updatefilters": return Promise.resolve()
+                                .then(() => {
+                                    // Restored from LBOS-1046 (lost in the v12 upstream merge).
+                                    // p2-studio CodingCanvas sends { type: 'pxteditor', action: 'updatefilters',
+                                    // filters: {...} } when active bits change, so the toolbox can be restricted
+                                    // to blocks/namespaces appropriate for the connected codeBit / BLE bit.
+                                    const filters = (data as any).filters as pxt.editor.ProjectFilters;
+                                    projectView.updateFilters(filters);
+                                });
                             case "stopsimulator": {
                                 const stop = data as pxt.editor.EditorMessageStopRequest;
                                 return Promise.resolve()
