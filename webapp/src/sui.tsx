@@ -5,9 +5,9 @@ import * as ReactTooltip from 'react-tooltip';
 
 import * as data from "./data";
 import * as core from "./core";
-import * as auth from "./auth";
 import { fireClickOnEnter } from "./util";
 import { focusLastActive } from "../../react-common/components/util";
+import { ThemeManager } from "../../react-common/components/theming/themeManager";
 
 export const appElement = document.getElementById('content');
 
@@ -25,6 +25,7 @@ export interface UiProps {
     tabIndex?: number;
     rightIcon?: boolean;
     inverted?: boolean;
+    fontAwesome?: boolean;
 }
 
 export type SIZES = 'mini' | 'tiny' | 'small' | 'medium' | 'large' | 'big' | 'huge' | 'massive';
@@ -43,7 +44,7 @@ function genericClassName(cls: string, props: UiProps, ignoreIcon: boolean = fal
 
 export function genericContent(props: UiProps) {
     let retVal = [
-        props.icon ? (<Icon key='iconkey' icon={props.icon + (props.text ? " icon-and-text " : "") + (props.iconClass ? " " + props.iconClass : '')} />) : null,
+        props.icon ? (<Icon key='iconkey' icon={props.icon + (props.text ? " icon-and-text " : "") + (props.iconClass ? " " + props.iconClass : '')} fontAwesome={props.fontAwesome} />) : null,
         props.text ? (<span key='textkey' className={'ui text' + (props.textClass ? ' ' + props.textClass : '')}>{props.text}</span>) : null,
     ]
     if (props.icon && props.rightIcon) retVal = retVal.reverse();
@@ -68,12 +69,15 @@ export interface DropdownProps extends UiProps {
     id?: string;
     onChange?: (v: string) => void;
     onClick?: () => boolean;    // Return 'true' to toggle open/close
+    onShow?: () => void;
+    onHide?: () => void;
 
     titleContent?: React.ReactNode;
     displayAbove?: boolean;
     displayRight?: boolean;
     displayLeft?: boolean;
     dataTooltip?: string;
+    closeOnItemClick?: boolean;
 }
 
 export interface DropdownState {
@@ -84,10 +88,12 @@ export interface DropdownState {
 export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
 
     show() {
+        this.props.onShow?.();
         this.setState({ open: true, focus: true });
     }
 
     hide() {
+        this.props.onHide?.();
         this.setState({ open: false });
     }
 
@@ -107,19 +113,19 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         el.focus();
     }
 
-    private setInactive(el: HTMLElement) {
+    setInactive(el: HTMLElement) {
         if (this.isActive(el)) {
             pxt.BrowserUtils.removeClass(el, "active");
         }
     }
 
-    private setActive(el: HTMLElement) {
+    setActive(el: HTMLElement) {
         if (!this.isActive(el)) {
             pxt.BrowserUtils.addClass(el, "active");
         }
     }
 
-    private isActive(el: HTMLElement) {
+    isActive(el: HTMLElement) {
         return el && pxt.BrowserUtils.containsClass(el, "active");
     }
 
@@ -255,6 +261,20 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         e.stopPropagation();
     }
 
+    private handleItemClick = (e: React.MouseEvent) => {
+        const { closeOnItemClick } = this.props;
+        const el = e.target as HTMLElement;
+        const itemEl = el.closest(".item") as HTMLElement;
+
+        if (closeOnItemClick && itemEl) {
+            this.setInactive(itemEl);
+            // Let the item's onClick run before closing the menu
+            setTimeout(() => this.hide(), 0);
+        } else {
+            e.stopPropagation();
+        }
+    }
+
     private focusFirst: boolean;
     private handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         const dropdown = this.refs["dropdown"] as HTMLElement;
@@ -313,8 +333,8 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             'role': role || 'combobox',
             'aria-disabled': disabled,
             'aria-haspopup': !disabled,
-            'aria-expanded': open
-        }
+            ...(role !== 'option' && { 'aria-expanded': open }) // Exclude aria-expanded when the dropdown is an option
+            }
         const menuAria = {
             'role': 'menu',
             'aria-label': lf("Dropdown menu {0}", title),
@@ -354,7 +374,7 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
                 <div ref="menu" {...menuAria} className={menuClasses}
                     role="menu"
                     onMouseDown={this.captureMouseEvent}
-                    onClick={this.captureMouseEvent}
+                    onClick={this.handleItemClick}
                 >
                     {children}
                 </div>
@@ -417,60 +437,6 @@ export class ExpandableMenu extends UIElement<ExpandableMenuProps, ExpandableMen
     }
 }
 
-export interface SelectProps {
-    options: SelectItem[];
-    onChange?: (value: string) => void;
-    "aria-label"?: string;
-    label?: string;
-}
-
-export interface SelectState {
-    selected?: string;
-}
-
-export interface SelectItem {
-    value: string | number;
-    display?: string;
-}
-
-export class Select extends UIElement<SelectProps, SelectState> {
-    constructor(props: SelectProps) {
-        super(props);
-        const { options } = props;
-        this.state = {
-            selected: options[0] && (options[0].value + "")
-        };
-    }
-
-    handleOnChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
-        const { onChange } = this.props;
-        this.setState({
-            selected: ev.target.value
-        });
-
-        if (onChange) {
-            onChange(ev.target.value);
-        }
-    }
-
-    render() {
-        const { options, label, "aria-label": ariaLabel } = this.props;
-        const { selected } = this.state;
-
-        return (<div>
-            { label && `${label} ` }
-            <select value={selected} className="ui dropdown" onChange={this.handleOnChange} aria-label={ariaLabel} >
-                {options.map(opt =>
-                    opt && <option
-                        aria-selected={selected === opt.value}
-                        value={opt.value}
-                        key={opt.value}
-                    >{opt.display || opt.value}</option>
-                )}
-            </select>
-        </div>);
-    }
-}
 
 ///////////////////////////////////////////////////////////
 ////////////             Items                /////////////
@@ -871,11 +837,12 @@ export interface IconProps extends UiProps {
     icon?: string;
     onClick?: () => void;
     onKeyDown?: () => void;
+    fontAwesome?: boolean;
 }
 
 export const Icon: React.FunctionComponent<IconProps> = (props: IconProps) => {
-    const { icon, className, onClick, onKeyDown, children, ...rest } = props;
-    return <i className={`icon ${icon} ${className ? className : ''}`}
+    const { icon, className, onClick, onKeyDown, fontAwesome, children, ...rest } = props;
+    return <i className={`${fontAwesome ? '' : 'icon '}${icon} ${className ? className : ''}`}
         onClick={onClick}
         onKeyDown={onKeyDown || fireClickOnEnter}
         aria-hidden={true} role="presentation" {...rest}>
@@ -1152,6 +1119,7 @@ export interface ModalProps extends ReactModal.Props {
     longer?: boolean;
 
     header?: string;
+    headerFn?: () => string;
     headerIcon?: string;
     headerClass?: string;
     description?: string;
@@ -1272,12 +1240,14 @@ export class Modal extends data.Component<ModalProps, ModalState> {
     renderCore() {
         const { isOpen, size, longer, basic, className,
             onClose, closeIcon, children, onKeyDown,
-            header, headerIcon, headerClass, headerActions, helpUrl, description,
+            header, headerFn, headerIcon, headerClass, headerActions, helpUrl, description,
             closeOnDimmerClick, closeOnDocumentClick, closeOnEscape,
             shouldCloseOnEsc, shouldCloseOnOverlayClick, shouldFocusAfterRender, overlayClassName, ...rest } = this.props;
         const { marginTop, scrolling, mountClasses } = this.state;
         const isFullscreen = size == 'fullscreen';
         const showBack = isFullscreen && !!closeIcon;
+
+        const resolvedHeader = headerFn ? headerFn() : header ? header : undefined;
 
         const classes = cx([
             'ui',
@@ -1289,13 +1259,13 @@ export class Modal extends data.Component<ModalProps, ModalState> {
             'modal transition visible active',
             className
         ]);
-        const hc = this.getData<boolean>(auth.HIGHCONTRAST);
+        const hc = ThemeManager.isCurrentThemeHighContrast();
         const portalClassName = cx([
             hc ? 'hc' : '',
             mountClasses
         ])
         const aria = {
-            labelledby: header ? this.id + 'title' : undefined,
+            labelledby: resolvedHeader ? this.id + 'title' : undefined,
             describedby: (!isFullscreen && description) ? this.id + 'description' : this.id + 'desc'
         }
         const customStyles = {
@@ -1315,9 +1285,9 @@ export class Modal extends data.Component<ModalProps, ModalState> {
             style={customStyles}
             role="dialog"
             aria={aria} {...rest}>
-            {header || showBack || helpUrl ? <div id={this.id + 'title'} className={"header " + (headerClass || "")}>
+            {resolvedHeader || showBack || helpUrl ? <div id={this.id + 'title'} className={"header " + (headerClass || "")}>
                 {headerIcon && <Icon icon={headerIcon} />}
-                <h3 className="header-title" style={{ margin: `0 ${helpUrl ? '-20rem' : '0'} 0 ${showBack ? '-20rem' : '0'}` }}>{header}</h3>
+                <h3 className="header-title" style={{ margin: `0 ${helpUrl ? '-20rem' : '0'} 0 ${showBack ? '-20rem' : '0'}` }}>{resolvedHeader}</h3>
                 {showBack ? <div className="header-close">
                     <Button className="back-button large" title={lf("Go back")} onClick={onClose} tabIndex={0} onKeyDown={fireClickOnEnter}>
                         <Icon icon="arrow left" />
@@ -1326,7 +1296,7 @@ export class Modal extends data.Component<ModalProps, ModalState> {
                 </div> : undefined}
                 {helpUrl ?
                     <div className="header-help">
-                        <a className={`ui icon help-button`} href={helpUrl} target="_docs" role="link" aria-label={lf("Help on {0} dialog", header)} title={lf("Help on {0} dialog", header)}>
+                        <a className={`ui icon help-button`} href={helpUrl} target="_docs" role="link" aria-label={lf("Help on {0} dialog", resolvedHeader)} title={lf("Help on {0} dialog", resolvedHeader)}>
                             <Icon icon="help" />
                         </a>
                     </div>

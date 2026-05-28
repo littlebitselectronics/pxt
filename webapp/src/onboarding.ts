@@ -10,14 +10,14 @@ function getTargetMap(target: string): querySelector {
             targetQuery: "#boardview",
         },
         "toolbox": {
-            targetQuery: ".blocklyToolboxDiv",
+            targetQuery: ".blocklyToolbox",
         },
         "monaco toolbox": {
             targetQuery: ".monacoToolboxDiv",
         },
         "workspace": {
             targetQuery: "#blocksEditor", // includes the toolbox
-            sansQuery: ".blocklyToolboxDiv",
+            sansQuery: ".blocklyToolbox",
             sansLocation: pxt.tour.BubbleLocation.Left
         },
         "monaco workspace": {
@@ -32,6 +32,12 @@ function getTargetMap(target: string): querySelector {
         "play button" : {
             targetQuery: ".big-play-button",
         },
+        "sign in" : {
+            targetQuery: ".sign-in-dropdown",
+        },
+        "avatar" : {
+            targetQuery: ".logged-in-dropdown",
+        },
         "everything" : {
             targetQuery: "#root",
         },
@@ -43,8 +49,14 @@ function getTargetMap(target: string): querySelector {
 }
 
 export async function loadTourStepsAsync(name: string): Promise<pxt.MarkdownSection[]> {
-    const md = await pxt.Cloud.markdownAsync(name);
-    return pxt.getSectionsFromMarkdownMetadata(md);
+    try {
+        const md = await pxt.Cloud.markdownAsync(name);
+        const markdownSections = pxt.getSectionsFromMarkdownMetadata(md);
+        return markdownSections;
+    } catch (error) {
+        pxt.log(`Error fetching the tour steps: ${error}`);
+        return [];
+    }
 }
 
 export async function parseTourStepsAsync(name: string): Promise<pxt.tour.BubbleStep[]> {
@@ -62,7 +74,10 @@ export async function parseTourStepsAsync(name: string): Promise<pxt.tour.Bubble
                 pxt.log(`Tour steps: "${step.attributes.highlight}" is not a valid element to highlight!`);
             } else if (querySelector.targetQuery !== "nothing") {   // check that element is visible before adding to tour
                 const target = document.querySelector(querySelector.targetQuery) as HTMLElement;
-                if (!target || target.offsetParent === null || window.getComputedStyle(target).display === "none") continue;
+                if (!target || target.offsetParent === null || window.getComputedStyle(target).display === "none") {
+                    pxt.debug(`Tour steps: "${querySelector.targetQuery}" is not visible!`);
+                    continue;
+                }
             }
             const targetQuery = querySelector.targetQuery;
             const sansQuery = querySelector.sansQuery ?? undefined;

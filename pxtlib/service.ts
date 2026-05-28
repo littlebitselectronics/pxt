@@ -30,6 +30,7 @@ namespace ts.pxtc {
 
     export const NATIVE_TYPE_THUMB = "thumb";
     export const NATIVE_TYPE_VM = "vm";
+    export const BLOCK_TRANSLATION_CACHE_KEY = "_blocks";
 
     export interface BlocksInfo {
         apis: ApisInfo;
@@ -260,6 +261,7 @@ namespace ts.pxtc {
         sourceMap?: SourceInterval[];
         globalNames?: pxt.Map<SymbolInfo>;
         builtVariants?: string[];
+        fileSystem?: pxt.Map<string>;
     }
 
     export interface Breakpoint extends LocationInfo {
@@ -481,7 +483,7 @@ namespace ts.pxtc {
                     combinedProperties: []
                 }
                 ex.attributes.block =
-                    isGet ? U.lf("%{0} %property", paramName) :
+                    isGet ? `%${paramName} %property`:
                         isSet ? U.lf("set %{0} %property to %{1}", paramName, paramValue) :
                             U.lf("change %{0} %property by %{1}", paramName, paramValue)
                 updateBlockDef(ex.attributes)
@@ -501,6 +503,24 @@ namespace ts.pxtc {
                 }
                 blocks.push(ex)
             }
+
+            function copyOverHelp(param: "blockCombineGetHelp" | "blockCombineSetHelp" | "blockCombineChangeHelp" | "help") {
+                if (s.attributes[param]) {
+                    if (ex.attributes[param]) {
+                        if (ex.attributes[param] !== s.attributes[param]) {
+                            pxt.debug(`Ignoring duplicate ${param} for get/set/change block: ${s.attributes[param]}`);
+                        }
+                    }
+                    else {
+                        ex.attributes[param] = s.attributes[param];
+                    }
+                }
+            }
+
+            copyOverHelp("blockCombineChangeHelp");
+            copyOverHelp("blockCombineGetHelp");
+            copyOverHelp("blockCombineSetHelp");
+            copyOverHelp("help");
 
             ex.combinedProperties.push(s.qName)
         }
@@ -590,7 +610,8 @@ namespace ts.pxtc {
                 && s.kind != pxtc.SymbolKind.EnumMember
                 && s.kind != pxtc.SymbolKind.Module
                 && s.kind != pxtc.SymbolKind.Interface
-                && s.kind != pxtc.SymbolKind.Class) {
+                && s.kind != pxtc.SymbolKind.Class
+                && !s.attributes.blockIdentity) {
                 if (!s.attributes.blockId)
                     s.attributes.blockId = s.qName.replace(/\./g, "_")
                 if (s.attributes.block == "true") {
@@ -723,6 +744,20 @@ namespace ts.pxtc {
             const nsDoc = loc['{id:category}' + Util.capitalize(fn.qName)];
             let locBlock = loc[`${fn.qName}|block`] || fn.attributes.locs?.[attrBlockLocsKey];
 
+            if (fn.attributes.block) {
+                const comp = pxt.blocks.compileInfo(fn);
+                if (comp.handlerArgs) {
+                    for (const arg of comp.handlerArgs) {
+                        if (loc[arg.localizationKey]) {
+                           setBlockTranslationCacheKey(arg.localizationKey, loc[arg.localizationKey]);
+                        }
+                        else {
+                            clearBlockTranslationCacheKey(arg.localizationKey);
+                        }
+                    }
+                }
+            }
+
             if (!locBlock && altLocSrcFn) {
                 const otherTranslation = loc[`${altLocSrcFn.qName}|block`] || altLocSrcFn.attributes.locs?.[attrBlockLocsKey];
                 const isSameBlockDef = fn.attributes.block === (altLocSrcFn.attributes._untranslatedBlock || altLocSrcFn.attributes.block);
@@ -794,6 +829,34 @@ namespace ts.pxtc {
         return apis;
     }
 
+    function setBlockTranslationCacheKey(key: string, value: string) {
+        const cache = pxt.Util.translationsCache();
+
+        if (!cache[BLOCK_TRANSLATION_CACHE_KEY]) {
+            cache[BLOCK_TRANSLATION_CACHE_KEY] = {};
+        }
+
+        cache[BLOCK_TRANSLATION_CACHE_KEY][key] = value;
+    }
+
+    function clearBlockTranslationCacheKey(key: string) {
+        const cache = pxt.Util.translationsCache();
+
+        if (cache[BLOCK_TRANSLATION_CACHE_KEY]) {
+            delete cache[BLOCK_TRANSLATION_CACHE_KEY][key];
+        }
+    }
+
+    export function getBlockTranslationsCacheKey(key: string): string | undefined {
+        const cache = pxt.Util.translationsCache();
+
+        if (cache[BLOCK_TRANSLATION_CACHE_KEY]) {
+            return cache[BLOCK_TRANSLATION_CACHE_KEY][key];
+        }
+
+        return undefined;
+    }
+
     function hasEquivalentParameters(a: pxt.blocks.BlockCompileInfo, b: pxt.blocks.BlockCompileInfo) {
         if (a.parameters.length != b.parameters.length) {
             pxt.debug(`Localized block has extra or missing parameters`);
@@ -834,10 +897,18 @@ namespace ts.pxtc {
         return r;
     }
 
-    const numberAttributes = ["weight", "imageLiteral", "gridLiteral", "topblockWeight", "inlineInputModeLimit"]
-    const booleanAttributes = [
+    const numberAttributes: (keyof CommentAttrs)[] = [
+        "weight",
+        "imageLiteral",
+        "gridLiteral",
+        "topblockWeight",
+        "inlineInputModeLimit"
+    ];
+
+    const booleanAttributes: (keyof CommentAttrs)[] = [
         "advanced",
         "handlerStatement",
+        "forceStatement",
         "afterOnStart",
         "optionalVariableArgs",
         "blockHidden",
@@ -850,7 +921,8 @@ namespace ts.pxtc {
         "callInDebugger",
         "duplicateShadowOnDrag",
         "argsNullable",
-        "compileHiddenArguments"
+        "compileHiddenArguments",
+        "expandArgumentsInToolbox",
     ];
 
     export function parseCommentString(cmt: string): CommentAttrs {
@@ -1698,11 +1770,12 @@ namespace ts.pxtc.service {
     }
 
     export interface ExtensionMeta {
-        name: string,
-        fullName?: string,
-        description?: string,
-        imageUrl?: string,
-        type?: ExtensionType
+        name: string;
+        displayName?: string;
+        fullRepo?: string;
+        description?: string;
+        imageUrl?: string;
+        type?: ExtensionType;
         learnMoreUrl?: string;
 
         pkgConfig?: pxt.PackageConfig; // Added if the type is Bundled
@@ -1721,6 +1794,7 @@ namespace ts.pxtc.service {
         localizedCategory?: string;
         builtinBlock?: boolean;
         params?: string;
+        dropdownOptions?: string;
     }
 
     export interface ProjectSearchOptions {

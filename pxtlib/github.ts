@@ -112,6 +112,33 @@ namespace pxt.github {
         return hasProxy();
     }
 
+    /**
+     * Organizations that require SAML SSO for OAuth tokens.
+     * User tokens without SAML authorization will fail with 403 errors for these orgs.
+     * We should use the proxy instead when a token is present.
+     */
+    const samlProtectedOrgs = ["microsoft"];
+
+    /**
+     * Determines if we should use the proxy for a specific repo to avoid SAML SSO issues.
+     * Returns true if the repo is owned by an organization that requires SAML and we have a token.
+     */
+    export function shouldUseProxyForRepo(repoPath: string): boolean {
+        // If no token, let normal proxy logic apply
+        if (!token) return shouldUseProxy();
+
+        const parsed = parseRepoId(repoPath);
+        if (!parsed) return shouldUseProxy();
+
+        // Check if the repo owner requires SAML SSO
+        const ownerLower = parsed.owner.toLowerCase();
+        const requiresSaml = samlProtectedOrgs.some(org => org === ownerLower);
+
+        // If SAML is required and we have a token, force proxy to avoid auth issues
+        // Otherwise use normal logic (which will skip proxy if we have a token)
+        return requiresSaml ? true : shouldUseProxy();
+    }
+
     export let handleGithubNetworkError: (opts: U.HttpRequestOptions, e: any) => boolean;
 
     const isPrivateRepoCache: pxt.Map<boolean> = {};
@@ -832,6 +859,7 @@ namespace pxt.github {
 
     export interface GitRepo extends ParsedRepo {
         name: string;
+        displayName?: string;
         description: string;
         defaultBranch: string;
         status?: GitRepoStatus;
@@ -997,6 +1025,21 @@ namespace pxt.github {
                 : GitRepoStatus.Unknown;
     }
 
+    export function isRepoHidden(repo: ParsedRepo, config: pxt.PackagesConfig): boolean {
+        if (!repo || !config) return true;
+
+        const repoFull = repo.fullName?.toLowerCase();
+        const repoSlug = repo.slug?.toLowerCase();
+
+        const entry = config.approvedRepoLib[repoFull] || config.approvedRepoLib[repoSlug];
+
+        if (entry && entry.hidden) {
+            return true;
+        }
+
+        return false;
+    }
+
     function isOrgBanned(repo: ParsedRepo, config: pxt.PackagesConfig): boolean {
         if (!config) return false; // don't know
         if (!repo || !repo.owner) return true;
@@ -1075,6 +1118,7 @@ namespace pxt.github {
                     fileName: rid.fileName,
                     slug: rid.slug,
                     name: rid.fileName ? `${meta.name}-${rid.fileName}` : meta.name,
+                    displayName: meta.displayName,
                     description: meta.description,
                     defaultBranch: meta.defaultBranch || "master",
                     tag: rid.tag,
@@ -1204,12 +1248,33 @@ namespace pxt.github {
         return null
     }
 
-    export function upgradedPackageReference(cfg: PackagesConfig, id: string) {
+    export async function upgradedPackageReferenceAsync(cfg: PackagesConfig, id: string) {
         const rules = upgradeRules(cfg, id)
         if (!rules)
             return null
 
         for (const upgr of rules) {
+            const mv = /^move:(.*)$/.exec(upgr);
+            if (mv) {
+                const new_repo = parseRepoId(mv[1])
+                if (new_repo) {
+                    if (!new_repo.tag) {
+                        new_repo.tag = await latestVersionAsync(mv[1],cfg)
+                    }
+                    const repo = parseRepoId(id)
+                    if (!new_repo.fileName && repo.fileName) {
+                        new_repo.fileName = repo.fileName
+                        new_repo.fullName = join(new_repo.owner, new_repo.project, new_repo.fileName)
+                    }
+                    const new_repo_s = stringifyRepo(new_repo)
+                    pxt.debug(`upgrading ${id} to ${new_repo_s}}`)
+                    const np: string = await upgradedPackageReferenceAsync(cfg, new_repo_s)
+                    if (np) return np
+                    else return new_repo_s
+                } else {
+                    pxt.log(`cannot parse move target: ${mv[1]}`)
+                }
+            }
             const m = /^min:(.*)/.exec(upgr)
             const minV = m && pxt.semver.tryParse(m[1]);
             if (minV) {

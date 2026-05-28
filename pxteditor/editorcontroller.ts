@@ -240,6 +240,10 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                                 return Promise.resolve()
                                     .then(() => projectView.setSimulatorFullScreen(fsmsg.enabled));
                             }
+                            case "showthemepicker" : {
+                                return Promise.resolve()
+                                    .then(() => projectView.showThemePicker());
+                            }
                             case "togglehighcontrast": {
                                 return Promise.resolve()
                                     .then(() => projectView.toggleHighContrast());
@@ -252,6 +256,10 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                             case "togglegreenscreen": {
                                 return Promise.resolve()
                                     .then(() => projectView.toggleGreenScreen());
+                            }
+                            case "togglekeyboardcontrols": {
+                                return Promise.resolve()
+                                    .then(() => projectView.toggleAccessibleBlocks("editormessage"));
                             }
                             case "print": {
                                 return Promise.resolve()
@@ -266,7 +274,8 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                                         resp = {
                                             versions: pxt.appTarget.versions,
                                             locale: ts.pxtc.Util.userLanguage(),
-                                            availableLocales: pxt.appTarget.appTheme.availableLocales
+                                            availableLocales: pxt.appTarget.appTheme.availableLocales,
+                                            keyboardControls: projectView.isAccessibleBlocks()
                                         } as pxt.editor.InfoMessage;
                                     });
                             }
@@ -317,6 +326,11 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                                         }
                                     });
                             }
+                            case "setcolorthemebyid": {
+                                const msg = data as pxt.editor.EditorMessageSetColorThemeRequest;
+                                projectView.setColorThemeById(msg.colorThemeId, !!msg.savePreference);
+                                return Promise.resolve();
+                            }
                         }
                         return Promise.resolve();
                     });
@@ -347,9 +361,9 @@ export function enableControllerAnalytics() {
         return;
     }
 
-    const te = pxt.tickEvent;
-    pxt.tickEvent = function (id: string, data?: pxt.Map<string | number>): void {
-        if (te) te(id, data);
+    const analyticsTickEvent = pxt.tickEvent;
+    pxt.tickEvent = function (id: string, data?: pxt.Map<string | number>, opts?: pxt.TelemetryEventOptions): void {
+        if (analyticsTickEvent) analyticsTickEvent(id, data, opts);
         postHostMessageAsync(<pxt.editor.EditorMessageEventRequest>{
             type: 'pxthost',
             action: 'event',

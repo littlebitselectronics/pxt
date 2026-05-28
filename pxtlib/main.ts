@@ -180,7 +180,7 @@ namespace pxt {
     export function replaceStringsInJsonBlob(blobPart: any, matcher: RegExp, matchHandler: (matchingString: string) => string): any {
         if (Array.isArray(blobPart)) {
             return blobPart.map(el => replaceStringsInJsonBlob(el, matcher, matchHandler));
-        } else if (typeof blobPart === "object") {
+        } else if (blobPart && typeof blobPart === "object") {
             for (const key of Object.keys(blobPart)) {
                 blobPart[key] = replaceStringsInJsonBlob(blobPart[key], matcher, matchHandler);
             }
@@ -229,13 +229,15 @@ namespace pxt {
         appTarget = replaceCdnUrlsInJsonBlob(appTarget);
 
         // patch icons in bundled packages
-        Object.keys(appTarget.bundledpkgs).forEach(pkgid => {
-            const res = appTarget.bundledpkgs[pkgid];
-            // path config before storing
-            const config = JSON.parse(res[pxt.CONFIG_NAME]) as pxt.PackageConfig;
-            if (config.icon) config.icon = pxt.BrowserUtils.patchCdn(config.icon);
-            res[pxt.CONFIG_NAME] = pxt.Package.stringifyConfig(config);
-        })
+        if (appTarget.bundledpkgs) {
+            Object.keys(appTarget.bundledpkgs).forEach(pkgid => {
+                const res = appTarget.bundledpkgs[pkgid];
+                // path config before storing
+                const config = JSON.parse(res[pxt.CONFIG_NAME]) as pxt.PackageConfig;
+                if (config.icon) config.icon = pxt.BrowserUtils.patchCdn(config.icon);
+                res[pxt.CONFIG_NAME] = pxt.Package.stringifyConfig(config);
+            });
+        }
 
         // patch any pre-configured query url appTheme overrides
         if (typeof window !== 'undefined') {
@@ -337,6 +339,10 @@ namespace pxt {
             })
     }
 
+    export function getActiveHwVariant(): string {
+        return hwVariant
+    }
+
     export interface PxtOptions {
         debug?: boolean;
         light?: boolean; // low resource device
@@ -395,6 +401,12 @@ namespace pxt {
         teachertoolUrl?: string; // "/beta---eval"
         isStatic?: boolean;
         verprefix?: string; // "v1"
+        ocv?: OcvConfig;
+    }
+
+    export interface OcvConfig {
+        appId: number;
+        iframeEndpoint: string;
     }
 
     export function localWebConfig() {
@@ -418,7 +430,7 @@ namespace pxt {
             simUrl: "/sim/simulator.html",
             simserviceworkerUrl: "/simulatorserviceworker.js",
             simworkerconfigUrl: "/sim/workerConfig.js",
-            partsUrl: "/sim/siminstructions.html"
+            partsUrl: "/sim/siminstructions.html",
         }
         return r
     }
@@ -514,6 +526,7 @@ namespace pxt {
     export const BREAKPOINT_TABLET = 991; // TODO (shakao) revisit when tutorial stuff is more settled
     export const PALETTES_FILE = "_palettes.json";
     export const HISTORY_FILE = "_history";
+    export const MAX_DESCRIPTION_LENGTH = 5000;
 
     export function outputName(trg: pxtc.CompileTarget = null) {
         if (!trg) trg = appTarget.compile

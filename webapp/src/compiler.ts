@@ -436,7 +436,7 @@ export function decompilePySnippetstoXmlAsync(code: string[]): Promise<string[]>
             // strip the namespace declaration out of the converted snippets and concat to convert to blocks
             const tsCode = [];
             for (let file of files) {
-                let match = res.outfiles[file + ".ts"].match(namespaceRegex);
+                let match = res.outfiles[file + ".ts"]?.match(namespaceRegex);
                 if (match && match[1]) {
                     const noNamespace = match[1];
                     // strip out 'export let' and 'export function'. This won't hit custom kinds since those are always const
@@ -463,7 +463,7 @@ function decompileSnippetsCoreAsync(opts: pxtc.CompileOptions): Promise<string[]
     return workerOpAsync("decompileSnippets", { options: opts })
 }
 
-export function workerOpAsync<T extends keyof pxtc.service.ServiceOps>(op: T, arg: pxtc.service.OpArg): Promise<any> {
+export function workerOpAsync<T extends keyof pxtc.service.ServiceOps>(op: T, arg: pxtc.service.OpArg): Promise<ReturnType<pxtc.service.ServiceOps[T]>> {
     const startTm = Date.now()
     pxt.debug("worker op: " + op)
     return pxt.worker.getWorker(pxt.webConfig.workerjs)
@@ -479,7 +479,7 @@ export function workerOpAsync<T extends keyof pxtc.service.ServiceOps>(op: T, ar
         })
 }
 
-let firstTypecheck: Promise<void>;
+let firstTypecheck: Promise<any>;
 let cachedApis: pxtc.ApisInfo;
 let cachedBlocks: pxtc.BlocksInfo;
 let refreshApis = false;
@@ -545,28 +545,39 @@ export function snippetAsync(qName: string, python?: boolean): Promise<string> {
     return initStep.then(() => workerOpAsync("snippet", {
         snippet: { qName, python },
         runtime: pxt.appTarget.runtime
-    })).then(res => res as string)
+    }));
 }
 
-export function typecheckAsync() {
+export async function typecheckAsync(): Promise<pxtc.CompileResult | null> {
     const epkg = pkg.mainEditorPkg();
     const isFirstTypeCheck = !firstTypecheck;
-    let p = epkg.buildAssetsAsync()
-        .then(() => pkg.mainPkg.getCompileOptionsAsync())
-        .then(opts => {
-            opts.testMode = true // show errors in all top-level code
-            return workerOpAsync("setOptions", { options: opts })
-        })
-        .then(() => workerOpAsync("allDiags", {}) as Promise<pxtc.CompileResult>)
-        .then(r => setDiagnostics("typecheck", r.diagnostics, r.sourceMap))
-        .then(() => {
+
+    const p = (async () => {
+        try {
+            await epkg.buildAssetsAsync();
+
+            const opts = await pkg.mainPkg.getCompileOptionsAsync();
+            opts.testMode = true; // show errors in all top-level code
+
+            await workerOpAsync("setOptions", { options: opts });
+
+            const r = await workerOpAsync("allDiags", {});
+            setDiagnostics("typecheck", r.diagnostics, r.sourceMap);
+
             if (isFirstTypeCheck) {
                 refreshLanguageServiceApisInfo();
             }
-            return ensureApisInfoAsync();
-        })
-        .catch(catchUserErrorAndSetDiags(null))
-    if (isFirstTypeCheck) firstTypecheck = p;
+            await ensureApisInfoAsync();
+            return r;
+        } catch (e) {
+            return catchUserErrorAndSetDiags(null)(e);
+        }
+    })();
+
+    if (isFirstTypeCheck) {
+        firstTypecheck = p;
+    }
+
     return p;
 }
 

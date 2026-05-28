@@ -56,8 +56,19 @@ export function setOnWorkspaceContextMenu(impl: (workspace: Blockly.WorkspaceSvg
     _onWorkspaceContextMenu = impl;
 }
 
+// from webapp/src/core.ts DialogOptions
 export interface PromptOptions {
     placeholder: string;
+    buttons?: PromptButton[];
+}
+
+// from webapp/src/sui.ts ModalButton
+interface PromptButton {
+    label?: string;
+    title?: string;
+    icon?: string; // defaults to "checkmark"
+    className?: string; // defaults "positive"
+    onclick?: () => (Promise<void> | void);
 }
 
 let _prompt: (message: string, defaultValue: string, callback: (value: string) => void, options?: PromptOptions) => void;
@@ -90,7 +101,7 @@ export function openWorkspaceSearch() {
     }
 }
 
-type ShortcutHandler = (workspace: Blockly.Workspace, e: Event) => boolean;
+type ShortcutHandler = (workspace: Blockly.Workspace, e: Event, shortcut: Blockly.ShortcutRegistry.KeyboardShortcut, scope: Blockly.ContextMenuRegistry.Scope) => boolean;
 type PreconditionFn = (scope: Blockly.ContextMenuRegistry.Scope) => "enabled" | "disabled" | "hidden";
 
 let _handleCopy: ShortcutHandler;

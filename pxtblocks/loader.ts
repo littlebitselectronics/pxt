@@ -1,7 +1,7 @@
 /// <reference path="../built/pxtlib.d.ts" />
 import * as Blockly from "blockly";
 import { optionalDummyInputPrefix, optionalInputWithFieldPrefix, provider } from "./constants";
-import { initExpandableBlock, initVariableArgsBlock, appendMutation } from "./composableMutations";
+import { initExpandableBlock, initVariableArgsBlock, appendMutation, initVariableReporterArgs } from "./composableMutations";
 import { addMutation, MutatingBlock, MutatorTypes } from "./legacyMutations";
 import { initMath } from "./builtins/math";
 import { FieldCustom, FieldCustomDropdownOptions, FieldCustomOptions } from "./fields";
@@ -13,7 +13,7 @@ import { initLoops } from "./builtins/loops";
 import { initText } from "./builtins/text";
 import { createToolboxBlock, isArrayType } from "./toolbox";
 import { mkCard } from "./help";
-import { FieldMatrix } from "./fields";
+import { FieldLedMatrix } from "./fields";
 import { FieldStyledLabel } from "./fields";
 import { FieldUserEnum } from "./fields";
 import { createFieldEditor, initFieldEditors } from "./fields";
@@ -24,8 +24,15 @@ import { initContextMenu } from "./contextMenu";
 import { renderCodeCard } from "./codecardRenderer";
 import { FieldDropdown } from "./fields/field_dropdown";
 import { setDraggableShadowBlocks, setDuplicateOnDrag, setDuplicateOnDragStrategy } from "./plugins/duplicateOnDrag";
-import { applyPolyfills } from "./polyfills";
-import { initCopyPaste } from "./copyPaste";
+import { initAccessibleBlocksCopyPasteContextMenu, initCopyPaste } from "./copyPaste";
+export { initCopyPaste } from "./copyPaste";
+import { FieldVariable } from "./plugins/newVariableField/fieldVariable";
+import { ArgumentReporterBlock, FieldArgumentReporter, setArgumentReporterLocalizeFunction } from "./plugins/functions";
+import { getArgumentReporterParent } from "./plugins/functions/utils";
+import { isFunctionDefinition } from "./compiler/util";
+import { AUTO_DISABLED_REASON } from "./compiler/compiler";
+
+export const DRAGGABLE_PARAM_INPUT_PREFIX = "HANDLER_DRAG_PARAM_";
 
 
 interface BlockDefinition {
@@ -102,7 +109,11 @@ export function blockSymbol(type: string): pxtc.SymbolInfo {
 export function injectBlocks(blockInfo: pxtc.BlocksInfo): pxtc.SymbolInfo[] {
     cachedBlockInfo = blockInfo;
 
-   setDraggableShadowBlocks(blockInfo.blocks.filter(fn => fn.attributes.duplicateShadowOnDrag).map(fn => fn.attributes.blockId));
+    setDraggableShadowBlocks(blockInfo.blocks.filter(fn => fn.attributes.duplicateShadowOnDrag).map(fn => fn.attributes.blockId));
+
+    setArgumentReporterLocalizeFunction((arg, block) => {
+        return localizeArgumentReporter(blockInfo, arg, block);
+    });
 
     // inject Blockly with all block definitions
     return blockInfo.blocks
@@ -204,7 +215,8 @@ function isSubtype(apis: pxtc.ApisInfo, specific: string, general: string) {
 
 function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolInfo, comp: pxt.blocks.BlockCompileInfo) {
     const ns = (fn.attributes.blockNamespace || fn.namespace).split('.')[0];
-    const instance = fn.kind == pxtc.SymbolKind.Method || fn.kind == pxtc.SymbolKind.Property;
+    let instance = fn.kind == pxtc.SymbolKind.Method || fn.kind == pxtc.SymbolKind.Property;
+    if (typeof fn.isInstance === "boolean" && !fn.attributes?.defaultInstance) instance = fn.isInstance;
     const nsinfo = info.apis.byQName[ns];
     const color =
         // blockNamespace overrides color on block
@@ -231,6 +243,7 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
 
     buildBlockFromDef(fn.attributes._def);
     let hasHandler = false;
+    let variableReporterArgs = false;
 
     if (fn.attributes.mutate) {
         addMutation(block as MutatingBlock, fn, fn.attributes.mutate);
@@ -250,11 +263,17 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
          */
         hasHandler = true;
         if (fn.attributes.optionalVariableArgs) {
-            initVariableArgsBlock(block, comp.handlerArgs);
+            if (fn.attributes.draggableParameters === "reporter") {
+                // variable reporter args need to be initialized after the statement input
+                variableReporterArgs = true;
+            }
+            else {
+                initVariableArgsBlock(block, comp.handlerArgs);
+            }
         }
         else if (fn.attributes.draggableParameters) {
             comp.handlerArgs.filter(a => !a.inBlockDef).forEach(arg => {
-                const i = block.appendValueInput("HANDLER_DRAG_PARAM_" + arg.name);
+                const i = block.appendValueInput(DRAGGABLE_PARAM_INPUT_PREFIX + arg.name);
                 if (fn.attributes.draggableParameters == "reporter") {
                     i.setCheck(getBlocklyCheckForType(arg.type, info));
                 } else {
@@ -264,13 +283,13 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
             });
 
             comp.handlerArgs.forEach(arg => {
-                setDuplicateOnDrag(block.type, "HANDLER_DRAG_PARAM_" + arg.name);
+                setDuplicateOnDrag(block.type, DRAGGABLE_PARAM_INPUT_PREFIX + arg.name);
             });
         }
         else {
             let i = block.appendDummyInput();
             comp.handlerArgs.filter(a => !a.inBlockDef).forEach(arg => {
-                i.appendField(new Blockly.FieldVariable(arg.name), "HANDLER_" + arg.name);
+                i.appendField(new FieldVariable(arg.name), "HANDLER_" + arg.name);
             });
         }
     }
@@ -278,7 +297,7 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
     appendMutation(block, {
         mutationToDom: (el: Element) => {
             block.inputList.forEach(input => {
-                input.fieldRow.forEach((fieldRow: FieldCustom) => {
+                input.fieldRow.forEach((fieldRow: FieldCustom & Blockly.Field) => {
                     if (fieldRow.isFieldCustom_ && fieldRow.saveOptions) {
                         const getOptions = fieldRow.saveOptions();
                         if (getOptions) {
@@ -291,7 +310,7 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
         },
         domToMutation: (saved: Element) => {
             block.inputList.forEach(input => {
-                input.fieldRow.forEach((fieldRow: FieldCustom) => {
+                input.fieldRow.forEach((fieldRow: FieldCustom & Blockly.Field) => {
                     if (fieldRow.isFieldCustom_ && fieldRow.restoreOptions) {
                         const options = JSON.parse(saved.getAttribute(`customfield`));
                         if (options) {
@@ -311,7 +330,7 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
         const onColor = fn.attributes.gridLiteralOnColor;
         const offColor = fn.attributes.gridLiteralOffColor;
         let ri = block.appendDummyInput();
-        ri.appendField(new FieldMatrix("", { columns, rows, scale, onColor, offColor }), "LEDS");
+        ri.appendField(new FieldLedMatrix("", { columns, rows, scale, onColor, offColor }), "LEDS");
     }
 
     if (fn.attributes.inlineInputMode === "external") {
@@ -331,12 +350,19 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
         block.setInputsInline(true);
     }
 
-    setOutputCheck(block, fn.retType, info);
-
-    // hook up/down if return value is void
     const hasHandlers = hasArrowFunction(fn);
-    block.setPreviousStatement(!(hasHandlers && !fn.attributes.handlerStatement) && fn.retType == "void");
-    block.setNextStatement(!(hasHandlers && !fn.attributes.handlerStatement) && fn.retType == "void");
+    const isStatement = !!fn.attributes.handlerStatement || !!fn.attributes.forceStatement || (fn.retType === "void" && !hasHandlers);
+
+    if (!isStatement) {
+        setOutputCheck(block, fn.retType, info);
+    }
+
+    block.setPreviousStatement(isStatement);
+    block.setNextStatement(isStatement);
+
+    if (variableReporterArgs) {
+        initVariableReporterArgs(block, comp.handlerArgs, info);
+    }
 
     block.setTooltip(/^__/.test(fn.namespace) ? "" : fn.attributes.jsDoc);
     function buildBlockFromDef(def: pxtc.ParsedBlockDef, expanded = false) {
@@ -394,7 +420,7 @@ function initBlock(block: Blockly.Block, info: pxtc.BlocksInfo, fn: pxtc.SymbolI
                     }
 
                     if (isHandlerArg(pr)) {
-                        inputName = "HANDLER_DRAG_PARAM_" + pr.name;
+                        inputName = DRAGGABLE_PARAM_INPUT_PREFIX + pr.name;
                         inputCheck = fn.attributes.draggableParameters === "reporter" ? getBlocklyCheckForType(pr.type, info) : "Variable";
                         return;
                     }
@@ -577,6 +603,8 @@ export function cleanBlocks() {
  */
 export function initializeAndInject(blockInfo: pxtc.BlocksInfo) {
     init(blockInfo);
+    initContextMenu();
+    initCopyPaste(false);
     injectBlocks(blockInfo);
 }
 
@@ -594,10 +622,7 @@ function init(blockInfo: pxtc.BlocksInfo) {
     if (blocklyInitialized) return;
     blocklyInitialized = true;
 
-    applyPolyfills();
-
     initFieldEditors();
-    initContextMenu();
     initOnStart();
     initMath(blockInfo);
     initVariables();
@@ -608,7 +633,25 @@ function init(blockInfo: pxtc.BlocksInfo) {
     initText();
     initComments();
     initTooltip();
-    initCopyPaste();
+
+    // in safari on ios, Blockly isn't always great at clearing touch
+    // identifiers. for most browsers this doesn't matter because the
+    // pointer id stored in the pointerevent is reused. however, ios
+    // generates a unique pointerid for each event, so the editor will
+    // stop processing events entirely if it isn't cleared properly
+    if (pxt.BrowserUtils.isSafari() && pxt.BrowserUtils.isIOS()) {
+        document.addEventListener("pointerup", ev => {
+            setTimeout(() => {
+                if (Blockly.Touch.checkTouchIdentifier(ev)) {
+                    Blockly.Touch.clearTouchIdentifier();
+                }
+            })
+        });
+    }
+}
+
+export function initAccessibleBlocksContextMenuItems() {
+    initAccessibleBlocksCopyPasteContextMenu()
 }
 
 
@@ -619,7 +662,7 @@ function init(blockInfo: pxtc.BlocksInfo) {
  * @returns An array of checks if the type is valid, undefined if there are no valid checks
  *      (e.g. type is void), and null if all checks should be accepted (e.g. type is generic)
  */
-function getBlocklyCheckForType(type: string, info: pxtc.BlocksInfo) {
+export function getBlocklyCheckForType(type: string, info: pxtc.BlocksInfo) {
     const types = type.split(/\s*\|\s*/);
     const output = [];
     for (const subtype of types) {
@@ -684,7 +727,7 @@ function initComments() {
 
 function initTooltip() {
     const renderTip = (el: any) => {
-        if (el.disabled)
+        if (el.hasDisabledReason?.(AUTO_DISABLED_REASON))
             return lf("This block is disabled and will not run. Attach this block to an event to enable it.")
         let tip = el.tooltip;
         while (typeof tip === "function") {
@@ -826,16 +869,16 @@ function removeOuterSpace(str: string) {
  * variable ID or set the value of the model and not the field
  */
 export function setVarFieldValue(block: Blockly.Block, fieldName: string, newName: string) {
-    const varField = block.getField(fieldName) as Blockly.FieldVariable;
+    const varField = block.getField(fieldName) as FieldVariable;
 
     // Check for an existing model with this name; otherwise we'll create
     // a second variable with the same name and it will show up twice in the UI
-    const vars = block.workspace.getAllVariables();
+    const vars = block.workspace.getVariableMap().getAllVariables();
     let foundIt = false;
     if (vars && vars.length) {
         for (let v = 0; v < vars.length; v++) {
             const model = vars[v];
-            if (model.name === newName) {
+            if (model.getName() === newName) {
                 varField.setValue(model.getId());
                 foundIt = true;
             }
@@ -844,7 +887,41 @@ export function setVarFieldValue(block: Blockly.Block, fieldName: string, newNam
     if (!foundIt) {
         varField.initModel();
         const model = varField.getVariable();
-        model.name = newName;
+        model.setName(newName);
         varField.setValue(model.getId());
     }
+}
+
+
+function localizeArgumentReporter(blocksInfo: pxtc.BlocksInfo, field: FieldArgumentReporter, block: ArgumentReporterBlock): string | undefined {
+    let result: string = undefined;
+
+    const mutationName = block.getLocalizationName();
+    if (mutationName) {
+        const localized = pxt.U.rlf(mutationName);
+        if (localized !== mutationName) {
+            result = localized;
+        }
+        else {
+            result = pxtc.getBlockTranslationsCacheKey(mutationName);
+        }
+    }
+
+    const parent = getArgumentReporterParent(block, block);
+
+    if (!parent || isFunctionDefinition(parent)) return result;
+
+    const fn = blocksInfo.blocksById[parent.type];
+
+    if (!fn) return result;
+
+    const comp = pxt.blocks.compileInfo(fn);
+
+    const handlerArg = comp.handlerArgs?.find(arg => arg.name === field.getValue());
+
+    if (handlerArg) {
+        return pxtc.getBlockTranslationsCacheKey(handlerArg.localizationKey);
+    }
+
+    return result;
 }

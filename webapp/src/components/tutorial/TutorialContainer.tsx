@@ -223,12 +223,12 @@ export function TutorialContainer(props: TutorialContainerProps) {
     let modalActions: ModalButton[] = [{ label: lf("Ok"), onclick: onModalClose,
         icon: "arrow circle right", className: "green" }];
 
-    if (showBack) modalActions.unshift({ label: lf("Back"), onclick: tutorialStepBack,
+    if (showBack) modalActions.unshift({ label: lf("Back"), onclick: tutorialStepBack, className: "neutral",
         icon: "arrow circle left", disabled: !showBack, labelPosition: "left" })
 
     if (showImmersiveReader) {
         modalActions.push({
-            className: "immersive-reader-button",
+            className: "immersive-reader-button neutral",
             onclick: async () => { await launchImmersiveReaderAsync(currentStepInfo.contentMd, tutorialOptions) },
             ariaLabel: lf("Launch Immersive Reader"),
             title: lf("Launch Immersive Reader")
@@ -257,6 +257,10 @@ export function TutorialContainer(props: TutorialContainerProps) {
         stepContentRef.current = ref;
     }
 
+    const showReplaceMyCode =
+        hasTemplate && currentStep == firstNonModalStep && preferredEditor !== "asset" &&
+        !pxt.appTarget.appTheme.hideReplaceMyCode && !props.tutorialOptions.metadata?.hideReplaceMyCode
+
     return <div className="tutorial-container" ref={containerRef}>
         {!isHorizontal && stepCounter}
         <div className={classList("tutorial-content", hasHint && "has-hint")} ref={contentRef} onScroll={updateScrollGradient}>
@@ -283,8 +287,9 @@ export function TutorialContainer(props: TutorialContainerProps) {
                 tutorialId={tutorialId}
                 currentStep={currentStep}
                 attemptsWithError={stepErrorAttemptCount} />}
-        {hasTemplate && currentStep == firstNonModalStep && preferredEditor !== "asset" && !pxt.appTarget.appTheme.hideReplaceMyCode &&
-            <TutorialResetCode tutorialId={tutorialId} currentStep={visibleStep} resetTemplateCode={parent.resetTutorialTemplateCode} />}
+        {showReplaceMyCode &&
+            <TutorialResetCode tutorialId={tutorialId} currentStep={visibleStep} resetTemplateCode={parent.resetTutorialTemplateCode} />
+        }
         {showScrollGradient && <div className="tutorial-scroll-gradient" />}
         {isModal && !hideModal && <Modal isOpen={isModal} closeIcon={false} header={currentStepInfo.title || name} buttons={modalActions}
             className="hintdialog" onClose={onModalClose} dimmer={true}

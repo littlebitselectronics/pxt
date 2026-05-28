@@ -10,10 +10,6 @@ import { showModal } from "../transforms/showModal";
 import * as authClient from "../services/authClient";
 import { classList } from "react-common/components/util";
 
-const betaTag = () => {
-    return <div className={css["beta-tag"]}>{lf("Beta")}</div>;
-};
-
 interface HeaderBarProps { }
 
 export const HeaderBar: React.FC<HeaderBarProps> = () => {
@@ -56,7 +52,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
                         )}
                     </>
                 ) : (
-                    <span className="name">{appTheme.organization}</span>
+                    <span className={css["organization-name"]}>{appTheme.organization}</span>
                 )}
             </div>
         );
@@ -71,14 +67,20 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
                 onClick={onBrandIconClick}
             >
                 {appTheme.useTextLogo ? (
-                    [
-                        <span className={css["name"]} key="org-name">
+                    <>
+                        <span
+                            className={classList(css["brand-text"], "min-sm")}
+                            key="org-name"
+                        >
                             {appTheme.organizationText}
-                        </span>,
-                        <span className={css["name-short"]} key="org-name-short">
+                        </span>
+                        <span
+                            className={classList(css["brand-text-short"], "max-sm")}
+                            key="org-name-short"
+                        >
                             {appTheme.organizationShortText || appTheme.organizationText}
-                        </span>,
-                    ]
+                        </span>
+                    </>
                 ) : appTheme.logo || appTheme.portraitLogo ? (
                     <>
                         {appTheme.logo && (
@@ -97,7 +99,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
                         )}
                     </>
                 ) : (
-                    <span className={css["name"]}>{appTheme.boardName}</span>
+                    <span className={css["brand-text"]}>{appTheme.boardName}</span>
                 )}
             </div>
         );
@@ -127,6 +129,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
         const items: MenuItem[] = [];
         if (teacherTool.userProfile) {
             items.push({
+                role: "menuitem",
                 id: "signout",
                 title: lf("Sign Out"),
                 label: lf("Sign Out"),
@@ -183,8 +186,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
 
         if (privacyUrl) {
             items.push({
+                role: "link",
                 id: "privacy",
-                title: Strings.Privacy,
                 label: Strings.Privacy,
                 onClick: () => pxt.tickEvent(Ticks.PrivacyStatementClicked),
                 href: privacyUrl,
@@ -193,8 +196,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
 
         if (termsOfUseUrl) {
             items.push({
+                role: "link",
                 id: "termsOfUse",
-                title: Strings.TermsOfUse,
                 label: Strings.TermsOfUse,
                 onClick: () => pxt.tickEvent(Ticks.TermsOfUseClicked),
                 href: termsOfUseUrl,
@@ -216,11 +219,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = () => {
             <div className={css["centered-panel"]}>
                 <div className={classList(css["app-title"], "min-2md")}>
                     {Strings.AppTitle}
-                    {betaTag()}
                 </div>
                 <div className={classList(css["app-title"], "min-xs max-2md")}>
                     {Strings.AppTitleShort}
-                    {betaTag()}
                 </div>
             </div>
 
