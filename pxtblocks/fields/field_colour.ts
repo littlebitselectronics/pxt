@@ -17,6 +17,19 @@ import { FieldCustom, FieldCustomOptions } from './field_utils';
  */
 export type FieldColourValueMode = "hex" | "rgb" | "index";
 
+/**
+ * Fallback palette used when a colour field is created without explicit
+ * `colours` field options and the target defines no `runtime.palette`. Older
+ * pxt tolerated a missing palette; without this guard makeSwatches() receives
+ * `undefined` and throws, which aborts the whole flyout layout (every block in
+ * the category is left unpositioned). This is the canonical MakeCode palette.
+ */
+const DEFAULT_COLOUR_PALETTE: string[] = [
+    "#000000", "#ffffff", "#ff2121", "#ff93c4", "#ff8135", "#fff609",
+    "#249ca3", "#78dc52", "#003fad", "#87f2ff", "#8e2ec4", "#a4839f",
+    "#5c406c", "#e5cdc4", "#91463d", "#000000"
+];
+
 export interface FieldColourNumberOptions extends FieldCustomOptions {
     colours?: string; // parsed as a JSON array
     columns?: string; // parsed as a number
@@ -63,6 +76,11 @@ export class FieldColorNumber extends FieldGridDropdown implements FieldCustom {
                 titles = pxt.Util.clone(pxt.appTarget.runtime.paletteNames);
                 titles[0] = lf("transparent");
             }
+        }
+        if (!allColoursCSSFormat) {
+            // No field-level colours and no target palette: fall back so
+            // makeSwatches doesn't throw and break the flyout layout.
+            allColoursCSSFormat = DEFAULT_COLOUR_PALETTE.slice();
         }
         super(makeSwatches(valueMode, allColoursCSSFormat, titles), opt_validator, {
             primaryColour: "white",
