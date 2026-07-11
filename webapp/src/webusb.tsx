@@ -121,7 +121,7 @@ export async function webUsbPairThemedDialogAsync(pairAsync: () => Promise<boole
         await showConnectionSuccessAsync(confirmAsync, implicitlyCalled);
     }
     else {
-        const tryAgain = await showConnectionFailureAsync(confirmAsync, implicitlyCalled, lastPairingError);
+        const tryAgain = await showConnectionFailureAsync(confirmAsync, true, lastPairingError);
 
         if (tryAgain) return webUsbPairThemedDialogAsync(pairAsync, confirmAsync, implicitlyCalled);
     }
@@ -170,6 +170,9 @@ function showConnectDeviceDialogAsync(confirmAsync: ConfirmAsync) {
 
 function showPickWebUSBDeviceDialogAsync(confirmAsync: ConfirmAsync, showDownloadAsFileButton?: boolean) {
     const boardName = getBoardName();
+    const devicePickerMessage = pxt.BrowserUtils.isPxtElectron()
+        ? lf("A device selection window will appear in the app.")
+        : lf("A window will appear in the top of your browser.");
 
     const selectDeviceImage = theme().selectDeviceImage;
     const columns = selectDeviceImage ? "two" : "one";
@@ -180,13 +183,15 @@ function showPickWebUSBDeviceDialogAsync(confirmAsync: ConfirmAsync, showDownloa
                 <div className="ui">
                     <div className="content">
                         <div className="description">
-                            {lf("Press the Pair button below.")}
-                            <br />
-                            <br />
-                            {lf("A window will appear in the top of your browser.")}
-                            <br />
-                            <br />
-                            {lf("Select the {0} device and click Connect.", boardName)}
+                            <p>
+                                {lf("Press the Pair button below.")}
+                            </p>
+                            <p>
+                                {devicePickerMessage}
+                            </p>
+                            <p>
+                                {lf("Select the {0} device and click Connect.", boardName)}
+                            </p>
                         </div>
                     </div>
                 </div>
